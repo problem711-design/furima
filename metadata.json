@@ -1,0 +1,8 @@
+{
+  "name": "Remix フリマ出品・売上管理",
+  "description": "フリマ出品商品の写真整理・PC転送と、売上・利益の計算管理を行うアプリ",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

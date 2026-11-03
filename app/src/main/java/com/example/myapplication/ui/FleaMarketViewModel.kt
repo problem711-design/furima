@@ -1,0 +1,424 @@
+package com.example.myapplication.ui
+
+import android.app.Application
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.widget.Toast
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.myapplication.data.CsvExporter
+import com.example.myapplication.data.FleaMarketRepository
+import com.example.myapplication.data.local.DefaultSettings
+import com.example.myapplication.data.local.ItemEntity
+import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.SalesSummary
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.util.Calendar
+
+enum class SortOption(val label: String) {
+    DATE_DESC("出品が新しい順"),
+    DATE_ASC("出品が古い順"),
+    SOLD_DATE_DESC("売却日が新しい順"),
+    PRICE_DESC("価格が高い順"),
+    PRICE_ASC("価格が安い順"),
+    PROFIT_DESC("純利益が高い順")
+}
+
+enum class TimeRange(val label: String) {
+    THIS_WEEK("今週"),
+    THIS_MONTH("今月"),
+    ALL_TIME("全期間")
+}
+
+class FleaMarketViewModel(application: Application) : AndroidViewModel(application) {
+    private val repository = FleaMarketRepository(application)
+
+    val defaultSettings: StateFlow<DefaultSettings> = repository.defaultSettings
+
+    val itemsWithPhotos: StateFlow<List<ItemWithPhotos>> = repository.getAllActiveItemsWithPhotos()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val allSalesSummary: StateFlow<SalesSummary> = repository.getSalesSummary()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = SalesSummary()
+        )
+
+    // 検索・絞り込み・ソート状態
+    private val _searchQuery = MutableStateFlow("")
+    val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+
+    private val _statusFilter = MutableStateFlow("ALL") // "ALL", "LISTED", "SOLD"
+    val statusFilter: StateFlow<String> = _statusFilter.asStateFlow()
+
+    private val _sortOption = MutableStateFlow(SortOption.DATE_DESC)
+    val sortOption: StateFlow<SortOption> = _sortOption.asStateFlow()
+
+    private val _timeRange = MutableStateFlow(TimeRange.ALL_TIME)
+    val timeRange: StateFlow<TimeRange> = _timeRange.asStateFlow()
+
+    // 複数選択（まとめ買い）状態
+    private val _isSelectionMode = MutableStateFlow(false)
+    val isSelectionMode: StateFlow<Boolean> = _isSelectionMode.asStateFlow()
+
+    private val _selectedItemIds = MutableStateFlow<Set<Int>>(emptySet())
+    val selectedItemIds: StateFlow<Set<Int>> = _selectedItemIds.asStateFlow()
+
+    // フィルター＆ソート済みアイテム一覧
+    val filteredItems: StateFlow<List<ItemWithPhotos>> = combine(
+        itemsWithPhotos,
+        searchQuery,
+        statusFilter,
+        sortOption
+    ) { items, query, status, sort ->
+        items.filter { itemWithPhotos ->
+            val item = itemWithPhotos.item
+            val matchesQuery = query.isBlank() ||
+                    item.title.contains(query, ignoreCase = true) ||
+                    item.description.contains(query, ignoreCase = true)
+
+            val matchesStatus = when (status) {
+                "LISTED" -> item.status == "LISTED"
+                "SOLD" -> item.status == "SOLD"
+                else -> true
+            }
+
+            matchesQuery && matchesStatus
+        }.sortedWith { a, b ->
+            when (sort) {
+                SortOption.DATE_DESC -> b.item.createdAt.compareTo(a.item.createdAt)
+                SortOption.DATE_ASC -> a.item.createdAt.compareTo(b.item.createdAt)
+                SortOption.SOLD_DATE_DESC -> (b.item.soldAt ?: 0L).compareTo(a.item.soldAt ?: 0L)
+                SortOption.PRICE_DESC -> {
+                    val pB = if (b.item.status == "SOLD" && b.item.soldPrice > 0) b.item.soldPrice else b.item.price
+                    val pA = if (a.item.status == "SOLD" && a.item.soldPrice > 0) a.item.soldPrice else a.item.price
+                    pB.compareTo(pA)
+                }
+                SortOption.PRICE_ASC -> {
+                    val pB = if (b.item.status == "SOLD" && b.item.soldPrice > 0) b.item.soldPrice else b.item.price
+                    val pA = if (a.item.status == "SOLD" && a.item.soldPrice > 0) a.item.soldPrice else a.item.price
+                    pA.compareTo(pB)
+                }
+                SortOption.PROFIT_DESC -> {
+                    val settings = defaultSettings.value
+                    b.item.getCalculatedProfit(settings).compareTo(a.item.getCalculatedProfit(settings))
+                }
+            }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    // 期間別サマリー（今週・今月・全期間）
+    val periodSalesSummary: StateFlow<SalesSummary> = combine(
+        itemsWithPhotos,
+        defaultSettings,
+        timeRange
+    ) { items, settings, range ->
+        val now = Calendar.getInstance()
+        val startOfPeriod = Calendar.getInstance().apply {
+            when (range) {
+                TimeRange.THIS_WEEK -> {
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                TimeRange.THIS_MONTH -> {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                TimeRange.ALL_TIME -> {
+                    timeInMillis = 0L
+                }
+            }
+        }.timeInMillis
+
+        var totalSales = 0
+        var totalProfit = 0
+        var listedCount = 0
+        var soldCount = 0
+
+        for (itemWithPhotos in items) {
+            val item = itemWithPhotos.item
+            if (item.status == "SOLD") {
+                val targetTime = item.soldAt ?: item.createdAt
+                if (targetTime >= startOfPeriod) {
+                    soldCount++
+                    val price = if (item.soldPrice > 0) item.soldPrice else item.price
+                    totalSales += price
+                    totalProfit += item.getCalculatedProfit(settings)
+                }
+            } else if (item.status == "LISTED") {
+                if (item.createdAt >= startOfPeriod || range == TimeRange.ALL_TIME) {
+                    listedCount++
+                }
+            }
+        }
+
+        SalesSummary(totalSales, totalProfit, listedCount, soldCount)
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = SalesSummary()
+    )
+
+    fun setSearchQuery(query: String) {
+        _searchQuery.value = query
+    }
+
+    fun setStatusFilter(status: String) {
+        _statusFilter.value = status
+    }
+
+    fun setSortOption(option: SortOption) {
+        _sortOption.value = option
+    }
+
+    fun setTimeRange(range: TimeRange) {
+        _timeRange.value = range
+    }
+
+    fun toggleSelectionMode() {
+        _isSelectionMode.value = !_isSelectionMode.value
+        if (!_isSelectionMode.value) {
+            _selectedItemIds.value = emptySet()
+        }
+    }
+
+    fun toggleItemSelection(id: Int) {
+        val current = _selectedItemIds.value.toMutableSet()
+        if (current.contains(id)) {
+            current.remove(id)
+        } else {
+            current.add(id)
+        }
+        _selectedItemIds.value = current
+    }
+
+    fun clearSelection() {
+        _selectedItemIds.value = emptySet()
+        _isSelectionMode.value = false
+    }
+
+    fun updateDefaultSettings(newSettings: DefaultSettings) {
+        repository.updateDefaultSettings(newSettings)
+    }
+
+    suspend fun getItemById(id: Int): ItemWithPhotos? {
+        return repository.getItemById(id)
+    }
+
+    suspend fun getSelectedItems(): List<ItemWithPhotos> {
+        val ids = _selectedItemIds.value.toList()
+        return repository.getDao().getItemsWithPhotosByIds(ids)
+    }
+
+    fun saveItem(
+        id: Int,
+        title: String,
+        description: String,
+        status: String,
+        price: Int,
+        soldPrice: Int,
+        shippingCost: Int,
+        feeRatePercent: Int,
+        expenseCost: Int,
+        useCustomSettings: Boolean,
+        imageUris: List<Uri>,
+        existingFilePaths: List<String>,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            repository.saveItem(
+                id = id,
+                title = title,
+                description = description,
+                status = status,
+                price = price,
+                soldPrice = soldPrice,
+                shippingCost = shippingCost,
+                feeRatePercent = feeRatePercent,
+                expenseCost = expenseCost,
+                useCustomSettings = useCustomSettings,
+                imageUris = imageUris,
+                existingFilePaths = existingFilePaths
+            )
+            onSuccess()
+        }
+    }
+
+    fun mergeSelectedItems(
+        mergedTitle: String,
+        mergedDescription: String,
+        totalSoldPrice: Int,
+        newShippingCost: Int,
+        newFeeRatePercent: Int,
+        newExpenseCost: Int,
+        childItemIds: List<Int> = _selectedItemIds.value.toList(),
+        onSuccess: (Long) -> Unit
+    ) {
+        viewModelScope.launch {
+            val ids = if (childItemIds.isNotEmpty()) childItemIds else _selectedItemIds.value.toList()
+            val newId = repository.mergeItems(
+                mergedTitle = mergedTitle,
+                mergedDescription = mergedDescription,
+                totalSoldPrice = totalSoldPrice,
+                newShippingCost = newShippingCost,
+                newFeeRatePercent = newFeeRatePercent,
+                newExpenseCost = newExpenseCost,
+                childItemIds = ids
+            )
+            clearSelection()
+            onSuccess(newId)
+        }
+    }
+
+    fun updateItemStatus(item: ItemEntity, newStatus: String) {
+        viewModelScope.launch {
+            repository.updateItemStatus(item, newStatus)
+        }
+    }
+
+    fun deleteItem(itemWithPhotos: ItemWithPhotos, onSuccess: () -> Unit) {
+        viewModelScope.launch {
+            repository.deleteItem(itemWithPhotos)
+            onSuccess()
+        }
+    }
+
+    /**
+     * PC送信：無圧縮ZIP（商品名.zip）に写真と商品説明文.txtを同梱して共有し、isSharedフラグを更新
+     */
+    fun shareItemWithZip(context: Context, itemWithPhotos: ItemWithPhotos) {
+        viewModelScope.launch {
+            val item = itemWithPhotos.item
+            val photos = itemWithPhotos.photos.map { it.filePath }
+            val shareIntent = withContext(Dispatchers.IO) {
+                repository.getPhotoStorageManager().createStoredZipForSharing(
+                    itemTitle = item.title,
+                    description = item.description,
+                    photoPaths = photos
+                )
+            }
+            if (shareIntent != null) {
+                repository.markItemShared(item.id)
+                val chooser = Intent.createChooser(shareIntent, "PCに送信 (LocalSend等で共有)")
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(chooser)
+            } else {
+                Toast.makeText(context, "ZIPファイルの生成に失敗しました", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun exportItemPhotosToGallery(
+        context: Context,
+        itemTitle: String,
+        photoPaths: List<String>,
+        onResult: (Int) -> Unit
+    ) {
+        viewModelScope.launch {
+            val count = withContext(Dispatchers.IO) {
+                repository.getPhotoStorageManager().exportPhotosToGallery(itemTitle, photoPaths)
+            }
+            onResult(count)
+        }
+    }
+
+    fun exportAllToCsv(context: Context) {
+        viewModelScope.launch {
+            val items = itemsWithPhotos.value
+            val settings = defaultSettings.value
+            val shareIntent = withContext(Dispatchers.IO) {
+                CsvExporter.exportAndShareCsv(context, items, settings)
+            }
+            if (shareIntent != null) {
+                val chooser = Intent.createChooser(shareIntent, "CSVを外部アプリ（Excel/スプレッドシート等）で開く")
+                chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(chooser)
+            } else {
+                Toast.makeText(context, "CSVの作成に失敗しました", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun copyListingTemplate(context: Context, itemWithPhotos: ItemWithPhotos) {
+        val item = itemWithPhotos.item
+        val text = buildString {
+            appendLine("【商品名】${item.title}")
+            appendLine("【価格】¥${item.price}")
+            if (item.description.isNotBlank()) {
+                appendLine("")
+                appendLine("【商品説明】")
+                appendLine(item.description)
+            }
+            appendLine("")
+            appendLine("ご覧いただきありがとうございます。即購入OKです。")
+            appendLine("丁寧な梱包と迅速な発送を心がけております。よろしくお願いいたします。")
+        }
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val clip = ClipData.newPlainText("出品テキスト", text)
+        clipboard.setPrimaryClip(clip)
+        Toast.makeText(context, "出品用テキストをクリップボードにコピーしました", Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * PC送信済みの元高解像度写真を削除（サムネイルのみ保持）
+     */
+    fun cleanupSharedOriginalPhotos(onResult: (Int) -> Unit) {
+        viewModelScope.launch {
+            val items = itemsWithPhotos.value.filter { it.item.isShared }
+            var totalDeleted = 0
+            withContext(Dispatchers.IO) {
+                for (itemWithPhotos in items) {
+                    val count = repository.getPhotoStorageManager().deleteOriginalPhotosKeepThumbnails(itemWithPhotos.photos)
+                    totalDeleted += count
+                }
+            }
+            onResult(totalDeleted)
+        }
+    }
+
+    /**
+     * 売却済みから指定日数以上経過した写真をクリーンアップ
+     */
+    fun cleanupSoldPhotosOlderThan(days: Int, onResult: (Int) -> Unit) {
+        viewModelScope.launch {
+            val thresholdTime = System.currentTimeMillis() - (days * 24L * 60L * 60L * 1000L)
+            val soldItems = itemsWithPhotos.value.filter {
+                it.item.status == "SOLD" && (it.item.soldAt ?: it.item.createdAt) < thresholdTime
+            }
+            var totalDeleted = 0
+            withContext(Dispatchers.IO) {
+                for (itemWithPhotos in soldItems) {
+                    val count = repository.getPhotoStorageManager().deletePhotoFiles(itemWithPhotos.photos)
+                    totalDeleted += count
+                }
+            }
+            onResult(totalDeleted)
+        }
+    }
+}

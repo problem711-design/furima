@@ -1,0 +1,558 @@
+package com.example.myapplication.ui.screens
+
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.example.myapplication.data.PhotoStorageManager
+import com.example.myapplication.ui.FleaMarketViewModel
+import java.io.File
+import java.text.NumberFormat
+import java.util.Locale
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+fun ItemEditScreen(
+    itemId: Int,
+    viewModel: FleaMarketViewModel,
+    onNavigateBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val defaultSettings by viewModel.defaultSettings.collectAsState()
+
+    var title by remember { mutableStateOf("") }
+    var description by remember { mutableStateOf("") }
+    var priceText by remember { mutableStateOf("") }
+    var soldPriceText by remember { mutableStateOf("") }
+    var status by remember { mutableStateOf("LISTED") }
+
+    // 費用設定
+    var useCustomSettings by remember { mutableStateOf(false) }
+    var feeRatePercentText by remember { mutableStateOf("") }
+    var shippingCostText by remember { mutableStateOf("") }
+    var expenseCostText by remember { mutableStateOf("") }
+
+    val newImageUris = remember { mutableStateListOf<Uri>() }
+    val existingFilePaths = remember { mutableStateListOf<String>() }
+
+    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    var tempCameraPath by remember { mutableStateOf<String?>(null) }
+
+    val pickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia()
+    ) { uris ->
+        newImageUris.addAll(uris)
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success && tempCameraPath != null) {
+            existingFilePaths.add(tempCameraPath!!)
+        }
+    }
+
+    LaunchedEffect(itemId) {
+        if (itemId != 0) {
+            val itemWithPhotos = viewModel.getItemById(itemId)
+            if (itemWithPhotos != null) {
+                val item = itemWithPhotos.item
+                title = item.title
+                description = item.description
+                priceText = if (item.price > 0) item.price.toString() else ""
+                soldPriceText = if (item.soldPrice > 0) item.soldPrice.toString() else ""
+                status = item.status
+                useCustomSettings = item.useCustomSettings
+                feeRatePercentText = item.feeRatePercent.toString()
+                shippingCostText = item.shippingCost.toString()
+                expenseCostText = item.expenseCost.toString()
+                existingFilePaths.addAll(itemWithPhotos.photos.map { it.filePath })
+            }
+        } else {
+            feeRatePercentText = defaultSettings.defaultFeeRatePercent.toString()
+            shippingCostText = defaultSettings.defaultShippingCost.toString()
+            expenseCostText = defaultSettings.defaultExpenseCost.toString()
+        }
+    }
+
+    val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
+    val inputPrice = priceText.toIntOrNull() ?: 0
+    val inputSoldPrice = soldPriceText.toIntOrNull() ?: inputPrice
+    val basePrice = if (status == "SOLD" && inputSoldPrice > 0) inputSoldPrice else inputPrice
+
+    val effectiveFeePercent = if (useCustomSettings) {
+        feeRatePercentText.toIntOrNull() ?: defaultSettings.defaultFeeRatePercent
+    } else {
+        defaultSettings.defaultFeeRatePercent
+    }
+
+    val effectiveShipping = if (useCustomSettings) {
+        shippingCostText.toIntOrNull() ?: defaultSettings.defaultShippingCost
+    } else {
+        defaultSettings.defaultShippingCost
+    }
+
+    val effectiveExpense = if (useCustomSettings) {
+        expenseCostText.toIntOrNull() ?: defaultSettings.defaultExpenseCost
+    } else {
+        defaultSettings.defaultExpenseCost
+    }
+
+    val calculatedFee = (basePrice * effectiveFeePercent) / 100
+    val estimatedProfit = (basePrice - calculatedFee - effectiveShipping - effectiveExpense).coerceAtLeast(0)
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(if (itemId == 0) "新規出品登録" else "出品情報編集") },
+                navigationIcon = {
+                    IconButton(onClick = onNavigateBack) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
+                    }
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            // ① 写真セクション（動線改善：撮影ボタンをメイン・大ボタンに配置）
+            Text(
+                text = "📸 商品写真 (${existingFilePaths.size + newImageUris.size}枚)",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // メインの撮影ボタン（一番目立つ位置・大きく配置）
+            Button(
+                onClick = {
+                    val manager = PhotoStorageManager(context)
+                    val pair = manager.createTempCameraPhotoUri(title.ifBlank { "Unassigned" })
+                    if (pair != null) {
+                        cameraPhotoUri = pair.first
+                        tempCameraPath = pair.second
+                        cameraLauncher.launch(pair.first)
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .testTag("take_photo_button"),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(24.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("カメラで写真を撮影する (推奨)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // サブアクション：ギャラリーから選択
+            OutlinedButton(
+                onClick = {
+                    pickerLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                    )
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .testTag("pick_images_button")
+            ) {
+                Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = null)
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("端末のギャラリーから写真を選択", fontSize = 13.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // 選択された写真のサムネイル一覧
+            if (existingFilePaths.isNotEmpty() || newImageUris.isNotEmpty()) {
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(existingFilePaths) { path ->
+                        Box(
+                            modifier = Modifier
+                                .size(90.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        ) {
+                            AsyncImage(
+                                model = File(path),
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { existingFilePaths.remove(path) }
+                                    .align(Alignment.TopEnd)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "削除",
+                                    tint = Color.White,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                    }
+
+                    items(newImageUris) { uri ->
+                        Box(
+                            modifier = Modifier
+                                .size(90.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                        ) {
+                            AsyncImage(
+                                model = uri,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .clickable { newImageUris.remove(uri) }
+                                    .align(Alignment.TopEnd)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "削除",
+                                    tint = Color.White,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                Text(
+                    text = "※ 写真を追加すると、PC送信時（無圧縮ZIP）にまとめて転送できます",
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // ② 商品基本情報
+            Text(
+                text = "📝 商品基本情報",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                label = { Text("商品名・出品フォルダ名 (必須)") },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("item_title_input")
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // 商品説明文（任意入力・PC送信ZIPに同梱）
+            OutlinedTextField(
+                value = description,
+                onValueChange = { description = it },
+                label = { Text("商品説明文 (任意・PC送信時にテキスト同梱)") },
+                placeholder = { Text("商品の状態、サイズ、購入時期、注意事項など\n記述がある場合、PC送信時に『商品説明.txt』としてZIPに同梱されます") },
+                minLines = 3,
+                maxLines = 6,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("item_description_input")
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // ステータス選択
+            Text(text = "ステータス", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = (status == "LISTED"),
+                    onClick = { status = "LISTED" },
+                    label = { Text("出品中") },
+                    modifier = Modifier.testTag("status_listed_chip")
+                )
+                FilterChip(
+                    selected = (status == "SOLD"),
+                    onClick = { status = "SOLD" },
+                    label = { Text("売却済み") },
+                    modifier = Modifier.testTag("status_sold_chip")
+                )
+                FilterChip(
+                    selected = (status == "DRAFT"),
+                    onClick = { status = "DRAFT" },
+                    label = { Text("下書き") },
+                    modifier = Modifier.testTag("status_draft_chip")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 価格入力
+            OutlinedTextField(
+                value = priceText,
+                onValueChange = { priceText = it },
+                label = { Text("出品価格 (円)") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("item_price_input")
+            )
+
+            if (status == "SOLD") {
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = soldPriceText,
+                    onValueChange = { soldPriceText = it },
+                    label = { Text("実際の売却価格 (値引き等があれば入力、空欄時は出品価格)") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("item_sold_price_input")
+                )
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // ③ 費用設定アコーディオン
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("個別費用設定 (カスタマイズ)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                if (useCustomSettings) "個別設定を適用中" else "デフォルト設定 (手数料${defaultSettings.defaultFeeRatePercent}% / 送料${defaultSettings.defaultShippingCost}円 / 経費${defaultSettings.defaultExpenseCost}円)",
+                                fontSize = 11.sp,
+                                color = Color.Gray
+                            )
+                        }
+                        Switch(
+                            checked = useCustomSettings,
+                            onCheckedChange = { useCustomSettings = it },
+                            modifier = Modifier.testTag("custom_settings_switch")
+                        )
+                    }
+
+                    if (useCustomSettings) {
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        OutlinedTextField(
+                            value = feeRatePercentText,
+                            onValueChange = { feeRatePercentText = it },
+                            label = { Text("販売手数料率 (%)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(selected = (feeRatePercentText == "5"), onClick = { feeRatePercentText = "5" }, label = { Text("5% (PayPay等)", fontSize = 11.sp) })
+                            FilterChip(selected = (feeRatePercentText == "10"), onClick = { feeRatePercentText = "10" }, label = { Text("10% (メルカリ等)", fontSize = 11.sp) })
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = shippingCostText,
+                            onValueChange = { shippingCostText = it },
+                            label = { Text("送料 (円)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            FilterChip(selected = (shippingCostText == "210"), onClick = { shippingCostText = "210" }, label = { Text("210円 (ネコポス/ゆうパケ)", fontSize = 11.sp) })
+                            FilterChip(selected = (shippingCostText == "450"), onClick = { shippingCostText = "450" }, label = { Text("450円 (コンパクト)", fontSize = 11.sp) })
+                            FilterChip(selected = (shippingCostText == "750"), onClick = { shippingCostText = "750" }, label = { Text("750円 (60サイズ)", fontSize = 11.sp) })
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = expenseCostText,
+                            onValueChange = { expenseCostText = it },
+                            label = { Text("経費・梱包資材費 (円)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // リアルタイム利益シミュレーション
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text(
+                                text = "🧮 利益シミュレーション",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "売価 ${formatter.format(basePrice)} - 手数料(${effectiveFeePercent}%) ${formatter.format(calculatedFee)} - 送料 ${formatter.format(effectiveShipping)} - 経費 ${formatter.format(effectiveExpense)}",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "純利益: ${formatter.format(estimatedProfit)}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = {
+                    val price = priceText.toIntOrNull() ?: 0
+                    val soldPrice = soldPriceText.toIntOrNull() ?: price
+                    val shippingCost = if (useCustomSettings) {
+                        shippingCostText.toIntOrNull() ?: defaultSettings.defaultShippingCost
+                    } else {
+                        defaultSettings.defaultShippingCost
+                    }
+                    val feeRatePercent = if (useCustomSettings) {
+                        feeRatePercentText.toIntOrNull() ?: defaultSettings.defaultFeeRatePercent
+                    } else {
+                        defaultSettings.defaultFeeRatePercent
+                    }
+                    val expenseCost = if (useCustomSettings) {
+                        expenseCostText.toIntOrNull() ?: defaultSettings.defaultExpenseCost
+                    } else {
+                        defaultSettings.defaultExpenseCost
+                    }
+
+                    if (title.isNotBlank()) {
+                        viewModel.saveItem(
+                            id = itemId,
+                            title = title,
+                            description = description,
+                            status = status,
+                            price = price,
+                            soldPrice = soldPrice,
+                            shippingCost = shippingCost,
+                            feeRatePercent = feeRatePercent,
+                            expenseCost = expenseCost,
+                            useCustomSettings = useCustomSettings,
+                            imageUris = newImageUris,
+                            existingFilePaths = existingFilePaths,
+                            onSuccess = onNavigateBack
+                        )
+                    }
+                },
+                enabled = title.isNotBlank(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(50.dp)
+                    .testTag("save_item_button")
+            ) {
+                Text("保存する", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
