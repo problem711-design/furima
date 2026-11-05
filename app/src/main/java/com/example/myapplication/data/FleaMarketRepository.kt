@@ -28,6 +28,8 @@ class FleaMarketRepository(context: Context) {
 
     fun getAllActiveItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getAllActiveItemsWithPhotos()
 
+    suspend fun getActiveItemsWithPhotosDirect(): List<ItemWithPhotos> = dao.getActiveItemsWithPhotosDirect()
+
     fun getAllItems(): Flow<List<ItemEntity>> = dao.getAllActiveItems()
 
     fun getSalesSummary(): Flow<SalesSummary> {
@@ -168,6 +170,7 @@ class FleaMarketRepository(context: Context) {
 
     /**
      * 複数商品を「まとめ買い」出品として統合
+     * 出品中（LISTED）のまままとめ買い商品を作成し、子商品の関係を保持
      */
     suspend fun mergeItems(
         mergedTitle: String,
@@ -176,26 +179,33 @@ class FleaMarketRepository(context: Context) {
         newShippingCost: Int,
         newFeeRatePercent: Int,
         newExpenseCost: Int,
-        childItemIds: List<Int>
+        childItemIds: List<Int>,
+        asStatus: String = "LISTED"
     ): Long {
         val childItems = dao.getItemsWithPhotosByIds(childItemIds)
         val childTitles = childItems.joinToString(", ") { "【${it.item.title}】¥${it.item.price}" }
+        val originalTotal = childItems.sumOf { it.item.price }
+        val discount = (originalTotal - totalSoldPrice).coerceAtLeast(0)
+        val maxChildLevel = childItems.maxOfOrNull { it.item.bundleLevel } ?: 0
 
-        // 1. 新しいまとめ商品の作成
+        // 1. 新しいまとめ商品の作成 (デフォルトで LISTED: 出品中)
         val parentItem = ItemEntity(
             title = mergedTitle,
             description = mergedDescription,
-            status = "SOLD", // まとめ買い成立
+            status = asStatus,
             price = totalSoldPrice,
-            soldPrice = totalSoldPrice,
+            soldPrice = if (asStatus == "SOLD") totalSoldPrice else 0,
             shippingCost = newShippingCost,
             feeRatePercent = newFeeRatePercent,
             expenseCost = newExpenseCost,
             useCustomSettings = true,
             mergedChildCount = childItemIds.size,
             mergedChildTitles = childTitles,
+            originalTotalBundlePrice = originalTotal,
+            discountAmount = discount,
+            bundleLevel = maxChildLevel + 1,
             createdAt = System.currentTimeMillis(),
-            soldAt = System.currentTimeMillis()
+            soldAt = if (asStatus == "SOLD") System.currentTimeMillis() else null
         )
         val parentId = dao.insertItem(parentItem).toInt()
 
@@ -207,12 +217,40 @@ class FleaMarketRepository(context: Context) {
         var order = 0
         for (child in childItems) {
             for (p in child.photos) {
-                parentPhotos.add(p.copy(id = 0, itemId = parentId, displayOrder = order++))
+                parentPhotos.add(
+                    p.copy(
+                        id = 0,
+                        itemId = parentId,
+                        displayOrder = order++
+                    )
+                )
             }
         }
         dao.insertPhotos(parentPhotos)
 
         return parentId.toLong()
+    }
+
+    /**
+     * まとめ買い出品を解除（バラす）
+     * 子商品のステータスを LISTED に戻し、mergedParentId を解除。
+     * 親商品とその写真レコードを削除する。
+     */
+    suspend fun unmergeItem(parentId: Int) {
+        val parent = dao.getItemWithPhotosById(parentId) ?: return
+        // 1. 子商品のステータスを LISTED に戻し、親IDを解除
+        dao.restoreMergedChildren(parentId)
+        // 2. 親商品の写真レコードを削除
+        dao.deletePhotosByItemId(parentId)
+        // 3. 親商品を削除
+        dao.deleteItem(parent.item)
+    }
+
+    /**
+     * まとめ商品の内包する子商品一覧を取得
+     */
+    suspend fun getMergedChildItemsWithPhotos(parentId: Int): List<ItemWithPhotos> {
+        return dao.getMergedChildItemsWithPhotos(parentId)
     }
 
     suspend fun deleteItem(itemWithPhotos: ItemWithPhotos) {

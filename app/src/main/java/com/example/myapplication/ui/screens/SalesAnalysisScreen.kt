@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -117,6 +118,11 @@ fun SalesAnalysisScreen(
     var totalShipping = 0
     var totalExpenses = 0
 
+    // まとめ買い分析データ
+    var bundleItemCount = 0
+    var totalBundleDiscount = 0
+    var totalEstimatedShippingSaved = 0
+
     val allLeadTimeDays = mutableListOf<Double>()
     var speedUnder1Day = 0
     var speed1to3Days = 0
@@ -146,6 +152,16 @@ fun SalesAnalysisScreen(
         totalFees += fee
         totalShipping += shipping
         totalExpenses += expense
+
+        // まとめ買い情報の集計
+        if (item.mergedChildCount > 1 || item.bundleLevel > 0) {
+            bundleItemCount++
+            totalBundleDiscount += item.discountAmount
+            // 個別に発送した場合の推定送料 (単品送料 * 子商品数) - まとめ発送の実際の送料
+            val estOriginalShipping = defaultSettings.defaultShippingCost * item.mergedChildCount
+            val savedShipping = (estOriginalShipping - shipping).coerceAtLeast(0)
+            totalEstimatedShippingSaved += savedShipping
+        }
 
         // 売却リードタイム計算 (日数)
         val soldTime = item.soldAt ?: item.createdAt
@@ -183,13 +199,24 @@ fun SalesAnalysisScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("売上 & 価格帯・日数分析", fontWeight = FontWeight.Bold) },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            )
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shadowElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "売上 & 価格帯・日数分析",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                }
+            }
         }
     ) { paddingValues ->
         Column(
@@ -279,12 +306,23 @@ fun SalesAnalysisScreen(
                             fontSize = 12.sp
                         )
                     }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // 経費・手数料内訳の詳細
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("手数料合計: ${formatter.format(totalFees)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                        Text("送料合計: ${formatter.format(totalShipping)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                        Text("資材費合計: ${formatter.format(totalExpenses)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f))
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // ② スマート・インサイト（人気ライン・売上No.1・平均日数）
+            // ② スマート・インサイト（人気ライン・売上No.1・平均日数・まとめ買い節約）
             Text("💡 分析ハイライト", fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Spacer(modifier = Modifier.height(8.dp))
 
@@ -301,6 +339,18 @@ fun SalesAnalysisScreen(
                     )
                 }
             } else {
+                // まとめ買い効果カード (存在する場合)
+                if (bundleItemCount > 0) {
+                    InsightItemCard(
+                        icon = Icons.Default.Star,
+                        iconTint = Color(0xFF7C3AED),
+                        title = "まとめ買い効果分析",
+                        headline = "まとめ取引 ${bundleItemCount}件 (送料節約: 推定${formatter.format(totalEstimatedShippingSaved)})",
+                        description = "まとめ値引き総額: ${formatter.format(totalBundleDiscount)} / 配送をおまとめしたことで推定${formatter.format(totalEstimatedShippingSaved)}の送料が節約されました"
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 // ハイライト項目1: 一番人気ライン
                 if (mostPopularTier != null) {
                     val countShare = if (soldItems.isNotEmpty()) (mostPopularTier.count * 100) / soldItems.size else 0

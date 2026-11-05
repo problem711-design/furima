@@ -16,3 +16,10 @@
 local.properties
 .env
 debug.keystore
+
+# Archived APKs, zip files, and AI Studio export metadata
+/public/
+/*.apk
+/*.zip
+/metadata.json
+

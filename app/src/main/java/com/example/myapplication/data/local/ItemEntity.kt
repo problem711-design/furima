@@ -20,6 +20,9 @@ data class ItemEntity(
     val mergedParentId: Int? = null, // まとめ買いの親ID（nullなら通常表示、値があればまとめられた子商品）
     val mergedChildCount: Int = 0, // まとめ買い親商品の場合の同梱数
     val mergedChildTitles: String = "", // まとめ買い時の元の個別商品名リスト
+    val originalTotalBundlePrice: Int = 0, // まとめ買い前の元商品合計額
+    val discountAmount: Int = 0, // まとめ買い値引き額
+    val bundleLevel: Int = 0, // まとめ階層（0: 単品, 1: まとめ商品, 2: まとめのまとめ）
     val createdAt: Long = System.currentTimeMillis(),
     val soldAt: Long? = null // 売却成立日時
 ) {

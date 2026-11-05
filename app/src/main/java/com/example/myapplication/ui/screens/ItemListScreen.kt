@@ -1,8 +1,11 @@
 package com.example.myapplication.ui.screens
 
+import android.widget.Toast
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,14 +20,15 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
@@ -32,7 +36,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,11 +51,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -60,8 +64,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -72,6 +78,7 @@ import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.SortOption
 import com.example.myapplication.ui.TimeRange
+import com.example.myapplication.ui.components.ItemQuickActionDialog
 import com.example.myapplication.ui.components.MergeItemsDialog
 import java.io.File
 import java.text.NumberFormat
@@ -85,6 +92,7 @@ fun ItemListScreen(
     onNavigateToAdd: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptic = LocalHapticFeedback.current
     val allActiveItems by viewModel.itemsWithPhotos.collectAsState()
     val filteredItems by viewModel.filteredItems.collectAsState()
     val periodSummary by viewModel.periodSalesSummary.collectAsState()
@@ -98,10 +106,52 @@ fun ItemListScreen(
 
     var showSortMenu by remember { mutableStateOf(false) }
     var showMergeDialog by remember { mutableStateOf(false) }
+    var quickActionItem by remember { mutableStateOf<ItemWithPhotos?>(null) }
+
+    // 表示件数リミット（デフォルト20件、10件ずつ追加可能）
+    var displayLimit by remember { mutableIntStateOf(20) }
+
+    // 検索語やフィルターが変わったら表示件数をリセット
+    LaunchedEffect(searchQuery, statusFilter, sortOption) {
+        displayLimit = 20
+    }
+
+    val visibleItems = remember(filteredItems, displayLimit) {
+        filteredItems.take(displayLimit)
+    }
 
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
 
-    // 検索をまたいで選択されたすべてのアイテムを確実に参照
+    // 長押しクイックアクションダイアログ
+    quickActionItem?.let { itemWithPhotos ->
+        ItemQuickActionDialog(
+            itemWithPhotos = itemWithPhotos,
+            onDismiss = { quickActionItem = null },
+            onToggleStatus = {
+                val newStatus = if (itemWithPhotos.item.status == "SOLD") "LISTED" else "SOLD"
+                viewModel.updateItemStatus(itemWithPhotos.item, newStatus)
+                Toast.makeText(context, if (newStatus == "SOLD") "売却済みに変更しました" else "出品中に変更しました", Toast.LENGTH_SHORT).show()
+            },
+            onNavigateToEdit = {
+                onNavigateToDetail(itemWithPhotos.item.id)
+            },
+            onCopyText = {
+                viewModel.copyListingTemplate(context, itemWithPhotos)
+            },
+            onUnmerge = {
+                viewModel.unmergeItem(itemWithPhotos.item.id) {
+                    Toast.makeText(context, "まとめ買い出品を解除し、元の個別出品を復元しました", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onDelete = {
+                viewModel.deleteItem(itemWithPhotos) {
+                    Toast.makeText(context, "商品を削除しました", Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
+    }
+
+    // 複数選択時のまとめ買いダイアログ
     if (showMergeDialog && selectedItemIds.size >= 2) {
         val selectedItems = allActiveItems.filter { selectedItemIds.contains(it.item.id) }
         MergeItemsDialog(
@@ -116,7 +166,8 @@ fun ItemListScreen(
                     newShippingCost = shipping,
                     newFeeRatePercent = feeRate,
                     newExpenseCost = expense,
-                    childItemIds = itemIds
+                    childItemIds = itemIds,
+                    asStatus = "LISTED"
                 ) { newParentId ->
                     showMergeDialog = false
                     onNavigateToDetail(newParentId.toInt())
@@ -127,40 +178,35 @@ fun ItemListScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
+            // スリム化したTopAppBar
+            Surface(
+                color = MaterialTheme.colorScheme.primary,
+                shadowElevation = 2.dp
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
                     Text(
-                        if (isSelectionMode) "まとめ選択 (${selectedItemIds.size}件)" else "フリマ出品・売上管理",
+                        text = if (isSelectionMode) "まとめ選択 (${selectedItemIds.size}件)" else "フリマ出品・売上管理",
                         fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
+                        fontSize = 17.sp,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
-                },
-                actions = {
+
                     if (isSelectionMode) {
                         TextButton(
                             onClick = { viewModel.clearSelection() },
                             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onPrimary)
                         ) {
-                            Text("完了")
-                        }
-                    } else {
-                        IconButton(
-                            onClick = { viewModel.toggleSelectionMode() },
-                            modifier = Modifier.testTag("select_mode_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.MergeType,
-                                contentDescription = "まとめ買い選択",
-                                tint = MaterialTheme.colorScheme.onPrimary
-                            )
+                            Text("完了", fontWeight = FontWeight.Bold)
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = MaterialTheme.colorScheme.onPrimary
-                )
-            )
+                }
+            }
         },
         floatingActionButton = {
             if (!isSelectionMode) {
@@ -180,77 +226,81 @@ fun ItemListScreen(
                 .fillMaxSize()
                 .padding(paddingValues)
         ) {
-            // ① スマートな上部サマリーバー（高さ圧縮＆トグル切り替え）
+            // ① スリム化された上部サマリーバー
             Surface(
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // 期間トグル [ 今週 | 今月 | 全期間 ]
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            TimeRange.values().forEach { range ->
-                                val isSelected = timeRange == range
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                        .clickable { viewModel.setTimeRange(range) }
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text(
-                                        text = range.label,
-                                        fontSize = 11.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // 期間トグル [ 今週 | 今月 | 全期間 ]
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TimeRange.values().forEach { range ->
+                            val isSelected = timeRange == range
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    .clickable {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.setTimeRange(range)
+                                    }
+                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = range.label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
+                    }
 
-                        // 1行集計（売上と純利益）
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "売上: ${formatter.format(periodSummary.totalSales)}",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = " | 利益: ",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = formatter.format(periodSummary.totalProfit),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                    // 1行集計（売上と純利益）
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "売上: ${formatter.format(periodSummary.totalSales)}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = " | 利益: ",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = formatter.format(periodSummary.totalProfit),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
 
-            // ② 検索バー & まとめ買い選択ボタン & ソートメニュー
+            // ② 検索バー & ソートメニュー & 表示切り替え
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { viewModel.setSearchQuery(it) },
-                    placeholder = { Text("商品名・説明文で検索", fontSize = 12.sp) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                    placeholder = { Text("検索 (スペースでAND, OR, \"完全一致\")", fontSize = 11.sp) },
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
                     trailingIcon = {
                         if (searchQuery.isNotBlank()) {
                             IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                Icon(Icons.Default.Clear, contentDescription = "クリア", modifier = Modifier.size(16.dp))
+                                Icon(Icons.Default.Clear, contentDescription = "クリア", modifier = Modifier.size(14.dp))
                             }
                         }
                     },
@@ -265,13 +315,16 @@ fun ItemListScreen(
                         .testTag("search_input")
                 )
 
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
-                // 検索画面からワンタップでまとめ買い選択モードを切り替えるボタン
+                // まとめ買い選択ボタントグル
                 IconButton(
-                    onClick = { viewModel.toggleSelectionMode() },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        viewModel.toggleSelectionMode()
+                    },
                     modifier = Modifier
-                        .size(44.dp)
+                        .size(38.dp)
                         .background(
                             if (isSelectionMode) MaterialTheme.colorScheme.primaryContainer else Color.Transparent,
                             shape = CircleShape
@@ -281,16 +334,23 @@ fun ItemListScreen(
                     Icon(
                         imageVector = Icons.Default.MergeType,
                         contentDescription = "まとめ買い選択切替",
-                        tint = if (isSelectionMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        tint = if (isSelectionMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
+                // ソートボタンドロップダウン
                 Box {
                     IconButton(
                         onClick = { showSortMenu = true },
-                        modifier = Modifier.size(44.dp).testTag("sort_button")
+                        modifier = Modifier.size(38.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Sort, contentDescription = "ソート")
+                        Icon(
+                            imageVector = Icons.Default.Sort,
+                            contentDescription = "ソート",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
                     }
 
                     DropdownMenu(
@@ -299,8 +359,16 @@ fun ItemListScreen(
                     ) {
                         SortOption.values().forEach { option ->
                             DropdownMenuItem(
-                                text = { Text(option.label, fontSize = 13.sp, fontWeight = if (sortOption == option) FontWeight.Bold else FontWeight.Normal) },
+                                text = {
+                                    Text(
+                                        text = option.label,
+                                        fontWeight = if (sortOption == option) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (sortOption == option) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 13.sp
+                                    )
+                                },
                                 onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     viewModel.setSortOption(option)
                                     showSortMenu = false
                                 }
@@ -310,87 +378,53 @@ fun ItemListScreen(
                 }
             }
 
-            // 検索中またはまとめ選択時のヒントバー
-            if (isSelectionMode) {
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "💡 チェックを入れると複数選択できます（検索語を変えても選択は保持されます）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (selectedItemIds.isNotEmpty()) {
-                            Text(
-                                text = "${selectedItemIds.size}件",
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
-            } else if (searchQuery.isNotBlank()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "検索結果: ${filteredItems.size}件",
-                        fontSize = 11.sp,
-                        color = Color.Gray
-                    )
-                    OutlinedButton(
-                        onClick = { viewModel.toggleSelectionMode() },
-                        modifier = Modifier.height(28.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-                    ) {
-                        Icon(Icons.Default.MergeType, contentDescription = null, modifier = Modifier.size(14.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("この結果からまとめ買い", fontSize = 10.sp)
-                    }
-                }
-            }
-
             // ③ ステータスフィルターチップ
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    .padding(horizontal = 10.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 FilterChip(
                     selected = (statusFilter == "ALL"),
-                    onClick = { viewModel.setStatusFilter("ALL") },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.setStatusFilter("ALL")
+                    },
                     label = { Text("すべて (${filteredItems.size})", fontSize = 11.sp) },
-                    modifier = Modifier.height(32.dp)
+                    modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
                     selected = (statusFilter == "LISTED"),
-                    onClick = { viewModel.setStatusFilter("LISTED") },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.setStatusFilter("LISTED")
+                    },
                     label = { Text("出品中", fontSize = 11.sp) },
-                    modifier = Modifier.height(32.dp)
+                    modifier = Modifier.height(28.dp)
                 )
                 FilterChip(
                     selected = (statusFilter == "SOLD"),
-                    onClick = { viewModel.setStatusFilter("SOLD") },
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.setStatusFilter("SOLD")
+                    },
                     label = { Text("売却済", fontSize = 11.sp) },
-                    modifier = Modifier.height(32.dp)
+                    modifier = Modifier.height(28.dp)
+                )
+
+                Spacer(modifier = Modifier.weight(1f))
+                Text(
+                    text = "${visibleItems.size} / ${filteredItems.size}件",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
             }
 
             Spacer(modifier = Modifier.height(4.dp))
 
-            // ④ 一覧表示（コンパクトな2列グリッド）
+            // ④ 一覧表示（コンパクトな2列グリッド ＆ 折りたたみボタン）
             if (filteredItems.isEmpty()) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text("該当する商品がありません", color = Color.Gray)
@@ -399,12 +433,12 @@ fun ItemListScreen(
                 Box(modifier = Modifier.weight(1f)) {
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(2),
-                        contentPadding = PaddingValues(10.dp),
+                        contentPadding = PaddingValues(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        items(filteredItems, key = { it.item.id }) { itemWithPhotos ->
+                        items(visibleItems, key = { it.item.id }) { itemWithPhotos ->
                             val isSelected = selectedItemIds.contains(itemWithPhotos.item.id)
                             CompactItemCard(
                                 itemWithPhotos = itemWithPhotos,
@@ -413,15 +447,56 @@ fun ItemListScreen(
                                 defaultExpense = defaultSettings.defaultExpenseCost,
                                 isSelectionMode = isSelectionMode,
                                 isSelected = isSelected,
-                                onSelectToggle = { viewModel.toggleItemSelection(itemWithPhotos.item.id) },
+                                onSelectToggle = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    viewModel.toggleItemSelection(itemWithPhotos.item.id)
+                                },
                                 onClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     if (isSelectionMode) {
                                         viewModel.toggleItemSelection(itemWithPhotos.item.id)
                                     } else {
                                         onNavigateToDetail(itemWithPhotos.item.id)
                                     }
+                                },
+                                onLongClick = {
+                                    if (!isSelectionMode) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        quickActionItem = itemWithPhotos
+                                    }
                                 }
                             )
+                        }
+
+                        // 表示件数が全件未満の場合の「さらに10件表示」ボタン
+                        if (filteredItems.size > displayLimit) {
+                            item(span = { GridItemSpan(2) }) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 12.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = { displayLimit += 10 },
+                                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer, contentColor = MaterialTheme.colorScheme.onSecondaryContainer),
+                                            shape = RoundedCornerShape(20.dp)
+                                        ) {
+                                            Icon(Icons.Default.ExpandMore, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("さらに10件表示 (${displayLimit}/${filteredItems.size}件)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = { displayLimit = filteredItems.size },
+                                            shape = RoundedCornerShape(20.dp)
+                                        ) {
+                                            Text("全件表示", fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -473,6 +548,7 @@ fun ItemListScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CompactItemCard(
     itemWithPhotos: ItemWithPhotos,
@@ -482,7 +558,8 @@ fun CompactItemCard(
     isSelectionMode: Boolean,
     isSelected: Boolean,
     onSelectToggle: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onLongClick: () -> Unit = {}
 ) {
     val item = itemWithPhotos.item
     val photos = itemWithPhotos.photos
@@ -497,6 +574,8 @@ fun CompactItemCard(
     val fee = (basePrice * effectiveFee) / 100
     val profit = (basePrice - fee - effectiveShipping - effectiveExpense).coerceAtLeast(0)
 
+    val isBundle = item.mergedChildCount > 0 || item.bundleLevel > 0
+
     val displayImageFile = firstPhoto?.let { p ->
         p.thumbnailPath?.let { File(it) }?.takeIf { it.exists() } ?: File(p.filePath)
     }
@@ -504,7 +583,10 @@ fun CompactItemCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
             .border(
                 width = if (isSelected) 2.dp else 0.dp,
                 color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
@@ -538,76 +620,82 @@ fun CompactItemCard(
                     }
                 }
 
-                // ステータスバッジ
-                Box(
+                // ステータスバッジ ＆ まとめバッジ
+                Row(
                     modifier = Modifier
-                        .padding(4.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(
-                            when (item.status) {
-                                "SOLD" -> Color(0xFFC62828)
-                                "MERGED" -> Color(0xFF6A1B9A)
-                                "DRAFT" -> Color.Gray
-                                else -> MaterialTheme.colorScheme.primary
-                            }
-                        )
-                        .padding(horizontal = 6.dp, vertical = 2.dp)
                         .align(Alignment.TopStart)
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = when (item.status) {
-                            "SOLD" -> "売却済"
-                            "MERGED" -> "まとめ済"
-                            "DRAFT" -> "下書き"
-                            else -> "出品中"
-                        },
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                // PC送信済みバッジ
-                if (item.isShared) {
                     Box(
                         modifier = Modifier
-                            .padding(4.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF2E7D32))
-                            .padding(2.dp)
-                            .align(Alignment.TopEnd)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(
+                                when (item.status) {
+                                    "SOLD" -> Color(0xFFC62828)
+                                    "MERGED" -> Color(0xFF6A1B9A)
+                                    "DRAFT" -> Color.Gray
+                                    else -> MaterialTheme.colorScheme.primary
+                                }
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = "PC送信済",
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
+                        Text(
+                            text = when (item.status) {
+                                "SOLD" -> "売却済"
+                                "MERGED" -> "まとめ済"
+                                "DRAFT" -> "下書き"
+                                else -> "出品中"
+                            },
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    if (isBundle) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFFE65100))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "まとめ (${item.mergedChildCount}点)",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
 
-                // 複数選択チェックボックス
-                if (isSelectionMode) {
+                // 写真枚数インジケーター
+                if (photos.size > 1) {
                     Box(
                         modifier = Modifier
                             .padding(4.dp)
-                            .align(Alignment.BottomEnd)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                            .align(Alignment.TopEnd)
                     ) {
-                        Checkbox(
-                            checked = isSelected,
-                            onCheckedChange = { onSelectToggle() },
-                            modifier = Modifier.size(24.dp)
+                        Text(
+                            text = "${photos.size}枚",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
                         )
                     }
                 }
             }
 
-            // テキスト情報エリア（無駄な余白を削ったスリム設計）
+            // 情報エリア
             Column(modifier = Modifier.padding(8.dp)) {
                 Text(
-                    text = item.title,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
+                    text = item.title.ifBlank { "無題の商品" },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -621,15 +709,24 @@ fun CompactItemCard(
                 ) {
                     Text(
                         text = formatter.format(basePrice),
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
-                    )
-
-                    Text(
-                        text = "利 ${formatter.format(profit)}",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "利益: ${formatter.format(profit)}",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF2E7D32)
+                    )
+                }
+
+                if (item.useCustomSettings) {
+                    Text(
+                        text = "個別設定: 手数料${effectiveFee}% / 送料${effectiveShipping}円",
+                        fontSize = 9.sp,
+                        color = Color.Gray,
+                        maxLines = 1
                     )
                 }
             }

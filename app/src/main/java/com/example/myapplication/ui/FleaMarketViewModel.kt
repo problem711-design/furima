@@ -15,6 +15,8 @@ import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemEntity
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.data.local.SalesSummary
+import com.example.myapplication.data.server.LocalWebServer
+import com.example.myapplication.data.server.NetworkUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -43,6 +45,31 @@ enum class TimeRange(val label: String) {
 
 class FleaMarketViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = FleaMarketRepository(application)
+    private val webServer = LocalWebServer(application, repository)
+
+    val isWebServerRunning: StateFlow<Boolean> = webServer.isRunning
+    val webServerLogs: StateFlow<List<String>> = webServer.logs
+    val serverPort: Int = webServer.port
+
+    private val _serverIpAddress = MutableStateFlow<String?>(null)
+    val serverIpAddress: StateFlow<String?> = _serverIpAddress.asStateFlow()
+
+    init {
+        refreshServerIp()
+    }
+
+    fun refreshServerIp() {
+        _serverIpAddress.value = NetworkUtils.getLocalIpAddress()
+    }
+
+    fun toggleWebServer(enabled: Boolean) {
+        if (enabled) {
+            refreshServerIp()
+            webServer.start()
+        } else {
+            webServer.stop()
+        }
+    }
 
     val defaultSettings: StateFlow<DefaultSettings> = repository.defaultSettings
 
@@ -89,9 +116,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     ) { items, query, status, sort ->
         items.filter { itemWithPhotos ->
             val item = itemWithPhotos.item
-            val matchesQuery = query.isBlank() ||
-                    item.title.contains(query, ignoreCase = true) ||
-                    item.description.contains(query, ignoreCase = true)
+            val itemFullText = "${item.title} ${item.description}"
+            val matchesQuery = matchesSearchQuery(itemFullText, query)
 
             val matchesStatus = when (status) {
                 "LISTED" -> item.status == "LISTED"
@@ -126,6 +152,28 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
     )
+
+    private fun matchesSearchQuery(text: String, query: String): Boolean {
+        val q = query.trim()
+        if (q.isBlank()) return true
+        val lowerText = text.lowercase()
+
+        // 1. 完全一致フレーズ検索: "..." で囲まれている場合
+        if (q.startsWith("\"") && q.endsWith("\"") && q.length > 2) {
+            val exactPhrase = q.substring(1, q.length - 1).lowercase()
+            return lowerText.contains(exactPhrase)
+        }
+
+        // 2. OR 検索: 大文字の " OR " または " | " で区切られている場合
+        if (q.contains(" OR ") || q.contains(" | ")) {
+            val terms = q.split(Regex(" OR | \\| ")).map { it.trim().lowercase() }.filter { it.isNotBlank() }
+            return terms.any { lowerText.contains(it) }
+        }
+
+        // 3. AND 検索: 半角または全角スペースで区切られた全単語を含む
+        val words = q.split(Regex("[\\s　]+")).map { it.trim().lowercase() }.filter { it.isNotBlank() }
+        return words.all { lowerText.contains(it) }
+    }
 
     // 期間別サマリー（今週・今月・全期間）
     val periodSalesSummary: StateFlow<SalesSummary> = combine(
@@ -278,10 +326,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         newFeeRatePercent: Int,
         newExpenseCost: Int,
         childItemIds: List<Int> = _selectedItemIds.value.toList(),
+        asStatus: String = "LISTED",
         onSuccess: (Long) -> Unit
     ) {
         viewModelScope.launch {
-            val ids = if (childItemIds.isNotEmpty()) childItemIds else _selectedItemIds.value.toList()
+            val ids = childItemIds.ifEmpty { _selectedItemIds.value.toList() }
             val newId = repository.mergeItems(
                 mergedTitle = mergedTitle,
                 mergedDescription = mergedDescription,
@@ -289,11 +338,26 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 newShippingCost = newShippingCost,
                 newFeeRatePercent = newFeeRatePercent,
                 newExpenseCost = newExpenseCost,
-                childItemIds = ids
+                childItemIds = ids,
+                asStatus = asStatus
             )
             clearSelection()
             onSuccess(newId)
         }
+    }
+
+    /**
+     * まとめ買い出品を解除（バラす）して元の子商品を出品中に復元
+     */
+    fun unmergeItem(parentId: Int, onSuccess: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.unmergeItem(parentId)
+            onSuccess()
+        }
+    }
+
+    suspend fun getChildItems(parentId: Int): List<ItemWithPhotos> {
+        return repository.getMergedChildItemsWithPhotos(parentId)
     }
 
     fun updateItemStatus(item: ItemEntity, newStatus: String) {
@@ -420,5 +484,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             }
             onResult(totalDeleted)
         }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        webServer.stop()
     }
 }

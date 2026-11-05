@@ -107,7 +107,7 @@ fun MergeItemsDialog(
                     .verticalScroll(rememberScrollState())
             ) {
                 Text(
-                    text = "個別出品を1つのまとめ出品に統合します。元の個別出品は『まとめ売却済』として履歴を残しつつ一覧から除外されます。",
+                    text = "個別出品を1つのまとめ出品に統合します。作成されたまとめ商品は『出品中』として一覧に表示され、元の個別出品は履歴として保持され必要に応じて後からバラす（解除）ことも可能です。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -167,12 +167,18 @@ fun MergeItemsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // まとめ売却価格（手動自由入力）
+                val discount = (totalOriginalPrice - inputPrice).coerceAtLeast(0)
+                // まとめ出品価格（手動自由入力）
                 OutlinedTextField(
                     value = priceText,
                     onValueChange = { priceText = it },
-                    label = { Text("まとめ売却価格 (円)") },
-                    supportingText = { Text("個別定価の合計: ${formatter.format(totalOriginalPrice)} (交渉成立額を入力)") },
+                    label = { Text("まとめ出品価格 (円)") },
+                    supportingText = {
+                        Text(
+                            text = "元商品の合計: ${formatter.format(totalOriginalPrice)}" +
+                                    if (discount > 0) " (値引き額: -${formatter.format(discount)})" else ""
+                        )
+                    },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("merge_price_input")

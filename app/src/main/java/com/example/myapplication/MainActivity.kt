@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Analytics
+import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -33,6 +34,7 @@ import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.screens.ItemDetailScreen
 import com.example.myapplication.ui.screens.ItemEditScreen
 import com.example.myapplication.ui.screens.ItemListScreen
+import com.example.myapplication.ui.screens.PcSyncScreen
 import com.example.myapplication.ui.screens.SalesAnalysisScreen
 import com.example.myapplication.ui.screens.SettingsStorageScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
@@ -128,12 +130,18 @@ fun MainTabsContainer(
                 NavigationBarItem(
                     selected = (selectedTab == 1),
                     onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Analytics, contentDescription = "売上分析") },
-                    label = { Text("売上分析") }
+                    icon = { Icon(Icons.Default.Computer, contentDescription = "PC連携") },
+                    label = { Text("PC連携") }
                 )
                 NavigationBarItem(
                     selected = (selectedTab == 2),
                     onClick = { selectedTab = 2 },
+                    icon = { Icon(Icons.Default.Analytics, contentDescription = "売上分析") },
+                    label = { Text("売上分析") }
+                )
+                NavigationBarItem(
+                    selected = (selectedTab == 3),
+                    onClick = { selectedTab = 3 },
                     icon = { Icon(Icons.Default.Settings, contentDescription = "設定・容量") },
                     label = { Text("設定・容量") }
                 )
@@ -147,10 +155,13 @@ fun MainTabsContainer(
                     onNavigateToDetail = onNavigateToDetail,
                     onNavigateToAdd = onNavigateToAdd
                 )
-                1 -> SalesAnalysisScreen(
+                1 -> PcSyncScreen(
                     viewModel = viewModel
                 )
-                2 -> SettingsStorageScreen(
+                2 -> SalesAnalysisScreen(
+                    viewModel = viewModel
+                )
+                3 -> SettingsStorageScreen(
                     viewModel = viewModel
                 )
             }

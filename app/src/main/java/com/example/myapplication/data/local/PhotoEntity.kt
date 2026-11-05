@@ -24,6 +24,7 @@ data class PhotoEntity(
     val filePath: String,
     val thumbnailPath: String? = null, // 軽量サムネイルのローカルパス
     val isOriginalDeleted: Boolean = false, // PC送信後に元高画質画像が削除されサムネイルのみか
+    val isPcSynced: Boolean = false, // PC側に高画質画像が同期・保存済みか
     val displayOrder: Int = 0,
     val createdAt: Long = System.currentTimeMillis()
 )

@@ -16,6 +16,10 @@ interface ItemDao {
     fun getAllActiveItemsWithPhotos(): Flow<List<ItemWithPhotos>>
 
     @Transaction
+    @Query("SELECT * FROM items WHERE mergedParentId IS NULL ORDER BY createdAt DESC")
+    suspend fun getActiveItemsWithPhotosDirect(): List<ItemWithPhotos>
+
+    @Transaction
     @Query("SELECT * FROM items ORDER BY createdAt DESC")
     fun getAllItemsWithPhotos(): Flow<List<ItemWithPhotos>>
 
@@ -48,6 +52,9 @@ interface ItemDao {
     @Query("SELECT * FROM photos WHERE itemId = :itemId ORDER BY displayOrder ASC")
     suspend fun getPhotosByItemId(itemId: Int): List<PhotoEntity>
 
+    @Query("SELECT * FROM photos WHERE id = :id")
+    suspend fun getPhotoById(id: Int): PhotoEntity?
+
     @Query("SELECT * FROM items WHERE mergedParentId IS NULL")
     fun getAllActiveItems(): Flow<List<ItemEntity>>
 
@@ -56,4 +63,20 @@ interface ItemDao {
 
     @Query("SELECT * FROM items WHERE mergedParentId = :parentId")
     suspend fun getMergedChildItems(parentId: Int): List<ItemEntity>
+
+    @Transaction
+    @Query("SELECT * FROM items WHERE mergedParentId = :parentId")
+    suspend fun getMergedChildItemsWithPhotos(parentId: Int): List<ItemWithPhotos>
+
+    @Query("UPDATE items SET status = 'LISTED', mergedParentId = NULL WHERE mergedParentId = :parentId")
+    suspend fun restoreMergedChildren(parentId: Int)
+
+    @Query("UPDATE items SET status = 'LISTED', mergedParentId = NULL WHERE id IN (:childIds)")
+    suspend fun unmergeSpecificChildren(childIds: List<Int>)
+
+    @Query("UPDATE photos SET isPcSynced = :isSynced WHERE id = :photoId")
+    suspend fun updatePhotoPcSynced(photoId: Int, isSynced: Boolean)
+
+    @Query("UPDATE photos SET isOriginalDeleted = :isDeleted, filePath = :newPath WHERE id = :photoId")
+    suspend fun updatePhotoOriginalDeleted(photoId: Int, isDeleted: Boolean, newPath: String)
 }
