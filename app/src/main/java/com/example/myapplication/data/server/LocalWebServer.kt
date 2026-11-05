@@ -132,9 +132,12 @@ class LocalWebServer(
                 try {
                     val settings = repository.defaultSettings.value
                     val items = repository.getActiveItemsWithPhotosDirect()
-                    val dtoList = items.map { it.toDto(settings) }
+                    val baseUrl = "${call.request.local.scheme}://${call.request.local.localHost}:${call.request.local.localPort}"
+                    val dtoList = items.map { it.toDto(settings, baseUrl) }
+                    addLog("API GET /api/items: ${dtoList.size}件の商品を返却しました")
                     call.respond(dtoList)
                 } catch (e: Exception) {
+                    addLog("API GET /api/items エラー: ${e.localizedMessage}")
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.localizedMessage ?: "Unknown error")))
                 }
             }
@@ -148,7 +151,8 @@ class LocalWebServer(
                 }
                 val item = repository.getItemById(id)
                 if (item != null) {
-                    call.respond(item.toDto(repository.defaultSettings.value))
+                    val baseUrl = "${call.request.local.scheme}://${call.request.local.localHost}:${call.request.local.localPort}"
+                    call.respond(item.toDto(repository.defaultSettings.value, baseUrl))
                 } else {
                     call.respond(HttpStatusCode.NotFound, mapOf("error" to "Item not found"))
                 }
@@ -477,13 +481,16 @@ class LocalWebServer(
                 try {
                     val settings = repository.defaultSettings.value
                     val items = repository.getActiveItemsWithPhotosDirect()
-                    val dtoList = items.map { it.toDto(settings) }
+                    val baseUrl = "${call.request.local.scheme}://${call.request.local.localHost}:${call.request.local.localPort}"
+                    val dtoList = items.map { it.toDto(settings, baseUrl) }
+                    addLog("API GET /api/sync/full-data: 全${dtoList.size}件の同期データを要求されました")
                     call.respond(mapOf(
                         "serverTime" to System.currentTimeMillis(),
                         "totalItems" to dtoList.size,
                         "items" to dtoList
                     ))
                 } catch (e: Exception) {
+                    addLog("API GET /api/sync/full-data エラー: ${e.localizedMessage}")
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.localizedMessage ?: "Unknown error")))
                 }
             }
@@ -548,6 +555,7 @@ class LocalWebServer(
             get("/api/photos/{id}") {
                 val photoId = call.parameters["id"]?.toIntOrNull()
                 if (photoId == null) {
+                    addLog("API GET /api/photos/{id}: 無効な写真ID")
                     call.respond(HttpStatusCode.BadRequest)
                     return@get
                 }
@@ -555,15 +563,20 @@ class LocalWebServer(
                 if (photo != null) {
                     val file = File(photo.filePath)
                     if (file.exists()) {
+                        addLog("API GET /api/photos/$photoId: オリジナル写真を配信 (${file.absolutePath})")
                         call.respondFile(file)
                         return@get
                     } else if (photo.thumbnailPath != null) {
                         val thumbFile = File(photo.thumbnailPath)
                         if (thumbFile.exists()) {
+                            addLog("API GET /api/photos/$photoId: オリジナル不在のためサムネイルを配信 (${thumbFile.absolutePath})")
                             call.respondFile(thumbFile)
                             return@get
                         }
                     }
+                    addLog("API GET /api/photos/$photoId: 写真ファイルが存在しません (path=${photo.filePath})")
+                } else {
+                    addLog("API GET /api/photos/$photoId: DBに写真データが見つかりません")
                 }
                 call.respond(HttpStatusCode.NotFound)
             }
@@ -595,7 +608,7 @@ class LocalWebServer(
         }
     }
 
-    private fun ItemWithPhotos.toDto(defaultSettings: DefaultSettings): WebItemDto {
+    private fun ItemWithPhotos.toDto(defaultSettings: DefaultSettings, baseUrl: String = ""): WebItemDto {
         val profit = item.getCalculatedProfit(defaultSettings)
         val statusLabel = when (item.status) {
             "LISTED" -> "出品中"
@@ -605,10 +618,12 @@ class LocalWebServer(
             else -> item.status
         }
         val photoDtos = photos.map { photo ->
+            val pUrl = if (baseUrl.isNotEmpty()) "$baseUrl/api/photos/${photo.id}" else "/api/photos/${photo.id}"
+            val pThumbUrl = if (baseUrl.isNotEmpty()) "$baseUrl/api/photos/${photo.id}/thumb" else "/api/photos/${photo.id}/thumb"
             WebPhotoDto(
                 id = photo.id,
-                url = "/api/photos/${photo.id}",
-                thumbUrl = "/api/photos/${photo.id}/thumb",
+                url = pUrl,
+                thumbUrl = pThumbUrl,
                 isOriginalDeleted = photo.isOriginalDeleted
             )
         }

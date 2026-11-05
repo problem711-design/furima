@@ -65,6 +65,27 @@ object WebDashboardHtml {
 
             <!-- 左側: メイン商品グリッド表示エリア -->
             <div class="flex-1 w-full min-w-0">
+                <!-- まとめ買い作成モード案内バナー -->
+                <div id="merge-mode-banner" class="hidden mb-4 bg-purple-50 border border-purple-200 text-purple-900 p-4 rounded-xl flex items-center justify-between shadow-sm">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold">
+                            <i class="fa-solid fa-object-group"></i>
+                        </div>
+                        <div>
+                            <h4 class="font-bold text-sm">まとめ買い作成モード</h4>
+                            <p class="text-xs text-purple-700">出品ページリストからまとめたい商品カードをクリックして選択してください (選択中: <span id="merge-mode-count">0</span>件)</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="confirmMergeMode()" id="merge-confirm-btn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow transition opacity-50 cursor-not-allowed" disabled>
+                            次へ（詳細設定）
+                        </button>
+                        <button onclick="cancelMergeMode()" class="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-lg transition">
+                            キャンセル
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 商品一覧グリッド -->
                 <div id="items-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                     <!-- JavaScriptで動的生成 -->
@@ -124,9 +145,9 @@ object WebDashboardHtml {
                             <i class="fa-solid fa-plus text-base"></i> 新規商品を出品
                         </button>
 
-                        <!-- まとめ買い作成 (選択時強調) -->
-                        <button id="merge-sidebar-btn" onclick="openMergeModal()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition opacity-50 cursor-not-allowed" disabled>
-                            <i class="fa-solid fa-object-group text-base"></i> まとめ買い作成 (<span id="selected-count-sidebar">0</span>)
+                        <!-- まとめ買い作成 -->
+                        <button id="merge-sidebar-btn" onclick="startMergeMode()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition cursor-pointer">
+                            <i class="fa-solid fa-object-group text-base"></i> まとめ買い作成
                         </button>
 
                         <!-- PCフォルダ自動同期 -->
@@ -139,8 +160,8 @@ object WebDashboardHtml {
                             <i class="fa-solid fa-rotate-right text-sm"></i> データ手動更新
                         </button>
 
-                        <!-- スマホ全件同期 (将来連携用) -->
-                        <button onclick="showToast('全件自動同期エンジン準備中')" class="w-full bg-slate-50 hover:bg-slate-100 text-slate-500 border border-slate-200 font-medium py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition">
+                        <!-- スマホ全件同期 -->
+                        <button onclick="fetchItems(); showToast('全件データを同期しました')" class="w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2 px-3 rounded-xl text-xs flex items-center justify-center gap-2 transition">
                             <i class="fa-solid fa-bolt text-amber-500 text-sm"></i> スマホ全件同期・照合
                         </button>
                     </div>
@@ -313,6 +334,58 @@ object WebDashboardHtml {
         let currentFilter = 'ALL';
         let selectedItemIds = new Set();
         let currentViewingPhoto = null;
+        let isMergeMode = false;
+
+        function startMergeMode() {
+            isMergeMode = true;
+            selectedItemIds.clear();
+            document.getElementById('merge-mode-banner').classList.remove('hidden');
+            const sbBtn = document.getElementById('merge-sidebar-btn');
+            if (sbBtn) {
+                sbBtn.classList.add('ring-4', 'ring-purple-300');
+                sbBtn.innerHTML = '<i class="fa-solid fa-xmark text-base"></i> まとめ買い作成中 (キャンセル)';
+            }
+            updateMergeModeUI();
+            renderItems();
+            showToast('まとめ買いモードを開始しました。商品カードをクリックして選択してください。');
+        }
+
+        function cancelMergeMode() {
+            isMergeMode = false;
+            selectedItemIds.clear();
+            document.getElementById('merge-mode-banner').classList.add('hidden');
+            const sbBtn = document.getElementById('merge-sidebar-btn');
+            if (sbBtn) {
+                sbBtn.classList.remove('ring-4', 'ring-purple-300');
+                sbBtn.innerHTML = '<i class="fa-solid fa-object-group text-base"></i> まとめ買い作成';
+            }
+            renderItems();
+            showToast('まとめ買いモードをキャンセルしました');
+        }
+
+        function confirmMergeMode() {
+            if (selectedItemIds.size < 2) {
+                showToast('2件以上選択してください');
+                return;
+            }
+            openMergeModal();
+        }
+
+        function updateMergeModeUI() {
+            const count = selectedItemIds.size;
+            const countSpan = document.getElementById('merge-mode-count');
+            if (countSpan) countSpan.innerText = count;
+            const confirmBtn = document.getElementById('merge-confirm-btn');
+            if (confirmBtn) {
+                if (count >= 2) {
+                    confirmBtn.disabled = false;
+                    confirmBtn.className = 'px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow transition opacity-100 cursor-pointer animate-pulse';
+                } else {
+                    confirmBtn.disabled = true;
+                    confirmBtn.className = 'px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow transition opacity-50 cursor-not-allowed';
+                }
+            }
+        }
 
         let autoSyncTimer = null;
 
@@ -413,6 +486,8 @@ object WebDashboardHtml {
                 selectedItemIds.add(id);
             }
             updateMergeActionBar();
+            if (isMergeMode) updateMergeModeUI();
+            renderItems();
         }
 
         function updateMergeActionBar() {
@@ -443,108 +518,112 @@ object WebDashboardHtml {
         }
 
         function renderItems() {
-            const grid = document.getElementById('items-grid');
-            const emptyState = document.getElementById('empty-state');
-            const search = document.getElementById('search-input').value.toLowerCase().trim();
+            try {
+                const grid = document.getElementById('items-grid');
+                const emptyState = document.getElementById('empty-state');
+                const search = document.getElementById('search-input').value.toLowerCase().trim();
 
-            const filtered = allItems.filter(item => {
-                let matchFilter = true;
-                if (currentFilter === 'LISTED') matchFilter = (item.status === 'LISTED');
-                if (currentFilter === 'UNSHARED') matchFilter = (!item.isShared);
-                if (currentFilter === 'SOLD') matchFilter = (item.status === 'SOLD');
+                const filtered = allItems.filter(item => {
+                    let matchFilter = true;
+                    if (currentFilter === 'LISTED') matchFilter = (item.status === 'LISTED');
+                    if (currentFilter === 'UNSHARED') matchFilter = (!item.isShared);
+                    if (currentFilter === 'SOLD') matchFilter = (item.status === 'SOLD');
 
-                const matchSearch = !search || item.title.toLowerCase().includes(search) || (item.description && item.description.toLowerCase().includes(search));
-                return matchFilter && matchSearch;
-            });
+                    const matchSearch = !search || (item.title && item.title.toLowerCase().includes(search)) || (item.description && item.description.toLowerCase().includes(search));
+                    return matchFilter && matchSearch;
+                });
 
-            if (filtered.length === 0) {
-                grid.innerHTML = '';
-                emptyState.classList.remove('hidden');
-                return;
+                if (filtered.length === 0) {
+                    grid.innerHTML = '';
+                    emptyState.classList.remove('hidden');
+                    return;
+                }
+
+                emptyState.classList.add('hidden');
+                grid.innerHTML = filtered.map(item => {
+                    const isSold = item.status === 'SOLD';
+                    const isMerged = item.status === 'MERGED';
+                    const isSelected = selectedItemIds.has(item.id);
+
+                    let statusBadge = '<span class="bg-blue-100 text-blue-800 text-[11px] px-2 py-0.5 rounded-full font-bold">出品中</span>';
+                    if (isSold) statusBadge = '<span class="bg-emerald-100 text-emerald-800 text-[11px] px-2 py-0.5 rounded-full font-bold">売却済</span>';
+                    if (isMerged) statusBadge = '<span class="bg-purple-100 text-purple-800 text-[11px] px-2 py-0.5 rounded-full font-bold">まとめ売却</span>';
+
+                    const sharedBadge = item.isShared
+                        ? '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded font-bold" title="PC送信済み"><i class="fa-solid fa-check"></i> PC済</span>'
+                        : '<button onclick="event.stopPropagation(); markShared(' + item.id + ')" class="bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] px-1.5 py-0.5 rounded font-bold transition">送信済にする</button>';
+
+                    const mainPhotoObj = item.photos && item.photos.length > 0 ? item.photos[0] : null;
+                    const mainPhoto = mainPhotoObj
+                        ? '<div class="relative group/photo"><img src="' + (mainPhotoObj.thumbUrl || mainPhotoObj.url) + '" alt="" class="w-full h-36 object-cover rounded-t-xl cursor-pointer hover:opacity-95 transition" onclick="openQuickActionModal(' + item.id + ')"><button onclick="event.stopPropagation(); openImageViewer(' + mainPhotoObj.id + ', \'' + mainPhotoObj.url + '\', ' + mainPhotoObj.isOriginalDeleted + ')" class="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 text-white px-2 py-1 rounded-md text-[11px] opacity-0 group-hover/photo:opacity-100 transition flex items-center gap-1 shadow" title="写真を拡大表示"><i class="fa-solid fa-expand"></i> 拡大</button></div>'
+                        : '<div class="w-full h-36 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl rounded-t-xl cursor-pointer" onclick="openQuickActionModal(' + item.id + ')"><i class="fa-solid fa-image"></i></div>';
+
+                    const photoThumbnails = item.photos && item.photos.length > 1
+                        ? '<div class="flex gap-1 px-3 pt-1.5 overflow-x-auto custom-scroll">' + item.photos.map(p => '<img src="' + (p.thumbUrl || p.url) + '" class="w-8 h-8 object-cover rounded cursor-pointer border ' + (p.isOriginalDeleted ? 'border-amber-400' : 'border-slate-200') + ' hover:border-indigo-500" onclick="event.stopPropagation(); openImageViewer(' + p.id + ', \'' + p.url + '\', ' + p.isOriginalDeleted + ')">').join('') + '</div>'
+                        : '';
+
+                    const unmergeBtn = isMerged || ((item.title && item.title.includes('まとめ')) || (item.description && item.description.includes('まとめ')))
+                        ? '<button onclick="event.stopPropagation(); unmergeItem(' + item.id + ')" class="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 text-[11px] py-1 px-2 rounded-lg font-bold transition flex items-center justify-center gap-1"><i class="fa-solid fa-object-ungroup"></i> まとめを解除</button>'
+                        : '';
+
+                    const selectBtn = '<button onclick="event.stopPropagation(); toggleSelect(' + item.id + ')" class="px-2 py-0.5 rounded-md text-[11px] font-bold transition flex items-center gap-1 ' + (isSelected ? 'bg-purple-600 text-white shadow' : 'bg-white/90 hover:bg-white text-slate-700 shadow') + '"><i class="fa-solid ' + (isSelected ? 'fa-check-square' : 'fa-square') + '"></i> ' + (isSelected ? '選択中' : '選択') + '</button>';
+
+                    const cardClickAction = isMergeMode ? 'toggleSelect(' + item.id + ')' : 'openQuickActionModal(' + item.id + ')';
+                    const selectBtn = isMergeMode 
+                        ? '<button onclick="event.stopPropagation(); toggleSelect(' + item.id + ')" class="px-2 py-0.5 rounded-md text-[11px] font-bold ' + (isSelected ? 'bg-purple-600 text-white shadow' : 'bg-slate-200 hover:bg-slate-300 text-slate-700') + '">' + (isSelected ? '✓ 選択中' : '選択する') + '</button>'
+                        : '<button onclick="event.stopPropagation(); toggleSelect(' + item.id + ')" class="px-2 py-0.5 rounded-md text-[11px] font-bold transition flex items-center gap-1 ' + (isSelected ? 'bg-purple-600 text-white shadow' : 'bg-white/90 hover:bg-white text-slate-700 shadow') + '"><i class="fa-solid ' + (isSelected ? 'fa-check-square' : 'fa-square') + '"></i> ' + (isSelected ? '選択中' : '選択') + '</button>';
+
+                    return `
+                    <div class="bg-white rounded-xl shadow-sm border ` + (isSelected ? 'border-purple-500 ring-2 ring-purple-200' : 'border-slate-200') + ` overflow-hidden flex flex-col hover:shadow-md transition relative group">
+                        <div class="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
+                            ` + selectBtn + `
+                            ` + statusBadge + `
+                        </div>
+                        <div class="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
+                            ` + sharedBadge + `
+                            <div class="bg-black/70 text-white text-[11px] px-2 py-0.5 rounded-md font-bold">
+                                ¥` + (item.price ? item.price.toLocaleString() : '0') + `
+                            </div>
+                        </div>
+                        <div class="relative">
+                            ` + mainPhoto + `
+                        </div>
+                        ` + photoThumbnails + `
+                        <div class="p-3 flex-1 flex flex-col justify-between cursor-pointer" onclick="` + cardClickAction + `">
+                            <div>
+                                <h3 class="font-bold text-slate-900 text-sm mb-0.5 line-clamp-1 group-hover:text-indigo-600 transition">` + escapeHtml(item.title) + `</h3>
+                                <p class="text-[11px] text-slate-500 mb-2 line-clamp-2">` + escapeHtml(item.description || '説明なし') + `</p>
+                                
+                                <div class="grid grid-cols-2 gap-1.5 bg-slate-50 p-2 rounded-lg text-[11px] mb-2">
+                                    <div>
+                                        <span class="text-slate-400 text-[10px]">純利益:</span>
+                                        <span class="font-bold text-amber-600 block text-xs">¥` + (item.profit ? item.profit.toLocaleString() : '0') + `</span>
+                                    </div>
+                                    <div class="text-right">
+                                        <span class="text-slate-400 text-[10px]">送料/経費:</span>
+                                        <span class="text-slate-700 block text-[11px]">¥` + (item.shippingCost || 0) + ` / ¥` + (item.expenseCost || 0) + `</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="pt-2 border-t border-slate-100 space-y-1.5">
+                                ` + unmergeBtn + `
+                                <div class="flex items-center gap-1.5">
+                                    <button onclick="event.stopPropagation(); copyDescription('` + escapeJs(item.title) + `', '` + escapeJs(item.description || '') + `')" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] py-1 px-2 rounded-lg font-medium flex items-center justify-center gap-1 transition">
+                                        <i class="fa-solid fa-copy"></i> 説明文コピー
+                                    </button>
+                                    <button onclick="event.stopPropagation(); openQuickActionModal(` + item.id + `)" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] py-1 px-2.5 rounded-lg font-bold transition flex items-center gap-1" title="クイック操作">
+                                        <i class="fa-solid fa-ellipsis-vertical"></i> 操作
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('');
+            } catch (err) {
+                console.error('renderItems error:', err);
+                showToast('描画エラー: ' + err.message);
             }
-
-            emptyState.classList.add('hidden');
-            grid.innerHTML = filtered.map(item => {
-                const isSold = item.status === 'SOLD';
-                const isMerged = item.status === 'MERGED';
-                const isSelected = selectedItemIds.has(item.id);
-
-                let statusBadge = '<span class="bg-blue-100 text-blue-800 text-[11px] px-2 py-0.5 rounded-full font-bold">出品中</span>';
-                if (isSold) statusBadge = '<span class="bg-emerald-100 text-emerald-800 text-[11px] px-2 py-0.5 rounded-full font-bold">売却済</span>';
-                if (isMerged) statusBadge = '<span class="bg-purple-100 text-purple-800 text-[11px] px-2 py-0.5 rounded-full font-bold">まとめ売却</span>';
-
-                const sharedBadge = item.isShared
-                    ? '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded font-bold" title="PC送信済み"><i class="fa-solid fa-check"></i> PC済</span>'
-                    : '<button onclick="event.stopPropagation(); markShared(' + item.id + ')" class="bg-amber-100 hover:bg-amber-200 text-amber-800 text-[10px] px-1.5 py-0.5 rounded font-bold transition">送信済にする</button>';
-
-                const mainPhotoObj = item.photos && item.photos.length > 0 ? item.photos[0] : null;
-                const mainPhoto = mainPhotoObj
-                    ? '<img src="' + (mainPhotoObj.thumbUrl || mainPhotoObj.url) + '" alt="" class="w-full h-36 object-cover rounded-t-xl cursor-pointer hover:opacity-95 transition" onclick="openQuickActionModal(' + item.id + ')">'
-                    : '<div class="w-full h-36 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl rounded-t-xl cursor-pointer" onclick="openQuickActionModal(' + item.id + ')"><i class="fa-solid fa-image"></i></div>';
-
-                const photoThumbnails = item.photos && item.photos.length > 1
-                    ? '<div class="flex gap-1 px-3 pt-1.5 overflow-x-auto custom-scroll">' + item.photos.map(p => '<img src="' + (p.thumbUrl || p.url) + '" class="w-8 h-8 object-cover rounded cursor-pointer border ' + (p.isOriginalDeleted ? 'border-amber-400' : 'border-slate-200') + ' hover:border-indigo-500" onclick="event.stopPropagation(); openImageViewer(' + p.id + ', \'' + p.url + '\', ' + p.isOriginalDeleted + ')">').join('') + '</div>'
-                    : '';
-
-                const unmergeBtn = isMerged || (item.title.includes('まとめ') || item.description.includes('まとめ'))
-                    ? '<button onclick="event.stopPropagation(); unmergeItem(' + item.id + ')" class="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 text-[11px] py-1 px-2 rounded-lg font-bold transition flex items-center justify-center gap-1"><i class="fa-solid fa-object-ungroup"></i> まとめを解除</button>'
-                    : '';
-
-                return `
-                <div class="bg-white rounded-xl shadow-sm border ` + (isSelected ? 'border-purple-500 ring-2 ring-purple-200' : 'border-slate-200') + ` overflow-hidden flex flex-col hover:shadow-md transition relative group">
-                    <div class="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
-                        <input type="checkbox" ` + (isSelected ? 'checked' : '') + ` onchange="event.stopPropagation(); toggleSelect(` + item.id + `)" class="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 cursor-pointer">
-                        ` + statusBadge + `
-                    </div>
-                    <div class="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
-                        ` + sharedBadge + `
-                        <div class="bg-black/70 text-white text-[11px] px-2 py-0.5 rounded-md font-bold">
-                            ¥` + item.price.toLocaleString() + `
-                        </div>
-                    </div>
-                    <div class="relative">
-                        ` + mainPhoto + `
-                    </div>
-                    ` + photoThumbnails + `
-                    <div class="p-3 flex-1 flex flex-col justify-between cursor-pointer" onclick="openQuickActionModal(` + item.id + `)">
-                        <div>
-                            <h3 class="font-bold text-slate-900 text-sm mb-0.5 line-clamp-1 group-hover:text-indigo-600 transition">` + escapeHtml(item.title) + `</h3>
-                            <p class="text-[11px] text-slate-500 mb-2 line-clamp-2">` + escapeHtml(item.description || '説明なし') + `</p>
-                            
-                            <div class="grid grid-cols-2 gap-1.5 bg-slate-50 p-2 rounded-lg text-[11px] mb-2">
-                                <div>
-                                    <span class="text-slate-400 text-[10px]">純利益:</span>
-                                    <span class="font-bold text-amber-600 block text-xs">¥` + item.profit.toLocaleString() + `</span>
-                                </div>
-                                <div class="text-right">
-                                    <span class="text-slate-400 text-[10px]">送料/経費:</span>
-                                    <span class="text-slate-700 block text-[11px]">¥` + item.shippingCost + ` / ¥` + item.expenseCost + `</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="pt-2 border-t border-slate-100 space-y-1.5">
-                            ` + unmergeBtn + `
-                            <div class="flex items-center gap-1.5">
-                                <button onclick="event.stopPropagation(); copyDescription('` + escapeJs(item.title) + `', '` + escapeJs(item.description || '') + `')" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] py-1 px-2 rounded-lg font-medium flex items-center justify-center gap-1 transition">
-                                    <i class="fa-solid fa-copy"></i> 説明文コピー
-                                </button>
-                                <button onclick="event.stopPropagation(); openQuickActionModal(` + item.id + `)" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] py-1 px-2.5 rounded-lg font-bold transition flex items-center gap-1" title="クイック操作">
-                                    <i class="fa-solid fa-ellipsis-vertical"></i> 操作
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-                                    <i class="fa-solid fa-trash-can"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
         }
 
         async function markShared(id) {
@@ -588,7 +667,10 @@ object WebDashboardHtml {
 
         function openMergeModal() {
             const ids = Array.from(selectedItemIds);
-            if (ids.length < 2) return;
+            if (ids.length < 2) {
+                showToast('まとめ買いには商品にチェックを入れて2件以上選択してください');
+                return;
+            }
             const itemsToMerge = allItems.filter(i => ids.includes(i.id));
             const mergedTitle = itemsToMerge.map(i => i.title).join(' + ');
             const totalPrice = itemsToMerge.reduce((sum, i) => sum + i.price, 0);
@@ -1001,11 +1083,13 @@ object WebDashboardHtml {
         }
 
         function escapeHtml(str) {
-            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            if (str === null || str === undefined) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
         function escapeJs(str) {
-            return str.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '');
+            if (str === null || str === undefined) return '';
+            return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '');
         }
     </script>
 </body>
