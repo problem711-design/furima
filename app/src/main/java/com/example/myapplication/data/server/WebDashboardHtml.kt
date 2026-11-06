@@ -25,7 +25,7 @@ object WebDashboardHtml {
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.2 (Build 2)</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.2 (Build 3)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -261,7 +261,18 @@ object WebDashboardHtml {
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">送料 (まとめ後) (円)</label>
-                        <input type="number" id="merge-shipping" value="210" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm">
+                        <input type="number" id="merge-shipping" value="210" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-purple-500">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 bg-purple-50/50 p-3 rounded-xl border border-purple-100">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">販売手数料率 (%)</label>
+                        <input type="number" id="merge-fee-rate" value="5" placeholder="5" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-purple-500">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">梱包資材費・経費 (円)</label>
+                        <input type="number" id="merge-expense" value="55" placeholder="55" class="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white focus:ring-2 focus:ring-purple-500">
                     </div>
                 </div>
                 <div class="pt-4 border-t border-slate-200 flex justify-end gap-3">
@@ -626,7 +637,7 @@ object WebDashboardHtml {
         function openMergeModal() {
             const ids = Array.from(selectedItemIds);
             if (ids.length < 2) {
-                showToast('まとめ買いには商品にチェックを入れて2件以上選択してください');
+                showToast('まとめ買いには商品を2件以上選択してください');
                 return;
             }
             const itemsToMerge = allItems.filter(i => ids.includes(i.id));
@@ -637,6 +648,8 @@ object WebDashboardHtml {
             document.getElementById('merge-description').value = '【まとめ買い内容】\n' + itemsToMerge.map(i => '・' + i.title + ' (¥' + i.price + ')').join('\n');
             document.getElementById('merge-price').value = totalPrice;
             document.getElementById('merge-shipping').value = '210';
+            document.getElementById('merge-fee-rate').value = '5';
+            document.getElementById('merge-expense').value = '55';
             document.getElementById('merge-modal').classList.remove('hidden');
         }
 
@@ -651,6 +664,8 @@ object WebDashboardHtml {
             const mergedDescription = document.getElementById('merge-description').value;
             const totalSoldPrice = parseInt(document.getElementById('merge-price').value) || 0;
             const newShippingCost = parseInt(document.getElementById('merge-shipping').value) || 210;
+            const newFeeRatePercent = parseInt(document.getElementById('merge-fee-rate').value) || 5;
+            const newExpenseCost = parseInt(document.getElementById('merge-expense').value) || 55;
 
             const btn = document.getElementById('merge-submit-btn');
             btn.disabled = true;
@@ -665,16 +680,16 @@ object WebDashboardHtml {
                         mergedDescription,
                         totalSoldPrice,
                         newShippingCost,
-                        newFeeRatePercent: 5,
-                        newExpenseCost: 55,
+                        newFeeRatePercent,
+                        newExpenseCost,
                         asStatus: 'LISTED'
                     })
                 });
                 if (!res.ok) throw new Error('まとめ買い作成に失敗しました');
                 showToast('まとめ買い商品を作成しました！');
                 selectedItemIds.clear();
-                updateMergeActionBar();
                 closeMergeModal();
+                cancelMergeMode();
                 fetchItems();
             } catch (err) {
                 showToast(err.message);
