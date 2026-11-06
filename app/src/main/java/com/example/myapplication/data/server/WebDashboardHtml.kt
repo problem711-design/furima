@@ -21,11 +21,11 @@ object WebDashboardHtml {
     <!-- ナビゲーションバー (スリム＆インライン統合) -->
     <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-30">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-4">
-            <!-- 左側: タイトル & 接続ステータス (バージョン表示追加) -->
+            <!-- 左側: タイトル & 接続ステータス (バージョン表示) -->
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.2 (Build 1)</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.2 (Build 2)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -40,16 +40,12 @@ object WebDashboardHtml {
                     <button onclick="setFilter('SOLD')" id="filter-sold" class="filter-btn px-2.5 py-1 text-xs font-medium rounded-md hover:bg-indigo-500/50 text-indigo-100 transition">売却済 (<span id="count-sold">0</span>)</button>
                 </div>
 
-                <button id="merge-action-btn" onclick="openMergeModal()" class="hidden bg-purple-500 hover:bg-purple-600 text-white px-3 py-1 rounded-lg text-xs font-bold shadow flex items-center gap-1 shrink-0 transition">
-                    <i class="fa-solid fa-object-group"></i> まとめ作成 (<span id="selected-count">0</span>)
-                </button>
-
                 <div class="relative w-44 lg:w-60 shrink-0">
                     <i class="fa-solid fa-magnifying-glass absolute left-2.5 top-2 text-indigo-300 text-xs"></i>
                     <input type="text" id="search-input" oninput="renderItems()" placeholder="商品名・説明文で検索..." class="w-full pl-8 pr-2 py-1 text-xs bg-indigo-700/80 text-white placeholder-indigo-300 border border-indigo-400/50 rounded-lg focus:outline-none focus:bg-indigo-800 focus:ring-1 focus:ring-white">
                 </div>
 
-                <!-- ヘッダー右側アクションボタン (サイドバーへの移動に伴いボタンを統合) -->
+                <!-- ヘッダー右側アクションボタン -->
                 <div class="flex items-center gap-1.5 shrink-0">
                     <input type="file" id="folder-sync-input" webkitdirectory class="hidden" onchange="handleFolderSync(event)">
                     <button onclick="openCreateModal()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded-lg text-xs font-bold shadow flex items-center gap-1 transition">
@@ -69,21 +65,13 @@ object WebDashboardHtml {
                 <!-- まとめ買い作成モード案内バナー -->
                 <div id="merge-mode-banner" class="hidden mb-4 bg-purple-50 border border-purple-200 text-purple-900 p-4 rounded-xl flex items-center justify-between shadow-sm">
                     <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold">
+                        <div class="w-8 h-8 rounded-full bg-purple-600 text-white flex items-center justify-center font-bold shrink-0">
                             <i class="fa-solid fa-object-group"></i>
                         </div>
                         <div>
-                            <h4 class="font-bold text-sm">まとめ買い作成モード</h4>
-                            <p class="text-xs text-purple-700">出品ページリストからまとめたい商品カードをクリックして選択してください (選択中: <span id="merge-mode-count">0</span>件)</p>
+                            <h4 class="font-bold text-sm">まとめ買い作成モード中</h4>
+                            <p class="text-xs text-purple-700">まとめたい商品カードをクリックして選択してください (選択中: <span id="merge-mode-count" class="font-bold">0</span>件)。2件以上選択後に右下の「まとめ買いを作成する」ボタンで実行できます。</p>
                         </div>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <button onclick="confirmMergeMode()" id="merge-confirm-btn" class="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow transition opacity-50 cursor-not-allowed" disabled>
-                            次へ（詳細設定）
-                        </button>
-                        <button onclick="cancelMergeMode()" class="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-medium rounded-lg transition">
-                            キャンセル
-                        </button>
                     </div>
                 </div>
 
@@ -146,8 +134,8 @@ object WebDashboardHtml {
                             <i class="fa-solid fa-plus text-base"></i> 新規商品を出品
                         </button>
 
-                        <!-- まとめ買い作成 -->
-                        <button id="merge-sidebar-btn" onclick="startMergeMode()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition cursor-pointer">
+                        <!-- まとめ買い作成 (1ボタン操作完結) -->
+                        <button id="merge-sidebar-btn" onclick="handleMergeButtonClick()" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition cursor-pointer">
                             <i class="fa-solid fa-object-group text-base"></i> まとめ買い作成
                         </button>
 
@@ -337,16 +325,23 @@ object WebDashboardHtml {
         let currentViewingPhoto = null;
         let isMergeMode = false;
 
+        function handleMergeButtonClick() {
+            if (!isMergeMode) {
+                startMergeMode();
+            } else {
+                if (selectedItemIds.size >= 2) {
+                    openMergeModal();
+                } else {
+                    cancelMergeMode();
+                }
+            }
+        }
+
         function startMergeMode() {
             isMergeMode = true;
             selectedItemIds.clear();
             document.getElementById('merge-mode-banner').classList.remove('hidden');
-            const sbBtn = document.getElementById('merge-sidebar-btn');
-            if (sbBtn) {
-                sbBtn.classList.add('ring-4', 'ring-purple-300');
-                sbBtn.innerHTML = '<i class="fa-solid fa-xmark text-base"></i> まとめ買い作成中 (キャンセル)';
-            }
-            updateMergeModeUI();
+            updateMergeSidebarBtn();
             renderItems();
             showToast('まとめ買いモードを開始しました。商品カードをクリックして選択してください。');
         }
@@ -355,35 +350,31 @@ object WebDashboardHtml {
             isMergeMode = false;
             selectedItemIds.clear();
             document.getElementById('merge-mode-banner').classList.add('hidden');
-            const sbBtn = document.getElementById('merge-sidebar-btn');
-            if (sbBtn) {
-                sbBtn.classList.remove('ring-4', 'ring-purple-300');
-                sbBtn.innerHTML = '<i class="fa-solid fa-object-group text-base"></i> まとめ買い作成';
-            }
+            updateMergeSidebarBtn();
             renderItems();
-            showToast('まとめ買いモードをキャンセルしました');
+            showToast('まとめ買いモードを終了しました');
         }
 
-        function confirmMergeMode() {
-            if (selectedItemIds.size < 2) {
-                showToast('2件以上選択してください');
-                return;
-            }
-            openMergeModal();
-        }
+        function updateMergeSidebarBtn() {
+            const sbBtn = document.getElementById('merge-sidebar-btn');
+            if (!sbBtn) return;
+            sbBtn.disabled = false; // 常に活性化
 
-        function updateMergeModeUI() {
             const count = selectedItemIds.size;
             const countSpan = document.getElementById('merge-mode-count');
             if (countSpan) countSpan.innerText = count;
-            const confirmBtn = document.getElementById('merge-confirm-btn');
-            if (confirmBtn) {
+
+            if (!isMergeMode) {
+                sbBtn.className = 'w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition cursor-pointer';
+                sbBtn.innerHTML = '<i class="fa-solid fa-object-group text-base"></i> まとめ買い作成';
+            } else {
                 if (count >= 2) {
-                    confirmBtn.disabled = false;
-                    confirmBtn.className = 'px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow transition opacity-100 cursor-pointer animate-pulse';
+                    sbBtn.className = 'w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow-lg flex items-center justify-center gap-2 transition cursor-pointer animate-pulse ring-4 ring-purple-300';
+                    sbBtn.innerHTML = '<i class="fa-solid fa-check text-base"></i> まとめ買いを作成する (' + count + '件)';
                 } else {
-                    confirmBtn.disabled = true;
-                    confirmBtn.className = 'px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded-lg shadow transition opacity-50 cursor-not-allowed';
+                    const text = count === 1 ? 'モード解除 (1件選択中)' : 'モード解除 (未選択)';
+                    sbBtn.className = 'w-full bg-purple-700 hover:bg-purple-800 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition cursor-pointer ring-2 ring-purple-300';
+                    sbBtn.innerHTML = '<i class="fa-solid fa-xmark text-base"></i> ' + text;
                 }
             }
         }
@@ -486,36 +477,8 @@ object WebDashboardHtml {
             } else {
                 selectedItemIds.add(id);
             }
-            updateMergeActionBar();
-            if (isMergeMode) updateMergeModeUI();
+            if (isMergeMode) updateMergeSidebarBtn();
             renderItems();
-        }
-
-        function updateMergeActionBar() {
-            const count = selectedItemIds.size;
-            const headerBtn = document.getElementById('merge-action-btn');
-            const sidebarBtn = document.getElementById('merge-sidebar-btn');
-            
-            if (document.getElementById('selected-count')) {
-                document.getElementById('selected-count').innerText = count;
-            }
-            if (document.getElementById('selected-count-sidebar')) {
-                document.getElementById('selected-count-sidebar').innerText = count;
-            }
-
-            if (count >= 2) {
-                if (headerBtn) headerBtn.classList.remove('hidden');
-                if (sidebarBtn) {
-                    sidebarBtn.disabled = false;
-                    sidebarBtn.className = 'w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow-lg flex items-center justify-center gap-2 transition opacity-100 cursor-pointer animate-pulse';
-                }
-            } else {
-                if (headerBtn) headerBtn.classList.add('hidden');
-                if (sidebarBtn) {
-                    sidebarBtn.disabled = true;
-                    sidebarBtn.className = 'w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm shadow flex items-center justify-center gap-2 transition opacity-50 cursor-not-allowed';
-                }
-            }
         }
 
         function renderItems() {
@@ -568,14 +531,10 @@ object WebDashboardHtml {
                         : '';
 
                     const cardClickAction = isMergeMode ? 'toggleSelect(' + item.id + ')' : 'openQuickActionModal(' + item.id + ')';
-                    const selectBtn = isMergeMode 
-                        ? '<button onclick="event.stopPropagation(); toggleSelect(' + item.id + ')" class="px-2 py-0.5 rounded-md text-[11px] font-bold ' + (isSelected ? 'bg-purple-600 text-white shadow' : 'bg-slate-200 hover:bg-slate-300 text-slate-700') + '">' + (isSelected ? '✓ 選択中' : '選択する') + '</button>'
-                        : '<button onclick="event.stopPropagation(); toggleSelect(' + item.id + ')" class="px-2 py-0.5 rounded-md text-[11px] font-bold transition flex items-center gap-1 ' + (isSelected ? 'bg-purple-600 text-white shadow' : 'bg-white/90 hover:bg-white text-slate-700 shadow') + '"><i class="fa-solid ' + (isSelected ? 'fa-check-square' : 'fa-square') + '"></i> ' + (isSelected ? '選択中' : '選択') + '</button>';
 
                     return `
                     <div class="bg-white rounded-xl shadow-sm border ` + (isSelected ? 'border-purple-500 ring-2 ring-purple-200' : 'border-slate-200') + ` overflow-hidden flex flex-col hover:shadow-md transition relative group">
                         <div class="absolute top-2.5 left-2.5 z-10 flex items-center gap-1.5">
-                            ` + selectBtn + `
                             ` + statusBadge + `
                         </div>
                         <div class="absolute top-2.5 right-2.5 z-10 flex items-center gap-1.5">
