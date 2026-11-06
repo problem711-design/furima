@@ -56,9 +56,9 @@
   - [x] `WebDashboardHtml.kt`: まとめ買い作成操作を右側サイドバーボタン1つに集約（開始・実行・解除）。ボタン非活性バグ修正。サムネイル左上チェックボックス削除（Pinterest等拡張機能不具合回避）。バージョンを `v1.2 (Build 2)` へ更新。
   - [x] `WebDashboardHtml.kt` / `app/build.gradle.kts`: まとめ買い作成モーダルへ販売手数料率・梱包資材費経費の入力欄追加、作成完了時の自動モーダルクローズ、スマホアプリ側とブラウザ管理画面のバージョン同時統一（`v1.2 (Build 3)`）を完了。
 
-- [ ] **フェーズ 7-F: 写真同期ダウンロードの正常化 (写真URLのIP固定問題の解消)** 【未着手】(編集対象: 2ファイル)
-  - [ ] `LocalWebServer.kt`: `/api/sync/full-data` での写真URL組み立て時に `127.0.0.1` ではなく接続元のHost IPを利用するよう修正。
-  - [ ] `FurimaSyncNative.cs` (`furima-sync.exe`): 相対パス・127.0.0.1混入時の自動URL補正と例外ハンドリングを追加し、PCへの画像DLを完結させる。
+- [x] **フェーズ 7-F: 写真同期ダウンロードの正常化 (写真URLのIP固定問題の解消)** 【完了】(編集対象: 2ファイル)
+  - [x] `LocalWebServer.kt`: `/api/sync/full-data`, `/api/items`, `/api/items/{id}` での写真URL組み立て時に `127.0.0.1` ではなく接続元のHost IPを利用するよう `call.getBaseUrl()` に統一。
+  - [x] `FurimaSyncNative.cs` (`furima-sync.exe`): 相対パス・127.0.0.1/0.0.0.0/localhost 混入時の自動URL補正と例外ハンドリング、サムネイルフォールバック処理を追加。
 
 - [ ] **フェーズ 7-G: 中間同期ツール (`furima-sync.exe`) のデータパース堅牢化 & 全フォルダ生成保証** 【未着手】(編集対象: 1ファイル)
   - [ ] `FurimaSyncNative.cs`: 型パース・Nullチェックの安全化により、特定商品のデータ不整合による他商品のフォルダ作成スキップを防止。
@@ -69,6 +69,12 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-05] フェーズ7-F完了 (フェーズ7までのうちフェーズ7-Fまで完了) バージョン 1.2 (Build 4)
+- `LocalWebServer.kt`, `FurimaSyncNative.cs`, `WebDashboardHtml.kt`, `app/build.gradle.kts` を編集。
+- 写真URLのIP動的補正: `LocalWebServer.kt` で `call.getBaseUrl()` を導入し、リクエストヘッダーの `Host` を優先利用するように統一。これにより `127.0.0.1` 固定問題を解消。
+- C# 同期ツールのURL自動補正強化: `FurimaSyncNative.cs` で相対パスや `127.0.0.1` / `0.0.0.0` / `localhost` 混入時のURL補正処理および `thumbUrl` へのフォールバック処理を強化。
+- バージョン同期統一: スマホアプリ (`versionCode = 4`) と PCブラウザ管理画面 (`v1.2 (Build 4)`) を同時更新。
 
 ### [2026-11-05] まとめ買い設定項目追加・自動クローズ対応・バージョン同時統一完了 バージョン 1.2 (Build 3)
 - `WebDashboardHtml.kt` および `app/build.gradle.kts` を編集。

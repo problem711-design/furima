@@ -13,6 +13,7 @@ import io.ktor.http.content.forEachPart
 import io.ktor.http.content.streamProvider
 import io.ktor.serialization.gson.gson
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.EmbeddedServer
@@ -132,7 +133,7 @@ class LocalWebServer(
                 try {
                     val settings = repository.defaultSettings.value
                     val items = repository.getActiveItemsWithPhotosDirect()
-                    val baseUrl = "${call.request.local.scheme}://${call.request.local.localHost}:${call.request.local.localPort}"
+                    val baseUrl = call.getBaseUrl()
                     val dtoList = items.map { it.toDto(settings, baseUrl) }
                     addLog("API GET /api/items: ${dtoList.size}件の商品を返却しました")
                     call.respond(dtoList)
@@ -151,8 +152,7 @@ class LocalWebServer(
                 }
                 val item = repository.getItemById(id)
                 if (item != null) {
-                    val baseUrl = "${call.request.local.scheme}://${call.request.local.localHost}:${call.request.local.localPort}"
-                    call.respond(item.toDto(repository.defaultSettings.value, baseUrl))
+                    call.respond(item.toDto(repository.defaultSettings.value, call.getBaseUrl()))
                 } else {
                     call.respond(HttpStatusCode.NotFound, mapOf("error" to "Item not found"))
                 }
@@ -481,7 +481,7 @@ class LocalWebServer(
                 try {
                     val settings = repository.defaultSettings.value
                     val items = repository.getActiveItemsWithPhotosDirect()
-                    val baseUrl = "${call.request.local.scheme}://${call.request.local.localHost}:${call.request.local.localPort}"
+                    val baseUrl = call.getBaseUrl()
                     val dtoList = items.map { it.toDto(settings, baseUrl) }
                     addLog("API GET /api/sync/full-data: 全${dtoList.size}件の同期データを要求されました")
                     call.respond(mapOf(
@@ -671,3 +671,12 @@ data class WebPhotoDto(
     val thumbUrl: String?,
     val isOriginalDeleted: Boolean
 )
+
+private fun ApplicationCall.getBaseUrl(): String {
+    val hostHeader = request.headers[HttpHeaders.Host]
+    return if (!hostHeader.isNullOrBlank()) {
+        "${request.local.scheme}://$hostHeader"
+    } else {
+        ""
+    }
+}

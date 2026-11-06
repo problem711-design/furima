@@ -109,15 +109,46 @@ class FurimaSync
                                         foreach (var photoObj in photosList)
                                         {
                                             var photo = photoObj as Dictionary<string, object>;
-                                            if (photo != null && photo.ContainsKey("url") && photo["url"] != null)
+                                            if (photo != null)
                                             {
-                                                string photoUrl = photo["url"].ToString();
+                                                string photoUrl = photo.ContainsKey("url") && photo["url"] != null ? photo["url"].ToString().Trim() : "";
+                                                string thumbUrl = photo.ContainsKey("thumbUrl") && photo["thumbUrl"] != null ? photo["thumbUrl"].ToString().Trim() : "";
+
+                                                string targetUrl = !string.IsNullOrEmpty(photoUrl) ? photoUrl : thumbUrl;
+                                                if (string.IsNullOrEmpty(targetUrl)) continue;
+
+                                                if (targetUrl.StartsWith("/"))
+                                                {
+                                                    targetUrl = serverUrl + targetUrl;
+                                                }
+                                                else
+                                                {
+                                                    try
+                                                    {
+                                                        Uri photoUri = new Uri(targetUrl);
+                                                        string host = photoUri.Host.ToLower();
+                                                        if (host == "127.0.0.1" || host == "0.0.0.0" || host == "localhost" || host == "::1")
+                                                        {
+                                                            Uri serverUri = new Uri(serverUrl);
+                                                            targetUrl = serverUri.Scheme + "://" + serverUri.Authority + photoUri.PathAndQuery;
+                                                        }
+                                                    }
+                                                    catch
+                                                    {
+                                                        int apiIdx = targetUrl.IndexOf("/api/");
+                                                        if (apiIdx >= 0)
+                                                        {
+                                                            targetUrl = serverUrl + targetUrl.Substring(apiIdx);
+                                                        }
+                                                    }
+                                                }
+
                                                 try
                                                 {
                                                     string photoFileName = "photo_" + photoIdx.ToString("00") + ".jpg";
                                                     string photoPath = Path.Combine(itemDirPath, photoFileName);
 
-                                                    var bytesTask = client.GetByteArrayAsync(photoUrl);
+                                                    var bytesTask = client.GetByteArrayAsync(targetUrl);
                                                     bytesTask.Wait();
                                                     byte[] photoBytes = bytesTask.Result;
                                                     File.WriteAllBytes(photoPath, photoBytes);
@@ -125,7 +156,7 @@ class FurimaSync
                                                 }
                                                 catch (Exception photoEx)
                                                 {
-                                                    Console.WriteLine("写真DL失敗 (ID: " + id + "): " + photoEx.Message);
+                                                    Console.WriteLine("写真DL失敗 (ID: " + id + ", URL: " + targetUrl + "): " + photoEx.Message);
                                                 }
                                             }
                                         }
