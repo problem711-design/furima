@@ -44,15 +44,38 @@
   - [x] `LocalWebServer.kt`: 全商品・写真の一括情報取得用API (`/api/sync/full-data`) を追加
   - [x] PC用軽量同期ツール (`furima-sync.exe`): PCローカルフォルダへの出品別フォルダ自動作成、写真・`説明文.txt` 出力、接続成功時の自動ブラウザ起動に対応する独立EXEツールをビルド作成
 
+- [ ] **フェーズ 7-E: PC管理画面 JavaScript 文法エラーの修正 (最優先・画面復元)** 【未着手】(編集対象: 1ファイル)
+  - [ ] `WebDashboardHtml.kt`: `renderItems()` 内の `const selectBtn` 変数重複宣言を修正し、PCブラウザ管理画面の表示・全ボタン操作を復旧させる。
+
+- [ ] **フェーズ 7-F: 写真同期ダウンロードの正常化 (写真URLのIP固定問題の解消)** 【未着手】(編集対象: 2ファイル)
+  - [ ] `LocalWebServer.kt`: `/api/sync/full-data` での写真URL組み立て時に `127.0.0.1` ではなく接続元のHost IPを利用するよう修正。
+  - [ ] `FurimaSyncNative.cs` (`furima-sync.exe`): 相対パス・127.0.0.1混入時の自動URL補正と例外ハンドリングを追加し、PCへの画像DLを完結させる。
+
+- [ ] **フェーズ 7-G: 中間同期ツール (`furima-sync.exe`) のデータパース堅牢化 & 全フォルダ生成保証** 【未着手】(編集対象: 1ファイル)
+  - [ ] `FurimaSyncNative.cs`: 型パース・Nullチェックの安全化により、特定商品のデータ不整合による他商品のフォルダ作成スキップを防止。
+
+- [ ] **フェーズ 7-H: PCフォルダ自動同期時の画像重複登録防止** 【未着手】(編集対象: 2ファイル)
+  - [ ] `WebDashboardHtml.kt` / `FurimaSyncNative.cs`: PC保存時のファイル名規則・ブラウザアップロード時の重複判定ロジックを整理し、2重登録を防ぐ。
+
 ---
 
 ## 更新履歴 (Changelog)
 
-### [2026-11-05] データ非同期バグの修正（Room Flow `.first()` のデッドロック・同期失敗の解消）
-- `FleaMarketRepository.kt` に `getActiveItemsWithPhotosDirect()` suspend関数を追加。
-- `LocalWebServer.kt` の `/api/items` および `/api/sync/full-data` エンドポイントが Room Flow の `.first()` ではなくダイレクト suspend クエリ (`getActiveItemsWithPhotosDirect()`) を使用するように修正。これにより、同期ツールや手動更新時におけるデータ未反映・ハングアップ問題を完全に解消。
-- アップデート前のデータが消えていた原因（Room DB バージョン4への移行に伴う `.fallbackToDestructiveMigration()` による自動テーブル再作成）について確認・原因特定。
-- `app:assembleDebug` ビルド検証成功。
+### [2026-11-05] 状況調査・障害原因特定と段階的修正ロードマップ策定完了
+- **調査報告完了**:
+  1. PC管理画面動作不全の原因: `WebDashboardHtml.kt` 内の `const selectBtn` 重複宣言による `SyntaxError`（JS全停止）。
+  2. 写真自動ダウンロード失敗の原因: `LocalWebServer.kt` が返す写真URLのホスト名が `127.0.0.1` になりPCから接続失敗していたため。
+  3. フォルダ作成漏れの原因: `.NET` `JavaScriptSerializer` の型パース例外によるループ中断。
+- **段階的修正ロードマップ策定**: 影響範囲・規模が最小限となるよう、フェーズ 7-E 〜 7-H に分割・整理。
+
+### [2026-11-05] 状況調査・障害原因の特定完了（コード編集なし・調査報告フェーズ）
+- **現状の通信・接続構造**: PCブラウザとスマホアプリ (`LocalWebServer`:8080) が直接Wi-Fi通信を行う設計。中間同期ツール (`FurimaSync.exe`) はスマホURLを自動ブラウザ起動するランチャー兼、PCローカル (`出品写真_PC保存用`) へ全件一括ダウンロードする独立バックアップツール。
+- **PC管理画面が動かない直接原因**: `WebDashboardHtml.kt` 内の `renderItems()` JavaScript関数で `const selectBtn` が重複宣言されており、`SyntaxError` が発生してJS全体の実行が停止中。これにより一覧取得・フィルタ・新規出品等の全ボタンが動作不能になっていた。
+- **中間同期ツールの課題**: 30秒ごとの全写真強制再ダウンロードによる通信高負荷、保存時のファイル名変更 (`photo_01.jpg`) による再アップロード時の重複発生、ブラウザ管理画面とのデータ連携の欠如。
+
+---
+
+### PC管理画面 UI刷新 & PC自動同期エンジン拡張フェーズ (フェーズ7)
 
 ### [2026-11-05] フェーズ7-D完了（フェーズ7までの全機能および同期ツールのビルド完了）
 - `LocalWebServer.kt` および `tools/FurimaSync.cs` (`furima-sync.exe`) を作成。
