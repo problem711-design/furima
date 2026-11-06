@@ -21,10 +21,11 @@ object WebDashboardHtml {
     <!-- ナビゲーションバー (スリム＆インライン統合) -->
     <header class="bg-indigo-600 text-white shadow-md sticky top-0 z-30">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between gap-4">
-            <!-- 左側: タイトル & 接続ステータス (「Remix」削除) -->
+            <!-- 左側: タイトル & 接続ステータス (バージョン表示追加) -->
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.2 (Build 1)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -565,8 +566,6 @@ object WebDashboardHtml {
                     const unmergeBtn = isMerged || ((item.title && item.title.includes('まとめ')) || (item.description && item.description.includes('まとめ')))
                         ? '<button onclick="event.stopPropagation(); unmergeItem(' + item.id + ')" class="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 text-[11px] py-1 px-2 rounded-lg font-bold transition flex items-center justify-center gap-1"><i class="fa-solid fa-object-ungroup"></i> まとめを解除</button>'
                         : '';
-
-                    const selectBtn = '<button onclick="event.stopPropagation(); toggleSelect(' + item.id + ')" class="px-2 py-0.5 rounded-md text-[11px] font-bold transition flex items-center gap-1 ' + (isSelected ? 'bg-purple-600 text-white shadow' : 'bg-white/90 hover:bg-white text-slate-700 shadow') + '"><i class="fa-solid ' + (isSelected ? 'fa-check-square' : 'fa-square') + '"></i> ' + (isSelected ? '選択中' : '選択') + '</button>';
 
                     const cardClickAction = isMergeMode ? 'toggleSelect(' + item.id + ')' : 'openQuickActionModal(' + item.id + ')';
                     const selectBtn = isMergeMode 
