@@ -414,8 +414,7 @@ fun ItemDetailScreen(
                         .height(300.dp)
                 ) {
                     items(photos, key = { it.id }) { photo ->
-                        val displayFile = photo.thumbnailPath?.let { File(it) }?.takeIf { it.exists() }
-                            ?: File(photo.filePath)
+                        val displayFile = photo.displayFile
                         Box(
                             modifier = Modifier
                                 .aspectRatio(1f)

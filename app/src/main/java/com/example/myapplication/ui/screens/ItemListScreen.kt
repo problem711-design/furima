@@ -576,9 +576,7 @@ fun CompactItemCard(
 
     val isBundle = item.mergedChildCount > 0 || item.bundleLevel > 0
 
-    val displayImageFile = firstPhoto?.let { p ->
-        p.thumbnailPath?.let { File(it) }?.takeIf { it.exists() } ?: File(p.filePath)
-    }
+    val displayImageFile = firstPhoto?.displayFile
 
     Card(
         modifier = Modifier

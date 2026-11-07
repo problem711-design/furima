@@ -23,3 +23,9 @@ debug.keystore
 /*.zip
 /metadata.json
 
+# PC server local sync directory & tunnel executable & agent artifacts
+/出品写真_PC保存用/
+/.artifacts/
+/tools/cloudflared.exe
+
+

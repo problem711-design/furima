@@ -337,6 +337,129 @@ fun PcSyncScreen(
                     }
                 }
             }
+
+            // 母艦PCサーバーへの差分同期＆自動ストレージ解放カード
+            val pcServerUrl by viewModel.pcServerUrl.collectAsState()
+            val isPcConnected by viewModel.isPcServerConnected.collectAsState()
+            var inputUrl by remember(pcServerUrl) { mutableStateOf(pcServerUrl) }
+            var isSyncing by remember { mutableStateOf(false) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface
+                ),
+                border = CardDefaults.outlinedCardBorder()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Computer,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = "母艦PCサーバー連携 (第2世代)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 15.sp
+                            )
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(
+                                        if (isPcConnected) Color(0xFF10B981) else Color(0xFF94A3B8),
+                                        CircleShape
+                                    )
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isPcConnected) "接続中" else "未接続",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isPcConnected) Color(0xFF047857) else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "PC側で起動中の furima-server.exe のアドレスを指定し、差分写真の高速送信とスマホ側の自動容量削減を行います。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    androidx.compose.material3.OutlinedTextField(
+                        value = inputUrl,
+                        onValueChange = {
+                            inputUrl = it
+                            viewModel.updatePcServerUrl(it)
+                        },
+                        label = { Text("PCサーバーURL") },
+                        placeholder = { Text("http://192.168.1.10:8080") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        TextButton(
+                            onClick = {
+                                viewModel.testPcServerConnection { connected ->
+                                    val msg = if (connected) "PCサーバーへの接続に成功しました！" else "PCサーバーへ接続できませんでした。"
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("接続確認")
+                        }
+
+                        androidx.compose.material3.Button(
+                            onClick = {
+                                isSyncing = true
+                                viewModel.syncDeltaToPcServer { result ->
+                                    isSyncing = false
+                                    if (result.isSuccess) {
+                                        val freedStr = if (result.freedMb > 0) " (${result.freedMb}MB空けました)" else ""
+                                        Toast.makeText(
+                                            context,
+                                            "同期成功: ${result.syncedItemsCount}件の商品メタデータ・${result.syncedPhotosCount}枚の新規写真をPCへ送信しました$freedStr",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    } else {
+                                        Toast.makeText(
+                                            context,
+                                            "同期失敗: ${result.errorMessage ?: "通信エラー"}",
+                                            Toast.LENGTH_LONG
+                                        ).show()
+                                    }
+                                }
+                            },
+                            enabled = !isSyncing,
+                            modifier = Modifier.weight(1.5f)
+                        ) {
+                            Text(if (isSyncing) "同期中..." else "差分同期＆容量解放")
+                        }
+                    }
+                }
+            }
         }
     }
 }

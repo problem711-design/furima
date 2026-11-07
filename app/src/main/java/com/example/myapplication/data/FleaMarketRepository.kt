@@ -91,6 +91,7 @@ class FleaMarketRepository(context: Context) {
             useCustomSettings = useCustomSettings,
             isShared = existingItem?.isShared ?: false,
             createdAt = existingItem?.createdAt ?: System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
             soldAt = soldAt
         )
 
@@ -111,8 +112,13 @@ class FleaMarketRepository(context: Context) {
         // 既存写真の保持
         for (path in existingFilePaths) {
             val existing = existingPhotoMap[path]
+            val md5 = if (existing != null && existing.md5Hash.isNotBlank()) {
+                existing.md5Hash
+            } else {
+                photoStorageManager.calculateMd5(File(path))
+            }
             if (existing != null) {
-                newPhotoEntities.add(existing.copy(displayOrder = orderIndex++))
+                newPhotoEntities.add(existing.copy(displayOrder = orderIndex++, md5Hash = md5, updatedAt = System.currentTimeMillis()))
             } else {
                 val thumb = photoStorageManager.createThumbnail(
                     File(path),
@@ -124,6 +130,7 @@ class FleaMarketRepository(context: Context) {
                         itemId = itemId,
                         filePath = path,
                         thumbnailPath = thumb,
+                        md5Hash = md5,
                         displayOrder = orderIndex++
                     )
                 )
@@ -139,11 +146,13 @@ class FleaMarketRepository(context: Context) {
                 thumbMaxDim = currentSettings.thumbnailMaxDimension
             )
             if (savedResult != null) {
+                val md5 = photoStorageManager.calculateMd5(File(savedResult.first))
                 newPhotoEntities.add(
                     PhotoEntity(
                         itemId = itemId,
                         filePath = savedResult.first,
                         thumbnailPath = savedResult.second,
+                        md5Hash = md5,
                         displayOrder = orderIndex++
                     )
                 )

@@ -18,12 +18,15 @@ import com.example.myapplication.data.local.SalesSummary
 import com.example.myapplication.data.server.LocalWebServer
 import com.example.myapplication.data.server.NetworkUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Calendar
@@ -486,8 +489,62 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    private val pcServerClient = com.example.myapplication.data.server.PcServerClient(getApplication(), repository)
+
+    private val _pcServerUrl = MutableStateFlow<String>("http://10.0.2.2:8082")
+    val pcServerUrl: StateFlow<String> = _pcServerUrl.asStateFlow()
+
+    private val _isPcServerConnected = MutableStateFlow<Boolean>(false)
+    val isPcServerConnected: StateFlow<Boolean> = _isPcServerConnected.asStateFlow()
+
+    private var heartbeatJob: Job? = null
+
+    init {
+        startHeartbeatLoop()
+    }
+
+    private fun startHeartbeatLoop() {
+        heartbeatJob?.cancel()
+        heartbeatJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                val url = _pcServerUrl.value
+                if (url.isNotBlank()) {
+                    val connected = pcServerClient.sendHeartbeat(url)
+                    _isPcServerConnected.value = connected
+                } else {
+                    _isPcServerConnected.value = false
+                }
+                delay(4000)
+            }
+        }
+    }
+
+    fun updatePcServerUrl(url: String) {
+        _pcServerUrl.value = url
+    }
+
+    fun testPcServerConnection(onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val connected = pcServerClient.checkServerStatus(_pcServerUrl.value)
+            _isPcServerConnected.value = connected
+            if (connected) {
+                pcServerClient.sendHeartbeat(_pcServerUrl.value)
+            }
+            onResult(connected)
+        }
+    }
+
+    fun syncDeltaToPcServer(onResult: (com.example.myapplication.data.server.PcSyncResult) -> Unit) {
+        viewModelScope.launch {
+            val result = pcServerClient.syncDeltaToPcServer(_pcServerUrl.value)
+            _isPcServerConnected.value = result.isSuccess
+            onResult(result)
+        }
+    }
+
     override fun onCleared() {
         super.onCleared()
+        heartbeatJob?.cancel()
         webServer.stop()
     }
 }

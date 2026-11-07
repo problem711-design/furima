@@ -24,6 +24,7 @@ data class ItemEntity(
     val discountAmount: Int = 0, // まとめ買い値引き額
     val bundleLevel: Int = 0, // まとめ階層（0: 単品, 1: まとめ商品, 2: まとめのまとめ）
     val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(), // 最終更新日時タイムスタンプ
     val soldAt: Long? = null // 売却成立日時
 ) {
     fun getEffectiveFeeRatePercent(defaultSettings: DefaultSettings): Int =

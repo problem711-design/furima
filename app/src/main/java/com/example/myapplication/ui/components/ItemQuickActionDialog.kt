@@ -132,9 +132,7 @@ fun ItemQuickActionDialog(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // サムネイル画像
-                val displayFile = firstPhoto?.let { p ->
-                    p.thumbnailPath?.let { File(it) }?.takeIf { it.exists() } ?: File(p.filePath)
-                }
+                val displayFile = firstPhoto?.displayFile
                 Box(
                     modifier = Modifier
                         .size(52.dp)

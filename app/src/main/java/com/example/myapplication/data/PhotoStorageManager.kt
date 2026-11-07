@@ -15,6 +15,7 @@ import com.example.myapplication.data.local.PhotoEntity
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,6 +41,27 @@ class PhotoStorageManager(private val context: Context) {
         val dir = File(context.filesDir, "Thumbnails")
         if (!dir.exists()) dir.mkdirs()
         return dir
+    }
+
+    /**
+     * ファイルのMD5チェックサムハッシュ値を計算して返却
+     */
+    fun calculateMd5(file: File): String {
+        if (!file.exists() || !file.isFile) return ""
+        return try {
+            val digest = MessageDigest.getInstance("MD5")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ""
+        }
     }
 
     /**
