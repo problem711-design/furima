@@ -35,7 +35,6 @@ abstract class AppDatabase : RoomDatabase() {
                     "flea_market_database"
                 )
                     .addMigrations(MIGRATION_4_5)
-                    .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance
                 instance

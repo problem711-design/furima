@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
@@ -343,6 +344,7 @@ fun PcSyncScreen(
             val isPcConnected by viewModel.isPcServerConnected.collectAsState()
             var inputUrl by remember(pcServerUrl) { mutableStateOf(pcServerUrl) }
             var isSyncing by remember { mutableStateOf(false) }
+            var missingOriginalCount by remember { mutableStateOf<Int?>(null) }
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -414,6 +416,33 @@ fun PcSyncScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
+                    missingOriginalCount?.let { count ->
+                        if (count > 0) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFFFFF7ED), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = Color(0xFFEA580C),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "原本なし写真: ${count}件（PC保存用フォルダに存在しません）",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFC2410C)
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -436,11 +465,13 @@ fun PcSyncScreen(
                                 isSyncing = true
                                 viewModel.syncDeltaToPcServer { result ->
                                     isSyncing = false
+                                    missingOriginalCount = result.missingOriginalPhotosCount
                                     if (result.isSuccess) {
                                         val freedStr = if (result.freedMb > 0) " (${result.freedMb}MB空けました)" else ""
+                                        val missingStr = if (result.missingOriginalPhotosCount > 0) " (原本なし: ${result.missingOriginalPhotosCount}件)" else ""
                                         Toast.makeText(
                                             context,
-                                            "同期成功: ${result.syncedItemsCount}件の商品メタデータ・${result.syncedPhotosCount}枚の新規写真をPCへ送信しました$freedStr",
+                                            "同期成功: ${result.syncedItemsCount}件の商品メタデータ・${result.syncedPhotosCount}枚の新規写真をPCへ送信しました$freedStr$missingStr",
                                             Toast.LENGTH_LONG
                                         ).show()
                                     } else {

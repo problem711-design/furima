@@ -25,7 +25,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.1)
 
-現在のバージョン: **`v2.1 (Build 8)`**
+現在のバージョン: **`v2.1 (Build 9)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -46,6 +46,30 @@
   1. `app/src/main/java/com/example/myapplication/ui/screens/SettingsStorageScreen.kt` (不要ボタン・ダイアログ削除)
   2. `app/src/main/java/com/example/myapplication/data/local/ItemDao.kt` (`updatePhotoMd5Hash` クエリ追加)
   3. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt` (ハッシュ計算時のDB永続化追加)
+
+#### [x] **フェーズ 2.1-A2: 保存先の固定・原本削除3条件ガード・二重起動防止** 【完了 (2026/03/30 Build 9)】
+- **目的**: 
+  - 起動ディレクトリ移動に伴うPC側写真保存先の空ブレを解消するため、`store.json` による保存フォルダ・`storeId`（GUID）の固定。
+  - 起動ログの1行目に採用絶対パスと `storeId` を出力。名前付き Mutex による exe の二重起動拒否。
+  - `items_data.json` 保存時の `items_data.prev.json` 1世代バックアップ保持。
+  - `/api/server/status` への `storeId`, `syncDir`, `indexedPhotosCount`, `missingFileCount` 追加。
+  - PUSH同期応答への `storeId` とサーバー自己計算 `syncedHashes` の返却。`storeId` 不一致時のGC削除拒否。
+  - スマホ側で応答 `storeId` を端末記憶し、高画質削除の3条件（`storeId` 一致、サーバー保存後自己計算 `syncedHashes` 含有、サムネイル実在）を厳格検証。
+  - サムネイルのみでPC側に存在しない「原本なし」写真の計数とPC連携画面への表示。
+  - `AppDatabase.kt` の `fallbackToDestructiveMigration()` 削除。
+- **編集対象ファイル (完了)**:
+  1. `tools/FurimaServerNative.cs`
+  2. `tools/SyncStore.cs` [新規]
+  3. `tools/DashboardHtml.cs` [新規]
+  4. `tools/FurimaSyncNative.cs`
+  5. `tools/furima-sync.ps1`
+  6. `tools/build-exe.bat`
+  7. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+  8. `app/src/main/java/com/example/myapplication/ui/screens/PcSyncScreen.kt`
+  9. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`
+  10. `app/src/main/java/com/example/myapplication/data/local/AppDatabase.kt`
+  11. `app/build.gradle.kts`
+  12. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
 
 #### [ ] **フェーズ 2.1-B: PC母艦サーバーの超軽量GUI化・認証トークン・QRコード生成** 【未着手】
 - **目的**: 

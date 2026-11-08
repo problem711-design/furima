@@ -20,7 +20,9 @@ data class PcSyncResult(
     val errorMessage: String? = null,
     val syncedItemsCount: Int = 0,
     val syncedPhotosCount: Int = 0,
-    val freedMb: Int = 0
+    val freedMb: Int = 0,
+    val missingOriginalPhotosCount: Int = 0,
+    val storeId: String? = null
 )
 
 class PcServerClient(
@@ -33,6 +35,16 @@ class PcServerClient(
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    private val prefs = context.getSharedPreferences("pc_sync_prefs", Context.MODE_PRIVATE)
+
+    fun getSavedStoreId(): String {
+        return prefs.getString("pc_store_id", "") ?: ""
+    }
+
+    fun saveStoreId(storeId: String) {
+        prefs.edit().putString("pc_store_id", storeId).apply()
+    }
 
     suspend fun checkServerStatus(baseUrl: String): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -89,7 +101,7 @@ class PcServerClient(
 
     /**
      * PCサーバーに未保持の差分写真および全商品メタデータを確実に送信し、
-     * 成功した写真のスマホ側元画像を自動削除してサムネイル化（ストレージ解放）
+     * 応答 storeId の整合性とサーバー保存後計算 MD5 を検証してスマホ側元画像を安全に容量削減。
      */
     suspend fun syncDeltaToPcServer(baseUrl: String): PcSyncResult = withContext(Dispatchers.IO) {
         var syncedPhotoCount = 0
@@ -105,6 +117,8 @@ class PcServerClient(
 
         try {
             android.util.Log.i("PC_SYNC", "=== PUSH同期開始: $cleanUrl ===")
+            val savedStoreId = getSavedStoreId()
+
             // 1. PC側で既に保持されている写真のMD5ハッシュ一覧を取得
             val existingServerHashes = fetchServerHashes(cleanUrl)
             android.util.Log.i("PC_SYNC", "PC側既存ハッシュ数: ${existingServerHashes.size}")
@@ -174,6 +188,7 @@ class PcServerClient(
 
             val payload = JSONObject().apply {
                 put("timestamp", System.currentTimeMillis())
+                put("storeId", savedStoreId)
                 put("items", itemsJsonArray)
                 put("activeFolderNames", activeFolderNames)
             }
@@ -198,6 +213,12 @@ class PcServerClient(
                 val respStr = response.body?.string() ?: ""
                 android.util.Log.i("PC_SYNC", "サーバー応答本文: $respStr")
                 val respJson = JSONObject(respStr)
+
+                val respStoreId = respJson.optString("storeId", "")
+                if (savedStoreId.isBlank() && respStoreId.isNotBlank()) {
+                    saveStoreId(respStoreId)
+                }
+
                 val syncedHashesArray = respJson.optJSONArray("syncedHashes")
                 val syncedSet = mutableSetOf<String>()
 
@@ -207,7 +228,13 @@ class PcServerClient(
                     }
                 }
 
-                // 4. 送信成功した写真のスマホ側元画像を自動削除し、軽量サムネイル化
+                // 高画質削除の3条件検証
+                // 条件1: 応答 storeId と 端末記憶 storeId の一致 (端末記憶が無い場合は保存して一致扱い)
+                val currentStoreId = getSavedStoreId()
+                val isStoreIdValid = currentStoreId.isNotBlank() && currentStoreId == respStoreId
+
+                var missingOriginalCount = 0
+
                 for (itemWithPhotos in itemsWithPhotos) {
                     for (photo in itemWithPhotos.photos) {
                         var md5 = photo.md5Hash
@@ -216,10 +243,19 @@ class PcServerClient(
                             if (f.exists()) md5 = photoStorageManager.calculateMd5(f)
                         }
 
-                        if (md5.isNotBlank() && (syncedSet.contains(md5) || existingServerHashes.contains(md5))) {
+                        // 原本なし件数（サムネイル化済みだが、今回または既存のサーバーハッシュに存在しない）のカウント
+                        if (photo.isOriginalDeleted) {
+                            if (md5.isNotBlank() && !syncedSet.contains(md5) && !existingServerHashes.contains(md5)) {
+                                missingOriginalCount++
+                            }
+                        }
+
+                        // 高画質削除判定 (条件1: storeId一致, 条件2: サーバーが保存後自己計算した syncedSet に含まれる, 条件3: スマホ側にサムネイルが存在する)
+                        if (isStoreIdValid && md5.isNotBlank() && syncedSet.contains(md5)) {
                             if (!photo.isOriginalDeleted) {
                                 val file = File(photo.filePath)
-                                if (file.exists() && photo.thumbnailPath != null && File(photo.thumbnailPath).exists()) {
+                                val hasThumb = photo.thumbnailPath != null && File(photo.thumbnailPath).exists()
+                                if (file.exists() && hasThumb) {
                                     val fileSize = file.length()
                                     if (file.delete()) {
                                         freedBytes += fileSize
@@ -238,7 +274,9 @@ class PcServerClient(
                     isSuccess = true,
                     syncedItemsCount = itemsWithPhotos.size,
                     syncedPhotosCount = syncedPhotoCount,
-                    freedMb = (freedBytes / (1024 * 1024)).toInt()
+                    freedMb = (freedBytes / (1024 * 1024)).toInt(),
+                    missingOriginalPhotosCount = missingOriginalCount,
+                    storeId = respStoreId
                 )
             }
         } catch (e: Exception) {

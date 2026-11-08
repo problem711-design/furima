@@ -4,7 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Threading;
 using System.Diagnostics;
-using System.Web.Script.Serialization;
+using Newtonsoft.Json;
 using System.Collections.Generic;
 
 class FurimaSync
@@ -44,7 +44,29 @@ class FurimaSync
             Console.WriteLine("ブラウザ自動起動警告: " + ex.Message);
         }
 
-        string syncDir = Path.Combine(Directory.GetCurrentDirectory(), "出品写真_PC保存用");
+        // 保存先を store.json から取得、無ければデフォルト作成
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string storeJsonPath = Path.Combine(baseDir, "store.json");
+        string syncDir = Path.Combine(baseDir, "出品写真_PC保存用");
+
+        if (File.Exists(storeJsonPath))
+        {
+            try
+            {
+                string json = File.ReadAllText(storeJsonPath, Encoding.UTF8);
+                var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
+                if (dict != null && dict.ContainsKey("path") && dict["path"] != null)
+                {
+                    string p = dict["path"].ToString();
+                    if (!string.IsNullOrEmpty(p))
+                    {
+                        syncDir = p;
+                    }
+                }
+            }
+            catch { }
+        }
+
         Directory.CreateDirectory(syncDir);
 
         Console.WriteLine("同期先フォルダ: " + syncDir);
@@ -63,19 +85,16 @@ class FurimaSync
                     task.Wait();
                     string json = task.Result;
 
-                    var serializer = new JavaScriptSerializer();
-                    serializer.MaxJsonLength = int.MaxValue;
-                    var dict = serializer.Deserialize<Dictionary<string, object>>(json);
+                    var dict = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
 
                     int count = 0;
                     if (dict != null && dict.ContainsKey("items"))
                     {
-                        var itemsList = dict["items"] as IEnumerable<object>;
+                        var itemsList = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(dict["items"].ToString());
                         if (itemsList != null)
                         {
-                            foreach (var itemObj in itemsList)
+                            foreach (var item in itemsList)
                             {
-                                var item = itemObj as Dictionary<string, object>;
                                 if (item == null) continue;
 
                                 int id = Convert.ToInt32(item["id"]);
@@ -102,13 +121,12 @@ class FurimaSync
                                 // 写真
                                 if (item.ContainsKey("photos") && item["photos"] != null)
                                 {
-                                    var photosList = item["photos"] as IEnumerable<object>;
+                                    var photosList = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(item["photos"].ToString());
                                     if (photosList != null)
                                     {
                                         int photoIdx = 1;
-                                        foreach (var photoObj in photosList)
+                                        foreach (var photo in photosList)
                                         {
-                                            var photo = photoObj as Dictionary<string, object>;
                                             if (photo != null)
                                             {
                                                 string photoUrl = photo.ContainsKey("url") && photo["url"] != null ? photo["url"].ToString().Trim() : "";
