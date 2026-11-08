@@ -306,12 +306,22 @@ class FurimaServerNative
             }
             else if (rawPath == "/api/sync/hashes")
             {
-                List<string> hashes = new List<string>(hashToFilePathMap.Keys);
+                List<string> validHashes = new List<string>();
+                lock (lockObj)
+                {
+                    foreach (var pair in hashToFilePathMap)
+                    {
+                        if (!string.IsNullOrEmpty(pair.Value) && File.Exists(pair.Value))
+                        {
+                            validHashes.Add(pair.Key);
+                        }
+                    }
+                }
                 SendJson(res, new Dictionary<string, object>
                 {
                     { "status", "ok" },
-                    { "totalCount", hashes.Count },
-                    { "hashes", hashes }
+                    { "totalCount", validHashes.Count },
+                    { "hashes", validHashes }
                 });
             }
             else if (rawPath == "/api/sync/push" && req.HttpMethod == "POST")
@@ -456,6 +466,40 @@ class FurimaServerNative
                                 itemsDb.Add(newItemDict);
                                 Console.WriteLine("  -> 保存完了: [" + id + "] " + title + " (写真: " + savedPhotosList.Count + "枚)");
                             }
+
+                            // 双方向クリーンアップ (Garbage Collection): スマホ側に存在しなくなった古いフォルダをPC側から自動削除
+                            if (data.ContainsKey("activeFolderNames") && data["activeFolderNames"] != null)
+                            {
+                                var activeList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                var activeFolders = data["activeFolderNames"] as System.Collections.IEnumerable;
+                                if (activeFolders != null)
+                                {
+                                    foreach (var nameObj in activeFolders)
+                                    {
+                                        if (nameObj != null) activeList.Add(nameObj.ToString());
+                                    }
+                                }
+
+                                if (Directory.Exists(syncDir))
+                                {
+                                    foreach (var subDir in Directory.GetDirectories(syncDir))
+                                    {
+                                        string dirName = Path.GetFileName(subDir);
+                                        if (!activeList.Contains(dirName))
+                                        {
+                                            try
+                                            {
+                                                Directory.Delete(subDir, true);
+                                                Console.WriteLine("  -> [クリーンアップ] 不要になった古いフォルダを削除しました: " + dirName);
+                                            }
+                                            catch (Exception ex)
+                                            {
+                                                Console.WriteLine("  -> [クリーンアップ警告] フォルダ削除失敗 (" + dirName + "): " + ex.Message);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         SaveItemsDbToDisk();
@@ -537,7 +581,7 @@ class FurimaServerNative
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.1 (Build 7)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.1 (Build 8)</span>
     </div>
 
     <!-- ナビゲーションバー (スリム＆インライン統合) -->

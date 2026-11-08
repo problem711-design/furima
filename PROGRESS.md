@@ -25,7 +25,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.1)
 
-現在のバージョン: **`v2.1 (Build 7)`**
+現在のバージョン: **`v2.1 (Build 8)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -38,14 +38,14 @@
 ### フェーズ 2.1 (トンネル連携・QRコード接続・最適化UI・容量管理移行)
 ※ 実装規模・変更の小さい順にフェーズ分けを行い、各フェーズで編集するファイルを最小限に限定して逐次実装する。
 
-#### [ ] **フェーズ 2.1-A: スマホ側設定タブの断捨離 & MD5ハッシュ永続化修復** 【未着手】
+#### [x] **フェーズ 2.1-A: スマホ側設定タブの断捨離 & MD5ハッシュ永続化修復** 【完了】
 - **目的**: 
   - 不要になった「送信済み写真の元画像を削除」ボタンをスマホ設定画面から削除しUIを簡素化。
   - 初回同期で計算した元画像 MD5 ハッシュを Room DB (`photos` テーブル) に永続保存し、サムネイル化後の2回目以降同期でハッシュのズレが生じる問題を根本解消。
-- **編集対象ファイル (最小限: 3ファイル)**:
-  1. `app/src/main/java/com/example/myapplication/ui/screens/SettingsScreen.kt` (不要ボタン削除)
+- **編集対象ファイル (完了: 3ファイル)**:
+  1. `app/src/main/java/com/example/myapplication/ui/screens/SettingsStorageScreen.kt` (不要ボタン・ダイアログ削除)
   2. `app/src/main/java/com/example/myapplication/data/local/ItemDao.kt` (`updatePhotoMd5Hash` クエリ追加)
-  3. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt` (ハッシュ計算時のDB保存追加)
+  3. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt` (ハッシュ計算時のDB永続化追加)
 
 #### [ ] **フェーズ 2.1-B: PC母艦サーバーの超軽量GUI化・認証トークン・QRコード生成** 【未着手】
 - **目的**: 
@@ -93,6 +93,17 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-07] 差分同期のギャップ調査と原因特定完了（既存写真未送信問題）
+- **現象**: PC側のハッシュ存在チェック（Integrity Check）および双方向クリーンアップ（Garbage Collection）を実装・再起動したものの、既存データの写真ファイルがPC側に再送・復元されない問題が発生。
+- **原因究明 (Logcat調査)**: スマホ側 (`PcServerClient.kt`) において、送信ガード条件 `!photo.isOriginalDeleted` が設定されていたため、過去にスマホ側で元画像を削除（サムネイル化）した既存写真については、PC側からハッシュが要求されてもスマホ側が「元画像がない」と判断してBase64データの送信を自らブロック（スキップ）していたことが判明。
+- **修正案**: スマホ側の送信条件において、元画像ファイル (`file.exists()`) がなくても、サムネイルや代替画像が存在するか、あるいはPC側が求めている場合は送信可能とする（またはフォールバックする）改修が必要。
+
+### [2026-11-07] フェーズ 2.1-A 完了 (スマホ側設定タブ整理 & MD5ハッシュ永続化修復) バージョン 2.1 (Build 8)
+- スマホ設定画面 (`SettingsStorageScreen.kt`) から不要になった「PC送信済み写真の元画像を削除」ボタンおよびダイアログを削除しUIを簡素化。
+- Room DB (`ItemDao.kt`) に `updatePhotoMd5Hash` クエリを追加。
+- クライアント (`PcServerClient.kt`) において、同期時に自動計算された写真の MD5 ハッシュを Room DB に永続保存するよう改修し、サムネイル化後の2回目以降の同期でハッシュズレや再送信が発生する問題を根本解消。
+- アプリ側 (`build.gradle.kts` versionCode 8)、Web管理画面 (`WebDashboardHtml.kt` Build 8)、母艦サーバー (`FurimaServerNative.cs` Build 8) のバージョン表記を同時統一更新し、正常ビルド成功を確認。
 
 ### [2026-11-07] バージョン 2.1 (Build 7) 移行準備・フェーズ計画策定 & チェックポイント完了
 - 通信方式を「Cloudflare Quick Tunnel + ワンタイム認証トークン + QRコード接続」に拡張する方針転換に伴い、マイナーバージョンを **v2.1 (Build 7)** に繰り上げ。

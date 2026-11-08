@@ -113,10 +113,15 @@ class PcServerClient(
             val itemsWithPhotos = repository.getActiveItemsWithPhotosDirect()
             android.util.Log.i("PC_SYNC", "スマホ側対象商品数: ${itemsWithPhotos.size}")
             val itemsJsonArray = JSONArray()
+            val activeFolderNames = JSONArray()
 
             for (itemWithPhotos in itemsWithPhotos) {
                 val item = itemWithPhotos.item
                 val photos = itemWithPhotos.photos
+
+                val safeTitle = item.title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                val itemFolderName = "${item.id}_$safeTitle"
+                activeFolderNames.put(itemFolderName)
 
                 val itemObj = JSONObject().apply {
                     put("id", item.id)
@@ -136,11 +141,14 @@ class PcServerClient(
 
                 val photosArray = JSONArray()
                 for (photo in photos) {
-                    // MD5ハッシュが空の場合はその場で自動計算
+                    // MD5ハッシュが空の場合はその場で自動計算し、DBに永続保存
                     var md5 = photo.md5Hash
                     val file = File(photo.filePath)
                     if (md5.isBlank() && file.exists()) {
                         md5 = photoStorageManager.calculateMd5(file)
+                        if (md5.isNotBlank()) {
+                            repository.getDao().updatePhotoMd5Hash(photo.id, md5)
+                        }
                     }
 
                     val photoObj = JSONObject().apply {
@@ -167,6 +175,7 @@ class PcServerClient(
             val payload = JSONObject().apply {
                 put("timestamp", System.currentTimeMillis())
                 put("items", itemsJsonArray)
+                put("activeFolderNames", activeFolderNames)
             }
 
             val pushUrl = "$cleanUrl/api/sync/push"

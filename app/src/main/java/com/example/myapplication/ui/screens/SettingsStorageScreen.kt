@@ -88,7 +88,6 @@ fun SettingsStorageScreen(
     var thumbDim by remember(currentSettings) { mutableIntStateOf(currentSettings.thumbnailMaxDimension) }
     var cleanupDays by remember(currentSettings) { mutableIntStateOf(currentSettings.autoCleanupSoldDays) }
 
-    var showCleanupSharedDialog by remember { mutableStateOf(false) }
     var showCleanupSoldDialog by remember { mutableStateOf(false) }
     var showAddPresetDialog by remember { mutableStateOf(false) }
     var presetToDelete by remember { mutableStateOf<FeePreset?>(null) }
@@ -173,29 +172,7 @@ fun SettingsStorageScreen(
         )
     }
 
-    if (showCleanupSharedDialog) {
-        AlertDialog(
-            onDismissRequest = { showCleanupSharedDialog = false },
-            icon = { Icon(Icons.Default.CleaningServices, contentDescription = null) },
-            title = { Text("PC送信済み写真の最適化") },
-            text = { Text("PCに送信済みの商品の元高画質写真を削除し、軽量サムネイルのみ残して容量を節約します。一覧の見た目は維持されます。実行しますか？") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.cleanupSharedOriginalPhotos { count ->
-                            showCleanupSharedDialog = false
-                            Toast.makeText(context, "${count}枚の元写真を削除して容量を節約しました", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ) {
-                    Text("実行する")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCleanupSharedDialog = false }) { Text("キャンセル") }
-            }
-        )
-    }
+
 
     if (showCleanupSoldDialog) {
         AlertDialog(
@@ -424,15 +401,6 @@ fun SettingsStorageScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                         modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
                     )
-
-                    OutlinedButton(
-                        onClick = { showCleanupSharedDialog = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("PC送信済み写真の元画像を削除（サムネイル保持）")
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
 
                     OutlinedButton(
                         onClick = { showCleanupSoldDialog = true },
