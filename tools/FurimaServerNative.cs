@@ -403,6 +403,11 @@ class FurimaServerNative
         }
 
         string rawPath = req.Url.AbsolutePath;
+        if (rawPath.StartsWith("/api/"))
+        {
+            lastHeartbeat = DateTime.Now;
+        }
+
         if (rawPath != "/api/server/heartbeat")
         {
             Console.WriteLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] 受信リクエスト: " + req.HttpMethod + " " + rawPath);
