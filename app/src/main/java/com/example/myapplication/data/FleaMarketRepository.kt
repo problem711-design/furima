@@ -221,7 +221,7 @@ class FleaMarketRepository(context: Context) {
         // 2. 元の個別商品のステータスを「MERGED」に更新（通常一覧から除外、履歴保持）
         dao.markItemsMerged(childItemIds, parentId)
 
-        // 3. 元の各商品の写真をすべて親商品に引き継ぎ
+        // 3. 元の各商品の写真をすべて親商品に引き継ぎ（MD5ハッシュも継承）
         val parentPhotos = mutableListOf<PhotoEntity>()
         var order = 0
         for (child in childItems) {
@@ -230,7 +230,8 @@ class FleaMarketRepository(context: Context) {
                     p.copy(
                         id = 0,
                         itemId = parentId,
-                        displayOrder = order++
+                        displayOrder = order++,
+                        md5Hash = p.md5Hash
                     )
                 )
             }

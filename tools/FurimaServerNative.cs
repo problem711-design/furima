@@ -527,6 +527,15 @@ class FurimaServerNative
                 {
                     lock (lockObj)
                     {
+                        HashSet<int> activeIds = new HashSet<int>();
+                        foreach (JObject item in itemsArr)
+                        {
+                            activeIds.Add(item.Value<int>("id"));
+                        }
+
+                        // スマホ側に存在しない古い商品を itemsDb から一括除去 (完全同期)
+                        itemsDb.RemoveAll(i => i != null && i.ContainsKey("id") && !activeIds.Contains(Convert.ToInt32(i["id"])));
+
                         foreach (JObject item in itemsArr)
                         {
                             int id = item.Value<int>("id");
@@ -582,7 +591,6 @@ class FurimaServerNative
                                 }
                             }
 
-                            var existingItem = itemsDb.Find(i => Convert.ToInt32(i["id"]) == id);
                             var newItemDict = new Dictionary<string, object>
                             {
                                 { "id", id },
@@ -597,7 +605,6 @@ class FurimaServerNative
                                 { "photos", savedPhotosList }
                             };
 
-                            if (existingItem != null) itemsDb.Remove(existingItem);
                             itemsDb.Add(newItemDict);
                         }
 
@@ -626,6 +633,9 @@ class FurimaServerNative
                                 }
                             }
                         }
+
+                        // フォルダ削除・写真更新後にインデックスを最新化
+                        ScanAndIndexLocalPhotos();
                     }
 
                     SaveItemsDbToDisk();
