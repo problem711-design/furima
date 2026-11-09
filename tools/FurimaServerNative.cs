@@ -421,6 +421,10 @@ class FurimaServerNative
                     SendJson(res, itemsDb);
                 }
             }
+            else if (rawPath == "/api/items" && req.HttpMethod == "POST")
+            {
+                HandleCreateItem(req, res);
+            }
             else if (rawPath == "/api/server/status")
             {
                 bool isConnected = (DateTime.Now - lastHeartbeat).TotalSeconds < 10;
@@ -488,6 +492,14 @@ class FurimaServerNative
             else if (rawPath == "/api/cleanup/execute" && req.HttpMethod == "POST")
             {
                 HandleCleanupExecute(res);
+            }
+            else if (rawPath.StartsWith("/api/items/") && req.HttpMethod == "PUT")
+            {
+                HandleUpdateItem(req, res, rawPath);
+            }
+            else if (rawPath.StartsWith("/api/items/") && req.HttpMethod == "DELETE")
+            {
+                HandleDeleteItem(res, rawPath);
             }
             else if (rawPath.StartsWith("/api/photos/"))
             {
@@ -818,6 +830,159 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("CleanupExecute エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleUpdateItem(HttpListenerRequest req, HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length).Trim();
+            int itemId;
+            if (!int.TryParse(idStr, out itemId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid ID" } });
+                return;
+            }
+
+            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+            {
+                string jsonStr = reader.ReadToEnd();
+                JObject json = JObject.Parse(jsonStr);
+
+                string title = json.Value<string>("title") ?? "";
+                int price = json.Value<int>("price");
+                int soldPrice = json.Value<int>("soldPrice");
+                string status = json.Value<string>("status") ?? "LISTED";
+                string description = json.Value<string>("description") ?? "";
+
+                string statusLabel = status == "SOLD" ? "売却済み" : "出品中";
+
+                lock (lockObj)
+                {
+                    var item = itemsDb.Find(i => Convert.ToInt32(i["id"]) == itemId);
+                    if (item == null)
+                    {
+                        res.StatusCode = 404;
+                        SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Item not found" } });
+                        return;
+                    }
+
+                    item["title"] = title;
+                    item["price"] = price;
+                    item["soldPrice"] = soldPrice;
+                    item["status"] = status;
+                    item["statusLabel"] = statusLabel;
+                    item["description"] = description;
+                }
+
+                SaveItemsDbToDisk();
+
+                SendJson(res, new Dictionary<string, object> { { "status", "ok" } });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("UpdateItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleDeleteItem(HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length).Trim();
+            int itemId;
+            if (!int.TryParse(idStr, out itemId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid ID" } });
+                return;
+            }
+
+            lock (lockObj)
+            {
+                itemsDb.RemoveAll(i => i != null && Convert.ToInt32(i["id"]) == itemId);
+            }
+
+            SaveItemsDbToDisk();
+
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("DeleteItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleCreateItem(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+            {
+                string jsonStr = reader.ReadToEnd();
+                JObject json = JObject.Parse(jsonStr);
+
+                string title = json.Value<string>("title") ?? "新規商品";
+                int price = json.Value<int>("price");
+                string description = json.Value<string>("description") ?? "";
+
+                int newId = 1;
+                lock (lockObj)
+                {
+                    foreach (var i in itemsDb)
+                    {
+                        int id = Convert.ToInt32(i["id"]);
+                        if (id >= newId) newId = id + 1;
+                    }
+
+                    string safeTitle = title;
+                    foreach (char c in Path.GetInvalidFileNameChars())
+                    {
+                        safeTitle = safeTitle.Replace(c, '_');
+                    }
+
+                    string itemFolderName = newId + "_" + safeTitle;
+                    string itemDirPath = Path.Combine(syncDir, itemFolderName);
+                    Directory.CreateDirectory(itemDirPath);
+
+                    string txtPath = Path.Combine(itemDirPath, "商品情報_説明文.txt");
+                    string txtContent = "【商品ID】 " + newId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【ステータス】 出品中\n\n--- 商品説明 ---\n" + description;
+                    File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
+
+                    var newItemDict = new Dictionary<string, object>
+                    {
+                        { "id", newId },
+                        { "title", title },
+                        { "description", description },
+                        { "status", "LISTED" },
+                        { "price", price },
+                        { "soldPrice", 0 },
+                        { "profit", price - 210 - (price * 5 / 100) - 55 },
+                        { "statusLabel", "出品中" },
+                        { "isShared", true },
+                        { "photos", new List<Dictionary<string, object>>() }
+                    };
+
+                    itemsDb.Add(newItemDict);
+                }
+
+                SaveItemsDbToDisk();
+
+                SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "id", newId } });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("CreateItem エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

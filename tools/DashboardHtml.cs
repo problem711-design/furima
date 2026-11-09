@@ -25,7 +25,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.1 (Build 15)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.2 (Build 16)</span>
     </div>
 
     <!-- ナビゲーションバー (高密度・インライン統合) -->
@@ -119,6 +119,9 @@ public static class DashboardHtml
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
                         <i class='fa-solid fa-sliders text-indigo-500'></i> コントロール
                     </h2>
+                    <button onclick='openAddModal()' class='w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-plus text-xs'></i> 新規出品追加 (PC)
+                    </button>
                     <button onclick='fetchItems()' class='w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-rotate-right text-xs'></i> データ手動更新
                     </button>
@@ -329,10 +332,14 @@ public static class DashboardHtml
                             <h3 class='font-bold text-xs text-slate-800 line-clamp-1' title='${item.title || '無題'}'>${item.title || '無題'}</h3>
                             <p class='text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-tight'>${item.description || ''}</p>
                         </div>
-                        <div class='border-t border-slate-100 pt-1.5 flex items-baseline justify-between'>
+                        <div class='border-t border-slate-100 pt-1.5 flex items-center justify-between'>
                             <div>
                                 <span class='text-base font-black ${isSold ? 'text-rose-600' : 'text-indigo-600'}'>¥${displayPrice.toLocaleString()}</span>
                                 ${profitText ? `<span class='text-[10px] font-bold text-emerald-600 block'>${profitText}</span>` : ''}
+                            </div>
+                            <div class='flex gap-1'>
+                                <button onclick='openEditModal(${item.id})' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold transition' title='編集'><i class='fa-solid fa-pen'></i></button>
+                                <button onclick='deleteItem(${item.id})' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[10px] font-bold transition' title='削除'><i class='fa-solid fa-trash'></i></button>
                             </div>
                         </div>
                     </div>
@@ -472,6 +479,81 @@ public static class DashboardHtml
             } finally {
                 executeBtn.disabled = false;
                 executeBtn.innerHTML = '<i class=\'fa-solid fa-trash-can\'></i> クリーンアップを実行';
+            }
+        }
+    <!-- 新規商品追加モーダル -->
+    <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeAddModal()'>
+        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-emerald-700 text-white px-5 py-3.5 flex items-center justify-between'>
+                <div class='flex items-center gap-2'>
+                    <i class='fa-solid fa-plus text-lg'></i>
+                    <h3 class='font-bold text-sm tracking-tight'>新規商品の追加 (PC母艦)</h3>
+                </div>
+                <button onclick='closeAddModal()' class='text-emerald-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='p-5 space-y-3.5 text-xs'>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>商品タイトル</label>
+                    <input type='text' id='add-title' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット'>
+                </div>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>出品価格 (円)</label>
+                    <input type='number' id='add-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
+                </div>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
+                    <textarea id='add-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                </div>
+            </div>
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
+                <button onclick='closeAddModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
+                <button onclick='createItem()' class='px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition'>出品を追加</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function openAddModal() {
+            document.getElementById('add-title').value = '';
+            document.getElementById('add-price').value = '';
+            document.getElementById('add-description').value = '';
+            document.getElementById('add-modal').classList.remove('hidden');
+        }
+
+        function closeAddModal() {
+            document.getElementById('add-modal').classList.add('hidden');
+        }
+
+        async function createItem() {
+            const title = document.getElementById('add-title').value.trim();
+            const price = parseInt(document.getElementById('add-price').value) || 0;
+            const description = document.getElementById('add-description').value.trim();
+
+            if (!title) {
+                alert('商品タイトルを入力してください。');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/items', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ title, price, description })
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        closeAddModal();
+                        fetchItems();
+                    } else {
+                        alert('追加失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
             }
         }
     </script>

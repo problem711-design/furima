@@ -25,9 +25,9 @@
 
 ---
 
-## 全体ロードマップ (第2世代アーキテクチャ v2.1)
+## 全体ロードマップ (第2世代アーキテクチャ v2.2)
 
-現在のバージョン: **`v2.1 (Build 15)`**
+現在のバージョン: **`v2.2 (Build 16)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -155,6 +155,12 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-03-30] フェーズ 2.2 実装完了 (PC側からの商品編集・削除・新規追加 & 双方向プル同期) バージョン 2.2 (Build 16)
+- PC母艦管理画面 (`DashboardHtml.cs`) に商品編集・削除モーダル、および新規商品追加フォーム (`POST /api/items`) を実装。
+- PC母艦サーバー (`FurimaServerNative.cs`) に商品更新 (`PUT /api/items/{id}`)、商品削除 (`DELETE /api/items/{id}`)、および新規商品作成 (`POST /api/items`) APIエンドポイントを新設。
+- スマホアプリ側 (`PcServerClient.kt`, `FleaMarketViewModel.kt`) に、PC側での変更をスマホに自動反映・マージするプル同期（`fetchServerItems`）ロジックを実装。
+- アプリ側 versionCode を `16` (versionName `2.2`) に繰り上げ更新し、サーバー (`build-exe.bat`) および Android (`assembleDebug`) 共にビルド成功を確認。
 
 ### [2026-03-30] 同期安定化バグ修正 & テストデータシード実装 (Build 15 完了)
 - PCサーバー側 (`FurimaServerNative.cs` の `HandleSyncItems`) において、送信データに含まれるアクティブ商品の重複防止（同IDの事前削除による上書き更新）および非同期商品の完全削除を修正。

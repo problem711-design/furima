@@ -359,4 +359,63 @@ class PcServerClient(
             )
         }
     }
+
+    suspend fun fetchServerItems(baseUrl: String, token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val url = "$cleanUrl/api/items"
+            val reqBuilder = Request.Builder().url(url).get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val bodyStr = response.body?.string() ?: return@withContext false
+
+                val jsonArray = org.json.JSONArray(bodyStr)
+                val dao = repository.getDao()
+
+                for (i in 0 until jsonArray.length()) {
+                    val obj = jsonArray.getJSONObject(i)
+                    val id = obj.optInt("id", 0)
+                    if (id <= 0) continue
+                    val title = obj.optString("title", "商品")
+                    val description = obj.optString("description", "")
+                    val status = obj.optString("status", "LISTED")
+                    val price = obj.optInt("price", 0)
+                    val soldPrice = obj.optInt("soldPrice", 0)
+
+                    val existing = dao.getItemWithPhotosById(id)
+                    if (existing != null) {
+                        val updated = existing.item.copy(
+                            title = title,
+                            description = description,
+                            status = status,
+                            price = price,
+                            soldPrice = soldPrice,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                        dao.updateItem(updated)
+                    } else {
+                        val newItem = com.example.myapplication.data.local.ItemEntity(
+                            id = id,
+                            title = title,
+                            description = description,
+                            status = status,
+                            price = price,
+                            soldPrice = soldPrice,
+                            isShared = true,
+                            createdAt = System.currentTimeMillis(),
+                            updatedAt = System.currentTimeMillis()
+                        )
+                        dao.insertItem(newItem)
+                    }
+                }
+                true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "fetchServerItems 例外: ${e.message}", e)
+            false
+        }
+    }
 }

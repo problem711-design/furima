@@ -620,7 +620,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     fun syncDeltaToPcServer(onResult: (com.example.myapplication.data.server.PcSyncResult) -> Unit) {
         viewModelScope.launch {
-            val result = pcServerClient.syncDeltaToPcServer(_pcServerUrl.value, _pcAuthToken.value)
+            val url = _pcServerUrl.value
+            val token = _pcAuthToken.value
+            val result = pcServerClient.syncDeltaToPcServer(url, token)
+            if (result.isSuccess) {
+                pcServerClient.fetchServerItems(url, token)
+            }
             _isPcServerConnected.value = result.isSuccess
             onResult(result)
         }
