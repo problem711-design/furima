@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import java.io.File
 
-class FleaMarketRepository(context: Context) {
+class FleaMarketRepository(private val context: Context) {
     private val db = AppDatabase.getDatabase(context)
     private val dao = db.itemDao()
     private val photoStorageManager = PhotoStorageManager(context)
@@ -300,8 +300,33 @@ class FleaMarketRepository(context: Context) {
                 ItemEntity(title = "クリア スマホショルダーポーチ", description = "お出かけに便利なクリアスマホポシェット。", price = 1500, status = "LISTED"),
                 ItemEntity(title = "フレグランス オーデコロン 50ml", description = "爽やかなシトラス系の香水です。", price = 3200, status = "LISTED")
             )
+
+            val bitmap = android.graphics.Bitmap.createBitmap(300, 300, android.graphics.Bitmap.Config.RGB_565)
+            val canvas = android.graphics.Canvas(bitmap)
+            canvas.drawColor(android.graphics.Color.parseColor("#4F46E5"))
+
             for (item in testItems) {
-                dao.insertItem(item)
+                val itemId = dao.insertItem(item).toInt()
+
+                val photoFile = File(context.filesDir, "test_seed_${itemId}.jpg")
+                try {
+                    photoFile.outputStream().use { out ->
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                        out.flush()
+                    }
+                } catch (e: Exception) {}
+
+                val md5 = photoStorageManager.calculateMd5(photoFile)
+
+                val photo = com.example.myapplication.data.local.PhotoEntity(
+                    itemId = itemId,
+                    filePath = photoFile.absolutePath,
+                    thumbnailPath = photoFile.absolutePath,
+                    md5Hash = md5,
+                    displayOrder = 0,
+                    syncStatus = "PENDING"
+                )
+                dao.insertPhotos(listOf(photo))
             }
         }
     }
