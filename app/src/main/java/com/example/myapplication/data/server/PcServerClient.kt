@@ -323,7 +323,9 @@ class PcServerClient(
                     if (isStoreIdValid && isConfirmedOnServer) {
                         if (!photo.isOriginalDeleted) {
                             val file = File(photo.filePath)
-                            val hasThumb = photo.thumbnailPath != null && File(photo.thumbnailPath).exists()
+                            val hasThumb = photo.thumbnailPath != null &&
+                                           !photo.thumbnailPath.equals(photo.filePath, ignoreCase = true) &&
+                                           File(photo.thumbnailPath).exists()
                             if (file.exists() && hasThumb) {
                                 val fileSize = file.length()
                                 if (file.delete()) {
