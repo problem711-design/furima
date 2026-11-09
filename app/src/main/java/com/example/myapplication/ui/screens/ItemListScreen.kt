@@ -658,10 +658,10 @@ fun CompactItemCard(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFFEA580C))
+                                .background(Color(0xFF0284C7))
                                 .padding(horizontal = 5.dp, vertical = 2.dp)
                         ) {
-                            Text(text = "原本なし", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "送信済み", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         }
                     } else if (hasUnsynced) {
                         Box(

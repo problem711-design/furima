@@ -36,6 +36,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -160,7 +161,8 @@ fun PcSyncScreen(
             modifier = Modifier
                 .padding(innerPadding)
                 .fillMaxWidth()
-                .padding(16.dp),
+                .padding(16.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             // PCブラウザ連携 (Webサーバー) カード
@@ -485,8 +487,8 @@ fun PcSyncScreen(
                         Spacer(modifier = Modifier.height(10.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7ED)),
-                            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFFEA580C)))
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFF0F9FF)),
+                            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF0284C7)))
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
                                 Row(
@@ -495,24 +497,24 @@ fun PcSyncScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "原本なし写真一覧 (${missingOriginalItems.size}件)",
+                                        text = "送信済み写真一覧 (${missingOriginalItems.size}件)",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
-                                        color = Color(0xFFC2410C)
+                                        color = Color(0xFF0369A1)
                                     )
                                     IconButton(
                                         onClick = {
                                             val exportText = viewModel.getMissingOriginalExportText()
                                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            clipboard.setPrimaryClip(ClipData.newPlainText("Missing Original Photos", exportText))
-                                            Toast.makeText(context, "原本なし一覧をコピーしました", Toast.LENGTH_SHORT).show()
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("Synced Photos", exportText))
+                                            Toast.makeText(context, "送信済み一覧をコピーしました", Toast.LENGTH_SHORT).show()
                                         },
                                         modifier = Modifier.size(28.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Default.ContentCopy,
                                             contentDescription = "コピー",
-                                            tint = Color(0xFFEA580C),
+                                            tint = Color(0xFF0284C7),
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -532,7 +534,7 @@ fun PcSyncScreen(
                                             text = "• ${itemWithPhotos.item.title} (ID: ${itemWithPhotos.item.id})",
                                             fontSize = 11.sp,
                                             fontFamily = FontFamily.Monospace,
-                                            color = Color(0xFF7C2D12)
+                                            color = Color(0xFF075985)
                                         )
                                     }
                                 }
@@ -540,21 +542,25 @@ fun PcSyncScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        TextButton(
+                        androidx.compose.material3.OutlinedButton(
                             onClick = {
                                 viewModel.testPcServerConnection { connected ->
                                     val msg = if (connected) "PCサーバーへの接続に成功しました！" else "PCサーバーへ接続できませんでした。"
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 }
                             },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
-                            Text("接続確認")
+                            Text("接続確認", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                         }
 
                         androidx.compose.material3.Button(
@@ -564,7 +570,7 @@ fun PcSyncScreen(
                                     isSyncing = false
                                     if (result.isSuccess) {
                                         val freedStr = if (result.freedMb > 0) " (${result.freedMb}MB空けました)" else ""
-                                        val missingStr = if (result.missingOriginalPhotosCount > 0) " (原本なし: ${result.missingOriginalPhotosCount}件)" else ""
+                                        val missingStr = if (result.missingOriginalPhotosCount > 0) " (送信済み: ${result.missingOriginalPhotosCount}件)" else ""
                                         Toast.makeText(
                                             context,
                                             "同期成功: ${result.syncedItemsCount}件の商品メタデータ・${result.syncedPhotosCount}枚の新規写真をPCへ送信しました$freedStr$missingStr",
@@ -580,9 +586,16 @@ fun PcSyncScreen(
                                 }
                             },
                             enabled = !isSyncing,
-                            modifier = Modifier.weight(1.5f)
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
+                            modifier = Modifier.weight(1.4f),
+                            contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
-                            Text(if (isSyncing) "同期中..." else "差分同期＆容量解放")
+                            Text(
+                                if (isSyncing) "同期中..." else "差分同期＆容量解放",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
                         }
                     }
                 }
@@ -590,3 +603,4 @@ fun PcSyncScreen(
         }
     }
 }
+

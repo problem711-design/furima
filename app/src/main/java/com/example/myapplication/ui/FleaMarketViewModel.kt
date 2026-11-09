@@ -142,7 +142,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     fun getMissingOriginalExportText(): String {
         val sb = java.lang.StringBuilder()
-        sb.append("【原本なし写真一覧】\n")
+        sb.append("【送信済み写真一覧 (サムネイル化済)】\n")
         for (itemWithPhotos in missingOriginalItems.value) {
             sb.append("- 商品ID: ${itemWithPhotos.item.id} | タイトル: ${itemWithPhotos.item.title}\n")
             for (photo in itemWithPhotos.photos) {
