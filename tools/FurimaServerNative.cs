@@ -46,10 +46,6 @@ class FurimaServerNative
             Console.WriteLine("  フリマ出品・商品PC母艦サーバー (v2.1 Native) ");
             Console.WriteLine("=================================================");
 
-            // 認証トークンの生成 (英数字12桁)
-            authToken = Guid.NewGuid().ToString("N").Substring(0, 12);
-            Console.WriteLine("[INFO] ワンタイム認証トークン: " + authToken);
-
             int desiredPort = 8080;
             int inputPort;
             if (args.Length > 0 && int.TryParse(args[0], out inputPort))
@@ -57,11 +53,13 @@ class FurimaServerNative
                 desiredPort = inputPort;
             }
 
-            // 保存先と store.json の初期化
+            // 保存先と store.json の初期化（永続化された authToken を取得）
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-            SyncStore.Initialize(baseDir);
+            SyncStore.Initialize(baseDir, ref authToken);
             syncDir = SyncStore.SyncDir;
             itemsJsonFile = Path.Combine(syncDir, "items_data.json");
+
+            Console.WriteLine("[INFO] ワンタイム認証トークン: " + authToken);
 
             Console.WriteLine("[INFO] 保存フォルダ: " + syncDir + " (storeId: " + SyncStore.StoreId + ")");
 

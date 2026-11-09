@@ -8,6 +8,7 @@ public class StoreConfig
 {
     public string storeId { get; set; }
     public string path { get; set; }
+    public string authToken { get; set; }
     public string createdAt { get; set; }
 }
 
@@ -15,11 +16,13 @@ public static class SyncStore
 {
     private static string _storeId = "";
     private static string _syncDir = "";
+    private static string _authToken = "";
 
     public static string StoreId { get { return _storeId; } }
     public static string SyncDir { get { return _syncDir; } }
+    public static string AuthToken { get { return _authToken; } }
 
-    public static void Initialize(string baseDir)
+    public static void Initialize(string baseDir, ref string serverAuthToken)
     {
         string storeJsonPath = Path.Combine(baseDir, "store.json");
 
@@ -33,10 +36,17 @@ public static class SyncStore
                 {
                     _storeId = cfg.storeId;
                     _syncDir = cfg.path;
+                    _authToken = !string.IsNullOrEmpty(cfg.authToken) ? cfg.authToken : serverAuthToken;
+                    if (string.IsNullOrEmpty(cfg.authToken))
+                    {
+                        cfg.authToken = _authToken;
+                        File.WriteAllText(storeJsonPath, JsonConvert.SerializeObject(cfg, Formatting.Indented), Encoding.UTF8);
+                    }
                     if (!Directory.Exists(_syncDir))
                     {
                         Directory.CreateDirectory(_syncDir);
                     }
+                    serverAuthToken = _authToken;
                     return;
                 }
             }
@@ -49,14 +59,18 @@ public static class SyncStore
         // store.json が無いか無効な場合、新規作成
         _storeId = Guid.NewGuid().ToString();
         _syncDir = Path.Combine(baseDir, "出品写真_PC保存用");
+        _authToken = !string.IsNullOrEmpty(serverAuthToken) ? serverAuthToken : Guid.NewGuid().ToString("N").Substring(0, 12);
         Directory.CreateDirectory(_syncDir);
 
         StoreConfig newCfg = new StoreConfig
         {
             storeId = _storeId,
             path = _syncDir,
+            authToken = _authToken,
             createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK")
         };
+
+        serverAuthToken = _authToken;
 
         try
         {
