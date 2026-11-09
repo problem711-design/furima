@@ -5,7 +5,7 @@ echo ===================================================
 echo  FurimaServerNative / FurimaSyncNative ビルドスクリプト
 echo ===================================================
 
-set CSC="C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+set CSC="%SystemRoot%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
 
 if not exist %CSC% (
     echo [エラー] .NET Framework 4.0 の csc.exe が見つかりません。
@@ -15,7 +15,7 @@ if not exist %CSC% (
 
 echo.
 echo [1/2] FurimaServerNative.exe をビルド中...
-%CSC% /nologo /out:furima-server.exe /target:exe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs /reference:lib\Newtonsoft.Json.dll
+%CSC% /nologo /out:furima-server.exe /target:exe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs /reference:lib\Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
 
 if %ERRORLEVEL% neq 0 (
     echo [失敗] furima-server.exe のビルドエラー。

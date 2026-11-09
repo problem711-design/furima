@@ -14,7 +14,7 @@ android {
     applicationId = "com.example.myapplication"
     minSdk = 24
     targetSdk = 36
-    versionCode = 9
+    versionCode = 13
     versionName = "2.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -100,6 +100,7 @@ dependencies {
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
+  implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
   implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)

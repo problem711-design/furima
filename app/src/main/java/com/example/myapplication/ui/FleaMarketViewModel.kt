@@ -9,6 +9,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import java.io.File
 import com.example.myapplication.data.CsvExporter
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.local.DefaultSettings
@@ -109,6 +110,49 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _selectedItemIds = MutableStateFlow<Set<Int>>(emptySet())
     val selectedItemIds: StateFlow<Set<Int>> = _selectedItemIds.asStateFlow()
+
+    // 未同期・原本なしの統計 StateFlow
+    val missingOriginalItems: StateFlow<List<ItemWithPhotos>> = itemsWithPhotos.combine(defaultSettings) { items, _ ->
+        items.filter { itemWithPhotos ->
+            itemWithPhotos.photos.any { it.isOriginalDeleted }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val unsyncedItemsCount: StateFlow<Int> = itemsWithPhotos.combine(defaultSettings) { items, _ ->
+        items.count { itemWithPhotos ->
+            itemWithPhotos.photos.any { !it.isPcSynced && File(it.filePath).exists() }
+        }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = 0
+    )
+
+    val missingOriginalCount: StateFlow<Int> = missingOriginalItems.combine(defaultSettings) { items, _ ->
+        items.size
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = 0
+    )
+
+    fun getMissingOriginalExportText(): String {
+        val sb = java.lang.StringBuilder()
+        sb.append("【原本なし写真一覧】\n")
+        for (itemWithPhotos in missingOriginalItems.value) {
+            sb.append("- 商品ID: ${itemWithPhotos.item.id} | タイトル: ${itemWithPhotos.item.title}\n")
+            for (photo in itemWithPhotos.photos) {
+                if (photo.isOriginalDeleted) {
+                    sb.append("  写真ID: ${photo.id}, MD5: ${photo.md5Hash.ifBlank { "なし" }}\n")
+                }
+            }
+        }
+        return sb.toString()
+    }
 
     // フィルター＆ソート済みアイテム一覧
     val filteredItems: StateFlow<List<ItemWithPhotos>> = combine(
@@ -491,8 +535,15 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     private val pcServerClient = com.example.myapplication.data.server.PcServerClient(getApplication(), repository)
 
-    private val _pcServerUrl = MutableStateFlow<String>("http://10.0.2.2:8082")
+    private val _pcServerUrl = MutableStateFlow<String>(
+        pcServerClient.getSavedServerUrl().ifBlank { "http://10.0.2.2:8082" }
+    )
     val pcServerUrl: StateFlow<String> = _pcServerUrl.asStateFlow()
+
+    private val _pcAuthToken = MutableStateFlow<String>(
+        pcServerClient.getSavedAuthToken()
+    )
+    val pcAuthToken: StateFlow<String> = _pcAuthToken.asStateFlow()
 
     private val _isPcServerConnected = MutableStateFlow<Boolean>(false)
     val isPcServerConnected: StateFlow<Boolean> = _isPcServerConnected.asStateFlow()
@@ -508,8 +559,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         heartbeatJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 val url = _pcServerUrl.value
+                val token = _pcAuthToken.value
                 if (url.isNotBlank()) {
-                    val connected = pcServerClient.sendHeartbeat(url)
+                    val connected = pcServerClient.sendHeartbeat(url, token)
                     _isPcServerConnected.value = connected
                 } else {
                     _isPcServerConnected.value = false
@@ -521,14 +573,43 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     fun updatePcServerUrl(url: String) {
         _pcServerUrl.value = url
+        pcServerClient.saveServerUrl(url)
+    }
+
+    fun updatePcAuthToken(token: String) {
+        _pcAuthToken.value = token
+        pcServerClient.saveAuthToken(token)
+    }
+
+    fun parseQrCodeText(qrText: String): Boolean {
+        val text = qrText.trim()
+        if (!text.startsWith("furima:")) return false
+
+        val content = text.removePrefix("furima:")
+        val parts = content.split("|")
+        if (parts.size >= 2) {
+            val url = parts[0].trim()
+            val token = parts[1].trim()
+            val storeId = if (parts.size >= 3) parts[2].trim() else ""
+
+            if (url.isNotBlank()) {
+                updatePcServerUrl(url)
+                updatePcAuthToken(token)
+                if (storeId.isNotBlank()) {
+                    pcServerClient.saveStoreId(storeId)
+                }
+                return true
+            }
+        }
+        return false
     }
 
     fun testPcServerConnection(onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val connected = pcServerClient.checkServerStatus(_pcServerUrl.value)
+            val connected = pcServerClient.checkServerStatus(_pcServerUrl.value, _pcAuthToken.value)
             _isPcServerConnected.value = connected
             if (connected) {
-                pcServerClient.sendHeartbeat(_pcServerUrl.value)
+                pcServerClient.sendHeartbeat(_pcServerUrl.value, _pcAuthToken.value)
             }
             onResult(connected)
         }
@@ -536,7 +617,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     fun syncDeltaToPcServer(onResult: (com.example.myapplication.data.server.PcSyncResult) -> Unit) {
         viewModelScope.launch {
-            val result = pcServerClient.syncDeltaToPcServer(_pcServerUrl.value)
+            val result = pcServerClient.syncDeltaToPcServer(_pcServerUrl.value, _pcAuthToken.value)
             _isPcServerConnected.value = result.isSuccess
             onResult(result)
         }

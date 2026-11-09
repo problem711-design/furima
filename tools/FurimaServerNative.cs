@@ -6,6 +6,10 @@ using System.Threading;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
+using System.Windows.Forms;
+using System.Drawing;
+using System.Drawing.Drawing2D;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -19,6 +23,12 @@ class FurimaServerNative
     private static Dictionary<string, string> hashToFilePathMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
     private static List<Dictionary<string, object>> itemsDb = new List<Dictionary<string, object>>();
 
+    private static string authToken = "";
+    private static string tunnelUrl = "";
+    private static TunnelQrForm qrForm = null;
+    private static Process cloudflaredProcess = null;
+
+    [STAThread]
     static void Main(string[] args)
     {
         // 二重起動防止 (名前付き Mutex)
@@ -26,7 +36,7 @@ class FurimaServerNative
         mutex = new Mutex(true, "FurimaServerNative_SingleInstance_Mutex", out createdNew);
         if (!createdNew)
         {
-            Console.WriteLine("[エラー] 母艦サーバーは既に起動しています。二重起動を防止するため終了します。");
+            MessageBox.Show("母艦サーバーは既に起動しています。二重起動を防止するため終了します。", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -35,6 +45,10 @@ class FurimaServerNative
             Console.WriteLine("=================================================");
             Console.WriteLine("  フリマ出品・商品PC母艦サーバー (v2.1 Native) ");
             Console.WriteLine("=================================================");
+
+            // 認証トークンの生成 (英数字12桁)
+            authToken = Guid.NewGuid().ToString("N").Substring(0, 12);
+            Console.WriteLine("[INFO] ワンタイム認証トークン: " + authToken);
 
             int desiredPort = 8080;
             int inputPort;
@@ -49,7 +63,6 @@ class FurimaServerNative
             syncDir = SyncStore.SyncDir;
             itemsJsonFile = Path.Combine(syncDir, "items_data.json");
 
-            // 起動ログの1行目に絶対パスと storeId を出力
             Console.WriteLine("[INFO] 保存フォルダ: " + syncDir + " (storeId: " + SyncStore.StoreId + ")");
 
             Console.WriteLine("既存写真のMD5ハッシュをインデックス化中...");
@@ -62,7 +75,6 @@ class FurimaServerNative
             int actualPort = desiredPort;
             string boundUrl = "";
 
-            // 実動作テスト型ポート自動探索 (8080 -> 8081 -> 8082...)
             for (int pNum = desiredPort; pNum < desiredPort + 50; pNum++)
             {
                 listener = TryStartHttpListener(pNum, out boundUrl);
@@ -77,34 +89,22 @@ class FurimaServerNative
             {
                 Console.WriteLine("\n[エラー] 利用可能な空きポートの確保に失敗しました。");
                 PrintOccupiedPortInfo(desiredPort);
-                Console.WriteLine("\n何かキーを押すと終了します...");
-                Console.ReadLine();
+                MessageBox.Show("利用可能な空きポートの確保に失敗しました。", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
 
             if (actualPort != desiredPort)
             {
                 Console.WriteLine("\n[お知らせ] ポート " + desiredPort + " は他アプリやOS予約で使用中のため、空きポート " + actualPort + " で自動起動しました。");
-                PrintOccupiedPortInfo(desiredPort);
             }
 
             Console.WriteLine("-------------------------------------------------");
             Console.WriteLine(" サーバーが正常起動しました: " + boundUrl);
-            Console.WriteLine(" スマホアプリからの接続を待機しています...");
             Console.WriteLine("-------------------------------------------------");
-
-            try
-            {
-                Process.Start(new ProcessStartInfo(boundUrl) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("ブラウザ自動起動警告: " + ex.Message);
-            }
 
             ThreadPool.QueueUserWorkItem((o) =>
             {
-                while (listener.IsListening)
+                while (listener != null && listener.IsListening)
                 {
                     try
                     {
@@ -115,24 +115,100 @@ class FurimaServerNative
                 }
             });
 
-            Console.WriteLine("\nサーバー稼働中 [終了するには Enter キーを押してください]");
-            Console.ReadLine();
-            try { listener.Stop(); } catch {}
+            // Cloudflare トンネルの起動
+            StartCloudflared(actualPort);
+
+            // WinForms 画面の表示
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            qrForm = new TunnelQrForm(SyncStore.StoreId, syncDir, boundUrl, authToken);
+
+            int indexedCount = hashToFilePathMap.Count;
+            int missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+            qrForm.UpdateStatusInfo(indexedCount, missingCount);
+
+            qrForm.FormClosed += (s, e) =>
+            {
+                try { if (listener != null && listener.IsListening) listener.Stop(); } catch { }
+                try { if (cloudflaredProcess != null && !cloudflaredProcess.HasExited) cloudflaredProcess.Kill(); } catch { }
+            };
+
+            Application.Run(qrForm);
         }
         catch (Exception fatalEx)
         {
             Console.WriteLine("\n[致命的エラー] 起動処理中に例外が発生しました:");
             Console.WriteLine(fatalEx.ToString());
-            Console.WriteLine("\n何かキーを押すと終了します...");
-            Console.ReadLine();
+            MessageBox.Show("起動処理中に例外が発生しました:\n" + fatalEx.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
+            if (cloudflaredProcess != null && !cloudflaredProcess.HasExited)
+            {
+                try { cloudflaredProcess.Kill(); } catch { }
+            }
             if (mutex != null)
             {
-                try { mutex.ReleaseMutex(); } catch {}
+                try { mutex.ReleaseMutex(); } catch { }
             }
         }
+    }
+
+    private static void StartCloudflared(int port)
+    {
+        ThreadPool.QueueUserWorkItem((o) =>
+        {
+            try
+            {
+                string exePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.exe");
+                if (!File.Exists(exePath))
+                {
+                    Console.WriteLine("[cloudflared] cloudflared.exe が見つかりません。");
+                    if (qrForm != null) qrForm.UpdateTunnelUrl("");
+                    return;
+                }
+
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = exePath,
+                    Arguments = "tunnel --url http://127.0.0.1:" + port,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+
+                cloudflaredProcess = new Process { StartInfo = psi };
+                DataReceivedEventHandler handler = (sender, e) =>
+                {
+                    if (!string.IsNullOrEmpty(e.Data))
+                    {
+                        if (e.Data.Contains("trycloudflare.com"))
+                        {
+                            var match = Regex.Match(e.Data, @"https://[a-zA-Z0-9\-]+\.trycloudflare\.com");
+                            if (match.Success)
+                            {
+                                tunnelUrl = match.Value;
+                                Console.WriteLine("[cloudflared] トンネルURL発行完了: " + tunnelUrl);
+                                if (qrForm != null) qrForm.UpdateTunnelUrl(tunnelUrl);
+                            }
+                        }
+                    }
+                };
+
+                cloudflaredProcess.OutputDataReceived += handler;
+                cloudflaredProcess.ErrorDataReceived += handler;
+
+                cloudflaredProcess.Start();
+                cloudflaredProcess.BeginOutputReadLine();
+                cloudflaredProcess.BeginErrorReadLine();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[cloudflared] 起動エラー: " + ex.Message);
+                if (qrForm != null) qrForm.UpdateTunnelUrl("");
+            }
+        });
     }
 
     private static HttpListener TryStartHttpListener(int port, out string boundUrl)
@@ -150,7 +226,7 @@ class FurimaServerNative
         }
         catch
         {
-            if (listener != null) { try { listener.Close(); } catch {} }
+            if (listener != null) { try { listener.Close(); } catch { } }
             listener = null;
         }
 
@@ -165,7 +241,7 @@ class FurimaServerNative
         }
         catch
         {
-            if (listener != null) { try { listener.Close(); } catch {} }
+            if (listener != null) { try { listener.Close(); } catch { } }
             listener = null;
         }
 
@@ -268,6 +344,42 @@ class FurimaServerNative
         }
     }
 
+    private static bool AuthenticateRequest(HttpListenerContext ctx)
+    {
+        HttpListenerRequest req = ctx.Request;
+        HttpListenerResponse res = ctx.Response;
+
+        if (req.HttpMethod == "OPTIONS") return true;
+
+        IPAddress remoteIp = req.RemoteEndPoint.Address;
+        bool isLoopback = IPAddress.IsLoopback(remoteIp);
+
+        // ループバックからのアクセスは許可
+        if (isLoopback) return true;
+
+        string path = req.Url.AbsolutePath;
+        // ループバック以外からの /api/ リクエストには Bearer トークンが必要
+        if (path.StartsWith("/api/"))
+        {
+            string authHeader = req.Headers["Authorization"] ?? "";
+            string expectedAuth = "Bearer " + authToken;
+
+            if (!string.Equals(authHeader.Trim(), expectedAuth, StringComparison.Ordinal))
+            {
+                Console.WriteLine("[認証失敗] トークン不一致または欠落 (IP: " + remoteIp + ", Path: " + path + ")");
+                res.StatusCode = 401;
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "status", "error" },
+                    { "message", "401 Unauthorized: Invalid or missing Bearer token" }
+                });
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static void HandleRequest(HttpListenerContext ctx)
     {
         HttpListenerRequest req = ctx.Request;
@@ -282,6 +394,11 @@ class FurimaServerNative
         {
             res.StatusCode = 200;
             res.Close();
+            return;
+        }
+
+        if (!AuthenticateRequest(ctx))
+        {
             return;
         }
 
@@ -418,7 +535,6 @@ class FurimaServerNative
                             string itemDirPath = Path.Combine(syncDir, itemFolderName);
                             Directory.CreateDirectory(itemDirPath);
 
-                            // 説明文.txt 保存
                             string txtPath = Path.Combine(itemDirPath, "商品情報_説明文.txt");
                             string txtContent = "【商品ID】 " + id + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【ステータス】 " + statusLabel + "\n\n--- 商品説明 ---\n" + description;
                             File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
@@ -474,7 +590,6 @@ class FurimaServerNative
                             itemsDb.Add(newItemDict);
                         }
 
-                        // 不要フォルダの自動削除 Guard
                         bool shouldCleanup = !string.IsNullOrEmpty(reqStoreId) && string.Equals(reqStoreId, SyncStore.StoreId, StringComparison.OrdinalIgnoreCase);
                         JArray activeFolders = json["activeFolderNames"] as JArray;
 
@@ -563,7 +678,6 @@ class FurimaServerNative
                         return;
                     }
 
-                    // 対象商品フォルダの特定
                     string targetDirPath = syncDir;
                     lock (lockObj)
                     {
@@ -657,5 +771,322 @@ class FurimaServerNative
         res.ContentLength64 = bytes.Length;
         res.OutputStream.Write(bytes, 0, bytes.Length);
         res.OutputStream.Close();
+    }
+}
+
+public class TunnelQrForm : Form
+{
+    private Label lblStatus;
+    private Label lblSyncDir;
+    private Label lblStoreId;
+    private TextBox txtLocalUrl;
+    private TextBox txtTunnelUrl;
+    private TextBox txtToken;
+    private PictureBox picQrCode;
+    private Label lblInfo;
+
+    private string currentStoreId;
+    private string currentSyncDir;
+    private string currentLocalUrl;
+    private string currentTunnelUrl = "";
+    private string currentToken;
+
+    public TunnelQrForm(string storeId, string syncDir, string localUrl, string token)
+    {
+        this.currentStoreId = storeId;
+        this.currentSyncDir = syncDir;
+        this.currentLocalUrl = localUrl;
+        this.currentToken = token;
+
+        InitializeComponent();
+        UpdateDisplay();
+    }
+
+    private void InitializeComponent()
+    {
+        this.Text = "フリマ母艦サーバー - 接続情報 & QRコード";
+        this.Size = new Size(520, 680);
+        this.StartPosition = FormStartPosition.CenterScreen;
+        this.FormBorderStyle = FormBorderStyle.FixedSingle;
+        this.MaximizeBox = false;
+        this.Icon = SystemIcons.Application;
+
+        TableLayoutPanel mainLayout = new TableLayoutPanel();
+        mainLayout.Dock = DockStyle.Fill;
+        mainLayout.Padding = new Padding(15);
+        mainLayout.RowCount = 8;
+        mainLayout.ColumnCount = 2;
+        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F));
+        mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+
+        // タイトル / ステータス
+        lblStatus = new Label();
+        lblStatus.Text = "● サーバー稼働中 (接続待機中)";
+        lblStatus.Font = new Font("Meiryo UI", 11F, FontStyle.Bold);
+        lblStatus.ForeColor = Color.DarkGreen;
+        lblStatus.AutoSize = true;
+        mainLayout.Controls.Add(lblStatus, 0, 0);
+        mainLayout.SetColumnSpan(lblStatus, 2);
+
+        // 保存先
+        Label l1 = new Label() { Text = "保存フォルダ:", Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 9F) };
+        lblSyncDir = new Label() { Text = currentSyncDir, Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 9F, FontStyle.Regular) };
+        mainLayout.Controls.Add(l1, 0, 1);
+        mainLayout.Controls.Add(lblSyncDir, 1, 1);
+
+        // Store ID
+        Label l2 = new Label() { Text = "Store ID:", Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 9F) };
+        lblStoreId = new Label() { Text = currentStoreId, Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 8.5F, FontStyle.Bold) };
+        mainLayout.Controls.Add(l2, 0, 2);
+        mainLayout.Controls.Add(lblStoreId, 1, 2);
+
+        // ローカルURL
+        Label l3 = new Label() { Text = "ローカル URL:", Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 9F) };
+        txtLocalUrl = new TextBox() { Text = currentLocalUrl, ReadOnly = true, Dock = DockStyle.Fill, Font = new Font("Consolas", 9F) };
+        mainLayout.Controls.Add(l3, 0, 3);
+        mainLayout.Controls.Add(txtLocalUrl, 1, 3);
+
+        // トンネルURL
+        Label l4 = new Label() { Text = "トンネル URL:", Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 9F, FontStyle.Bold) };
+        txtTunnelUrl = new TextBox() { Text = "取得中...", ReadOnly = true, Dock = DockStyle.Fill, Font = new Font("Consolas", 9F) };
+        mainLayout.Controls.Add(l4, 0, 4);
+        mainLayout.Controls.Add(txtTunnelUrl, 1, 4);
+
+        // 認証トークン
+        Label l5 = new Label() { Text = "ワンタイムトークン:", Anchor = AnchorStyles.Left, AutoSize = true, Font = new Font("Meiryo UI", 9F) };
+        txtToken = new TextBox() { Text = currentToken, ReadOnly = true, Dock = DockStyle.Fill, Font = new Font("Consolas", 9.5F, FontStyle.Bold) };
+        mainLayout.Controls.Add(l5, 0, 5);
+        mainLayout.Controls.Add(txtToken, 1, 5);
+
+        // QRコード画像
+        picQrCode = new PictureBox();
+        picQrCode.Size = new Size(240, 240);
+        picQrCode.SizeMode = PictureBoxSizeMode.Zoom;
+        picQrCode.Anchor = AnchorStyles.None;
+        picQrCode.BorderStyle = BorderStyle.FixedSingle;
+        mainLayout.Controls.Add(picQrCode, 0, 6);
+        mainLayout.SetColumnSpan(picQrCode, 2);
+
+        // インフォメーション
+        lblInfo = new Label();
+        lblInfo.Text = "スマホのフリマアプリ「PC連携」画面から上記QRコードを読み取ってください。";
+        lblInfo.TextAlign = ContentAlignment.MiddleCenter;
+        lblInfo.Dock = DockStyle.Fill;
+        lblInfo.Font = new Font("Meiryo UI", 8.5F);
+        mainLayout.Controls.Add(lblInfo, 0, 7);
+        mainLayout.SetColumnSpan(lblInfo, 2);
+
+        this.Controls.Add(mainLayout);
+    }
+
+    public void UpdateTunnelUrl(string tunnelUrl)
+    {
+        if (this.InvokeRequired)
+        {
+            this.Invoke(new Action<string>(UpdateTunnelUrl), tunnelUrl);
+            return;
+        }
+
+        this.currentTunnelUrl = tunnelUrl;
+        if (!string.IsNullOrEmpty(tunnelUrl))
+        {
+            txtTunnelUrl.Text = tunnelUrl;
+            lblStatus.Text = "● トンネル接続完了 (QRコード準備完了)";
+            lblStatus.ForeColor = Color.Blue;
+        }
+        else
+        {
+            txtTunnelUrl.Text = "(トンネル接続失敗 - ローカル接続のみ)";
+            lblStatus.Text = "● ローカル接続のみ可";
+            lblStatus.ForeColor = Color.DarkOrange;
+        }
+
+        UpdateDisplay();
+    }
+
+    public void UpdateStatusInfo(int indexedCount, int missingCount)
+    {
+        if (this.InvokeRequired)
+        {
+            this.Invoke(new Action<int, int>(UpdateStatusInfo), indexedCount, missingCount);
+            return;
+        }
+
+        lblInfo.Text = string.Format("スマホアプリ「PC連携」でQRを読込んでください。\n索引写真: {0}枚 | 原本欠落: {1}枚", indexedCount, missingCount);
+    }
+
+    private void UpdateDisplay()
+    {
+        string activeUrl = string.IsNullOrEmpty(currentTunnelUrl) ? currentLocalUrl : currentTunnelUrl;
+        string qrText = string.Format("furima:{0}|{1}|{2}", activeUrl, currentToken, currentStoreId);
+
+        try
+        {
+            Bitmap qrBmp = SimpleQrEncoder.GenerateQrBitmap(qrText, 240, 240);
+            if (picQrCode.Image != null) picQrCode.Image.Dispose();
+            picQrCode.Image = qrBmp;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("QRコード生成例外: " + ex.Message);
+        }
+    }
+}
+
+/// <summary>
+/// 外部DLL依存なしでQRコードBitmapを自前生成する軽量エンコーダクラス
+/// </summary>
+public static class SimpleQrEncoder
+{
+    public static Bitmap GenerateQrBitmap(string content, int width, int height)
+    {
+        bool[,] modules = EncodeToMatrix(content);
+        int matrixSize = modules.GetLength(0);
+
+        Bitmap bmp = new Bitmap(width, height);
+        using (Graphics g = Graphics.FromImage(bmp))
+        {
+            g.Clear(Color.White);
+            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+
+            float scale = Math.Min((float)width / (matrixSize + 4), (float)height / (matrixSize + 4));
+            float offsetX = (width - matrixSize * scale) / 2f;
+            float offsetY = (height - matrixSize * scale) / 2f;
+
+            using (SolidBrush blackBrush = new SolidBrush(Color.Black))
+            {
+                for (int r = 0; r < matrixSize; r++)
+                {
+                    for (int c = 0; c < matrixSize; c++)
+                    {
+                        if (modules[r, c])
+                        {
+                            g.FillRectangle(blackBrush, offsetX + c * scale, offsetY + r * scale, scale + 0.5f, scale + 0.5f);
+                        }
+                    }
+                }
+            }
+        }
+        return bmp;
+    }
+
+    private static bool[,] EncodeToMatrix(string content)
+    {
+        byte[] dataBytes = Encoding.UTF8.GetBytes(content);
+        int version = 4;
+        if (dataBytes.Length > 62) version = 7;
+        if (dataBytes.Length > 120) version = 10;
+
+        int size = 17 + version * 4;
+        bool[,] matrix = new bool[size, size];
+        bool[,] reserved = new bool[size, size];
+
+        PlaceFinderPattern(matrix, reserved, 0, 0);
+        PlaceFinderPattern(matrix, reserved, size - 7, 0);
+        PlaceFinderPattern(matrix, reserved, 0, size - 7);
+
+        for (int i = 8; i < size - 8; i++)
+        {
+            matrix[6, i] = (i % 2 == 0);
+            reserved[6, i] = true;
+            matrix[i, 6] = (i % 2 == 0);
+            reserved[i, 6] = true;
+        }
+
+        if (version >= 2)
+        {
+            int alignPos = size - 7;
+            PlaceAlignmentPattern(matrix, reserved, alignPos - 2, alignPos - 2);
+        }
+
+        List<bool> bits = new List<bool>();
+        bits.Add(false); bits.Add(true); bits.Add(false); bits.Add(false);
+
+        int count = dataBytes.Length;
+        for (int i = 7; i >= 0; i--) bits.Add(((count >> i) & 1) == 1);
+
+        foreach (byte b in dataBytes)
+        {
+            for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
+        }
+
+        for (int i = 0; i < 4; i++) bits.Add(false);
+
+        int bitIdx = 0;
+        int direction = -1;
+        int x = size - 1;
+        while (x > 0)
+        {
+            if (x == 6) x--;
+            for (int y = (direction == -1 ? size - 1 : 0); y >= 0 && y < size; y += direction)
+            {
+                for (int col = x; col > x - 2; col--)
+                {
+                    if (!reserved[y, col])
+                    {
+                        bool val = false;
+                        if (bitIdx < bits.Count)
+                        {
+                            val = bits[bitIdx++];
+                        }
+                        else
+                        {
+                            val = ((y + col) % 2 == 0);
+                        }
+                        matrix[y, col] = val;
+                    }
+                }
+            }
+            direction = -direction;
+            x -= 2;
+        }
+
+        return matrix;
+    }
+
+    private static void PlaceFinderPattern(bool[,] matrix, bool[,] reserved, int top, int left)
+    {
+        for (int r = -1; r <= 7; r++)
+        {
+            for (int c = -1; c <= 7; c++)
+            {
+                int row = top + r;
+                int col = left + c;
+                if (row >= 0 && row < matrix.GetLength(0) && col >= 0 && col < matrix.GetLength(1))
+                {
+                    reserved[row, col] = true;
+                    if (r >= 0 && r <= 6 && c >= 0 && c <= 6)
+                    {
+                        bool isBlack = (r == 0 || r == 6 || c == 0 || c == 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4));
+                        matrix[row, col] = isBlack;
+                    }
+                    else
+                    {
+                        matrix[row, col] = false;
+                    }
+                }
+            }
+        }
+    }
+
+    private static void PlaceAlignmentPattern(bool[,] matrix, bool[,] reserved, int top, int left)
+    {
+        for (int r = 0; r < 5; r++)
+        {
+            for (int c = 0; c < 5; c++)
+            {
+                int row = top + r;
+                int col = left + c;
+                if (row >= 0 && row < matrix.GetLength(0) && col >= 0 && col < matrix.GetLength(1))
+                {
+                    if (!reserved[row, col])
+                    {
+                        reserved[row, col] = true;
+                        bool isBlack = (r == 0 || r == 4 || c == 0 || c == 4 || (r == 2 && c == 2));
+                        matrix[row, col] = isBlack;
+                    }
+                }
+            }
+        }
     }
 }

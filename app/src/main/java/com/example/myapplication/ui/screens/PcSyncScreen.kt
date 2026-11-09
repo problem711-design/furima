@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,9 +28,13 @@ import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Dns
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Wifi
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -341,10 +347,20 @@ fun PcSyncScreen(
 
             // 母艦PCサーバーへの差分同期＆自動ストレージ解放カード
             val pcServerUrl by viewModel.pcServerUrl.collectAsState()
+            val pcAuthToken by viewModel.pcAuthToken.collectAsState()
             val isPcConnected by viewModel.isPcServerConnected.collectAsState()
+            val missingOriginalItems by viewModel.missingOriginalItems.collectAsState()
+
             var inputUrl by remember(pcServerUrl) { mutableStateOf(pcServerUrl) }
+            var inputToken by remember(pcAuthToken) { mutableStateOf(pcAuthToken) }
             var isSyncing by remember { mutableStateOf(false) }
-            var missingOriginalCount by remember { mutableStateOf<Int?>(null) }
+
+            val scanner = remember(context) {
+                val options = GmsBarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .build()
+                GmsBarcodeScanning.getClient(context, options)
+            }
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -398,12 +414,47 @@ fun PcSyncScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "PC側で起動中の furima-server.exe のアドレスを指定し、差分写真の高速送信とスマホ側の自動容量削減を行います。",
+                        text = "PC側画面のQRコードをスキャンするかアドレスを入力し、差分写真の高速送信とスマホ側の自動容量削減を行います。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Spacer(modifier = Modifier.height(12.dp))
+
+                    androidx.compose.material3.Button(
+                        onClick = {
+                            scanner.startScan()
+                                .addOnSuccessListener { barcode ->
+                                    val rawValue = barcode.rawValue
+                                    if (!rawValue.isNullOrBlank()) {
+                                        val success = viewModel.parseQrCodeText(rawValue)
+                                        if (success) {
+                                            Toast.makeText(context, "QRコードから接続情報を読み込みました！", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            Toast.makeText(context, "フリマアプリ用のQRコード形式ではありませんでした", Toast.LENGTH_LONG).show()
+                                        }
+                                    }
+                                }
+                                .addOnFailureListener { e ->
+                                    Toast.makeText(context, "QRコードの読み取りに失敗しました: ${e.message}", Toast.LENGTH_SHORT).show()
+                                }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.QrCodeScanner,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("QRコードを読み取る", fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
                     androidx.compose.material3.OutlinedTextField(
                         value = inputUrl,
                         onValueChange = {
@@ -411,34 +462,80 @@ fun PcSyncScreen(
                             viewModel.updatePcServerUrl(it)
                         },
                         label = { Text("PCサーバーURL") },
-                        placeholder = { Text("http://192.168.1.10:8080") },
+                        placeholder = { Text("http://192.168.1.10:8080 または https://...trycloudflare.com") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    missingOriginalCount?.let { count ->
-                        if (count > 0) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(Color(0xFFFFF7ED), RoundedCornerShape(8.dp))
-                                    .padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Warning,
-                                    contentDescription = null,
-                                    tint = Color(0xFFEA580C),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "原本なし写真: ${count}件（PC保存用フォルダに存在しません）",
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFFC2410C)
-                                )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    androidx.compose.material3.OutlinedTextField(
+                        value = inputToken,
+                        onValueChange = {
+                            inputToken = it
+                            viewModel.updatePcAuthToken(it)
+                        },
+                        label = { Text("ワンタイム認証トークン (任意)") },
+                        placeholder = { Text("QRスキャンで自動入力、または手入力") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    if (missingOriginalItems.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7ED)),
+                            border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(Color(0xFFEA580C)))
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "原本なし写真一覧 (${missingOriginalItems.size}件)",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Color(0xFFC2410C)
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val exportText = viewModel.getMissingOriginalExportText()
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                            clipboard.setPrimaryClip(ClipData.newPlainText("Missing Original Photos", exportText))
+                                            Toast.makeText(context, "原本なし一覧をコピーしました", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = "コピー",
+                                            tint = Color(0xFFEA580C),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(100.dp)
+                                        .background(Color.White, RoundedCornerShape(6.dp))
+                                        .padding(8.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    for (itemWithPhotos in missingOriginalItems) {
+                                        Text(
+                                            text = "• ${itemWithPhotos.item.title} (ID: ${itemWithPhotos.item.id})",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = Color(0xFF7C2D12)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -465,7 +562,6 @@ fun PcSyncScreen(
                                 isSyncing = true
                                 viewModel.syncDeltaToPcServer { result ->
                                     isSyncing = false
-                                    missingOriginalCount = result.missingOriginalPhotosCount
                                     if (result.isSuccess) {
                                         val freedStr = if (result.freedMb > 0) " (${result.freedMb}MB空けました)" else ""
                                         val missingStr = if (result.missingOriginalPhotosCount > 0) " (原本なし: ${result.missingOriginalPhotosCount}件)" else ""

@@ -619,6 +619,9 @@ fun CompactItemCard(
                 }
 
                 // ステータスバッジ ＆ まとめバッジ
+                val hasOriginalMissing = photos.any { it.isOriginalDeleted }
+                val hasUnsynced = photos.any { !it.isPcSynced && java.io.File(it.filePath).exists() }
+
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -649,6 +652,26 @@ fun CompactItemCard(
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold
                         )
+                    }
+
+                    if (hasOriginalMissing) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFFEA580C))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Text(text = "原本なし", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else if (hasUnsynced) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF4F46E5))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Text(text = "未同期", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     if (isBundle) {

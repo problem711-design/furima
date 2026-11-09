@@ -1,16 +1,16 @@
 package com.example.myapplication.data.server
 
 import android.content.Context
-import android.util.Base64
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.PhotoStorageManager
+import com.squareup.moshi.Moshi
+import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -38,6 +38,14 @@ class PcServerClient(
 
     private val prefs = context.getSharedPreferences("pc_sync_prefs", Context.MODE_PRIVATE)
 
+    private val moshi = Moshi.Builder()
+        .addLast(KotlinJsonAdapterFactory())
+        .build()
+
+    private val syncItemsRequestAdapter = moshi.adapter(SyncItemsRequest::class.java)
+    private val syncItemsResponseAdapter = moshi.adapter(SyncItemsResponse::class.java)
+    private val syncPhotoResponseAdapter = moshi.adapter(SyncPhotoResponse::class.java)
+
     fun getSavedStoreId(): String {
         return prefs.getString("pc_store_id", "") ?: ""
     }
@@ -46,13 +54,30 @@ class PcServerClient(
         prefs.edit().putString("pc_store_id", storeId).apply()
     }
 
-    suspend fun checkServerStatus(baseUrl: String): Boolean = withContext(Dispatchers.IO) {
+    fun getSavedAuthToken(): String {
+        return prefs.getString("pc_auth_token", "") ?: ""
+    }
+
+    fun saveAuthToken(token: String) {
+        prefs.edit().putString("pc_auth_token", token).apply()
+    }
+
+    fun getSavedServerUrl(): String {
+        return prefs.getString("pc_server_url", "") ?: ""
+    }
+
+    fun saveServerUrl(url: String) {
+        prefs.edit().putString("pc_server_url", url).apply()
+    }
+
+    suspend fun checkServerStatus(baseUrl: String, token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
             val url = "$cleanUrl/api/server/status"
-            val request = Request.Builder().url(url).get().build()
-            client.newCall(request).execute().use { response ->
+            val reqBuilder = Request.Builder().url(url).get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
                 response.isSuccessful
             }
         } catch (e: Exception) {
@@ -60,13 +85,14 @@ class PcServerClient(
         }
     }
 
-    suspend fun sendHeartbeat(baseUrl: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun sendHeartbeat(baseUrl: String, token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
             val url = "$cleanUrl/api/server/heartbeat"
-            val request = Request.Builder().url(url).get().build()
-            client.newCall(request).execute().use { response ->
+            val reqBuilder = Request.Builder().url(url).get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
                 response.isSuccessful
             }
         } catch (e: Exception) {
@@ -74,14 +100,15 @@ class PcServerClient(
         }
     }
 
-    suspend fun fetchServerHashes(baseUrl: String): Set<String> = withContext(Dispatchers.IO) {
+    suspend fun fetchServerHashes(baseUrl: String, token: String = getSavedAuthToken()): Set<String> = withContext(Dispatchers.IO) {
         val hashSet = mutableSetOf<String>()
         try {
             val cleanUrl = baseUrl.trimEnd('/')
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext hashSet
             val url = "$cleanUrl/api/sync/hashes"
-            val request = Request.Builder().url(url).get().build()
-            client.newCall(request).execute().use { response ->
+            val reqBuilder = Request.Builder().url(url).get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
                 if (response.isSuccessful) {
                     val bodyStr = response.body?.string() ?: ""
                     val json = JSONObject(bodyStr)
@@ -100,10 +127,9 @@ class PcServerClient(
     }
 
     /**
-     * PCサーバーに未保持の差分写真および全商品メタデータを確実に送信し、
-     * 応答 storeId の整合性とサーバー保存後計算 MD5 を検証してスマホ側元画像を安全に容量削減。
+     * プロトコル v3: JSON メタデータ送信 (POST /api/sync/items) と生バイト送信 (POST /api/sync/photo) による二段階同期
      */
-    suspend fun syncDeltaToPcServer(baseUrl: String): PcSyncResult = withContext(Dispatchers.IO) {
+    suspend fun syncDeltaToPcServer(baseUrl: String, token: String = getSavedAuthToken()): PcSyncResult = withContext(Dispatchers.IO) {
         var syncedPhotoCount = 0
         var freedBytes = 0L
 
@@ -116,18 +142,16 @@ class PcServerClient(
         }
 
         try {
-            android.util.Log.i("PC_SYNC", "=== PUSH同期開始: $cleanUrl ===")
+            android.util.Log.i("PC_SYNC", "=== プロトコル v3 同期開始: $cleanUrl ===")
             val savedStoreId = getSavedStoreId()
 
-            // 1. PC側で既に保持されている写真のMD5ハッシュ一覧を取得
-            val existingServerHashes = fetchServerHashes(cleanUrl)
-            android.util.Log.i("PC_SYNC", "PC側既存ハッシュ数: ${existingServerHashes.size}")
-
-            // 2. スマホ側の全商品・写真リストを取得
+            // スマホ側の全商品・写真リストを取得
             val itemsWithPhotos = repository.getActiveItemsWithPhotosDirect()
-            android.util.Log.i("PC_SYNC", "スマホ側対象商品数: ${itemsWithPhotos.size}")
-            val itemsJsonArray = JSONArray()
-            val activeFolderNames = JSONArray()
+            val dtoList = mutableListOf<SyncItemDto>()
+            val activeFolderNames = mutableListOf<String>()
+
+            // 写真ID -> (File, MD5) のマッピング
+            val photoFileMap = mutableMapOf<Int, Pair<File, String>>()
 
             for (itemWithPhotos in itemsWithPhotos) {
                 val item = itemWithPhotos.item
@@ -135,27 +159,11 @@ class PcServerClient(
 
                 val safeTitle = item.title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
                 val itemFolderName = "${item.id}_$safeTitle"
-                activeFolderNames.put(itemFolderName)
+                activeFolderNames.add(itemFolderName)
 
-                val itemObj = JSONObject().apply {
-                    put("id", item.id)
-                    put("title", item.title)
-                    put("description", item.description)
-                    put("status", item.status)
-                    put("price", item.price)
-                    put("soldPrice", item.soldPrice)
-                    put("profit", item.getCalculatedProfit(repository.defaultSettings.value))
-                    put("statusLabel", when (item.status) {
-                        "SOLD" -> "売却済み"
-                        "MERGED" -> "まとめ売却"
-                        "DRAFT" -> "未出品"
-                        else -> "出品中"
-                    })
-                }
+                val photoDtoList = mutableListOf<SyncPhotoDto>()
 
-                val photosArray = JSONArray()
                 for (photo in photos) {
-                    // MD5ハッシュが空の場合はその場で自動計算し、DBに永続保存
                     var md5 = photo.md5Hash
                     val file = File(photo.filePath)
                     if (md5.isBlank() && file.exists()) {
@@ -165,126 +173,173 @@ class PcServerClient(
                         }
                     }
 
-                    val photoObj = JSONObject().apply {
-                        put("id", photo.id)
-                        put("md5Hash", md5)
-                    }
+                    photoDtoList.add(SyncPhotoDto(id = photo.id, md5Hash = md5))
 
-                    // PC側に未保存かつスマホ側に元画像が存在する場合、Base64転送用に読み込み
-                    if (md5.isNotBlank() && !existingServerHashes.contains(md5) && !photo.isOriginalDeleted) {
-                        if (file.exists()) {
-                            val bytes = file.readBytes()
-                            val base64Str = Base64.encodeToString(bytes, Base64.NO_WRAP)
-                            photoObj.put("base64Data", base64Str)
-                        }
+                    if (file.exists() && md5.isNotBlank()) {
+                        photoFileMap[photo.id] = Pair(file, md5)
                     }
-
-                    photosArray.put(photoObj)
                 }
 
-                itemObj.put("photos", photosArray)
-                itemsJsonArray.put(itemObj)
+                dtoList.add(
+                    SyncItemDto(
+                        id = item.id,
+                        title = item.title,
+                        description = item.description,
+                        status = item.status,
+                        price = item.price,
+                        soldPrice = item.soldPrice,
+                        profit = item.getCalculatedProfit(repository.defaultSettings.value),
+                        statusLabel = when (item.status) {
+                            "SOLD" -> "売却済み"
+                            "MERGED" -> "まとめ売却"
+                            "DRAFT" -> "未出品"
+                            else -> "出品中"
+                        },
+                        photos = photoDtoList
+                    )
+                )
             }
 
-            val payload = JSONObject().apply {
-                put("timestamp", System.currentTimeMillis())
-                put("storeId", savedStoreId)
-                put("items", itemsJsonArray)
-                put("activeFolderNames", activeFolderNames)
-            }
+            // 1. POST /api/sync/items
+            val syncReq = SyncItemsRequest(
+                protocolVersion = 3,
+                storeId = savedStoreId,
+                items = dtoList,
+                activeFolderNames = activeFolderNames
+            )
 
-            val pushUrl = "$cleanUrl/api/sync/push"
-            val payloadStr = payload.toString()
-            android.util.Log.i("PC_SYNC", "Payload作成完了 (サイズ: ${payloadStr.length}文字). 送信先: $pushUrl")
+            val reqJsonStr = syncItemsRequestAdapter.toJson(syncReq)
+            val itemsUrl = "$cleanUrl/api/sync/items"
+            val body = reqJsonStr.toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url(itemsUrl).post(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
 
-            // 3. PCサーバーへPUSH送信
-            val body = payloadStr.toRequestBody("application/json; charset=utf-8".toMediaType())
-            val request = Request.Builder().url(pushUrl).post(body).build()
+            val respStoreId: String
+            val syncedHashesSet = mutableSetOf<String>()
+            val neededHashesSet = mutableSetOf<String>()
 
-            client.newCall(request).execute().use { response ->
-                android.util.Log.i("PC_SYNC", "サーバー応答コード: ${response.code}")
+            client.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     return@withContext PcSyncResult(
                         isSuccess = false,
-                        errorMessage = "サーバーエラー応答: HTTP ${response.code}"
+                        errorMessage = "サーバーエラー応答 (POST /api/sync/items): HTTP ${response.code}"
                     )
                 }
 
                 val respStr = response.body?.string() ?: ""
-                android.util.Log.i("PC_SYNC", "サーバー応答本文: $respStr")
-                val respJson = JSONObject(respStr)
+                val respDto = syncItemsResponseAdapter.fromJson(respStr)
+                    ?: return@withContext PcSyncResult(
+                        isSuccess = false,
+                        errorMessage = "サーバー応答のパースに失敗しました"
+                    )
 
-                val respStoreId = respJson.optString("storeId", "")
+                respStoreId = respDto.storeId ?: ""
+
+                // 応答 storeId の一致検証 (記憶された storeId があり、不一致の場合は中止)
+                if (savedStoreId.isNotBlank() && respStoreId.isNotBlank() && !savedStoreId.equals(respStoreId, ignoreCase = true)) {
+                    return@withContext PcSyncResult(
+                        isSuccess = false,
+                        errorMessage = "別の保存先です (Store ID不一致)"
+                    )
+                }
+
                 if (savedStoreId.isBlank() && respStoreId.isNotBlank()) {
                     saveStoreId(respStoreId)
                 }
 
-                val syncedHashesArray = respJson.optJSONArray("syncedHashes")
-                val syncedSet = mutableSetOf<String>()
+                syncedHashesSet.addAll(respDto.syncedHashes)
+                neededHashesSet.addAll(respDto.neededHashes)
+            }
 
-                if (syncedHashesArray != null) {
-                    for (i in 0 until syncedHashesArray.length()) {
-                        syncedSet.add(syncedHashesArray.getString(i))
+            // 2. neededHashes のうち、元ファイルがあるものを POST /api/sync/photo で個別送信
+            val newlyStoredHashes = mutableSetOf<String>()
+
+            for ((_, pair) in photoFileMap) {
+                val file = pair.first
+                val md5 = pair.second
+
+                if (neededHashesSet.contains(md5) && file.exists()) {
+                    val photoBytes = file.readBytes()
+                    val photoUrl = "$cleanUrl/api/sync/photo"
+                    val photoBody = photoBytes.toRequestBody("application/octet-stream".toMediaType())
+
+                    val photoReqBuilder = Request.Builder()
+                        .url(photoUrl)
+                        .addHeader("X-Photo-Hash", md5)
+                        .post(photoBody)
+
+                    if (token.isNotBlank()) photoReqBuilder.addHeader("Authorization", "Bearer $token")
+
+                    client.newCall(photoReqBuilder.build()).execute().use { photoResp ->
+                        if (photoResp.isSuccessful) {
+                            val photoRespStr = photoResp.body?.string() ?: ""
+                            val photoRespDto = syncPhotoResponseAdapter.fromJson(photoRespStr)
+                            if (photoRespDto != null && photoRespDto.stored && photoRespDto.hash != null) {
+                                newlyStoredHashes.add(photoRespDto.hash.lowercase())
+                            }
+                        } else {
+                            android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5: $md5): HTTP ${photoResp.code}")
+                        }
                     }
                 }
+            }
 
-                // 高画質削除の3条件検証
-                // 条件1: 応答 storeId と 端末記憶 storeId の一致 (端末記憶が無い場合は保存して一致扱い)
-                val currentStoreId = getSavedStoreId()
-                val isStoreIdValid = currentStoreId.isNotBlank() && currentStoreId == respStoreId
+            // 合体: 既存Synced + 今回新規Saved
+            val allConfirmedHashes = syncedHashesSet + newlyStoredHashes
 
-                var missingOriginalCount = 0
+            // 3. 高画質削除判定 (条件1: storeId一致, 条件2: allConfirmedHashesに含まれる, 条件3: サムネイル存在)
+            val currentStoreId = getSavedStoreId()
+            val isStoreIdValid = currentStoreId.isNotBlank() && currentStoreId.equals(respStoreId, ignoreCase = true)
 
-                for (itemWithPhotos in itemsWithPhotos) {
-                    for (photo in itemWithPhotos.photos) {
-                        var md5 = photo.md5Hash
-                        if (md5.isBlank()) {
-                            val f = File(photo.filePath)
-                            if (f.exists()) md5 = photoStorageManager.calculateMd5(f)
+            var missingOriginalCount = 0
+
+            for (itemWithPhotos in itemsWithPhotos) {
+                for (photo in itemWithPhotos.photos) {
+                    var md5 = photo.md5Hash
+                    if (md5.isBlank()) {
+                        val f = File(photo.filePath)
+                        if (f.exists()) md5 = photoStorageManager.calculateMd5(f)
+                    }
+
+                    val isConfirmedOnServer = md5.isNotBlank() && allConfirmedHashes.contains(md5.lowercase())
+
+                    if (photo.isOriginalDeleted) {
+                        if (md5.isNotBlank() && !isConfirmedOnServer) {
+                            missingOriginalCount++
                         }
+                    }
 
-                        // 原本なし件数（サムネイル化済みだが、今回または既存のサーバーハッシュに存在しない）のカウント
-                        if (photo.isOriginalDeleted) {
-                            if (md5.isNotBlank() && !syncedSet.contains(md5) && !existingServerHashes.contains(md5)) {
-                                missingOriginalCount++
-                            }
-                        }
-
-                        // 高画質削除判定 (条件1: storeId一致, 条件2: サーバーが保存後自己計算した syncedSet に含まれる, 条件3: スマホ側にサムネイルが存在する)
-                        if (isStoreIdValid && md5.isNotBlank() && syncedSet.contains(md5)) {
-                            if (!photo.isOriginalDeleted) {
-                                val file = File(photo.filePath)
-                                val hasThumb = photo.thumbnailPath != null && File(photo.thumbnailPath).exists()
-                                if (file.exists() && hasThumb) {
-                                    val fileSize = file.length()
-                                    if (file.delete()) {
-                                        freedBytes += fileSize
-                                        syncedPhotoCount++
-                                        // DB更新: isOriginalDeleted = true, syncStatus = "SYNCED"
-                                        repository.getDao().updatePhotoOriginalDeleted(photo.id, true, photo.thumbnailPath)
-                                        repository.getDao().updatePhotoPcSynced(photo.id, true)
-                                    }
+                    if (isStoreIdValid && isConfirmedOnServer) {
+                        if (!photo.isOriginalDeleted) {
+                            val file = File(photo.filePath)
+                            val hasThumb = photo.thumbnailPath != null && File(photo.thumbnailPath).exists()
+                            if (file.exists() && hasThumb) {
+                                val fileSize = file.length()
+                                if (file.delete()) {
+                                    freedBytes += fileSize
+                                    syncedPhotoCount++
+                                    repository.getDao().updatePhotoOriginalDeleted(photo.id, true, photo.thumbnailPath)
+                                    repository.getDao().updatePhotoPcSynced(photo.id, true)
                                 }
                             }
                         }
                     }
                 }
-
-                return@withContext PcSyncResult(
-                    isSuccess = true,
-                    syncedItemsCount = itemsWithPhotos.size,
-                    syncedPhotosCount = syncedPhotoCount,
-                    freedMb = (freedBytes / (1024 * 1024)).toInt(),
-                    missingOriginalPhotosCount = missingOriginalCount,
-                    storeId = respStoreId
-                )
             }
+
+            return@withContext PcSyncResult(
+                isSuccess = true,
+                syncedItemsCount = itemsWithPhotos.size,
+                syncedPhotosCount = syncedPhotoCount,
+                freedMb = (freedBytes / (1024 * 1024)).toInt(),
+                missingOriginalPhotosCount = missingOriginalCount,
+                storeId = respStoreId
+            )
         } catch (e: Exception) {
-            android.util.Log.e("PC_SYNC", "PUSH同期で例外が発生しました: ${e.message}", e)
-            e.printStackTrace()
+            android.util.Log.e("PC_SYNC", "プロトコル v3 同期例外: ${e.message}", e)
             return@withContext PcSyncResult(
                 isSuccess = false,
-                errorMessage = e.localizedMessage ?: e.message ?: "通信接続エラーが発生しました"
+                errorMessage = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
             )
         }
     }

@@ -71,33 +71,53 @@
   11. `app/build.gradle.kts`
   12. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
 
-#### [ ] **フェーズ 2.1-B: PC母艦サーバーの超軽量GUI化・認証トークン・QRコード生成** 【未着手】
+#### [x] **フェーズ 2.1-A3: JSONライブラリ交換 (Newtonsoft / Moshi) & 写真の二段階POST** 【完了 (2026/03/30 Build 10)】
+- **目的**: 
+  - `JavaScriptSerializer` の配列キャスト依存を解消し、`Newtonsoft.Json` (PC) および `Moshi` (スマホ) に移行。
+  - プロトコル v3 導入: JSONメタデータ送信 (`POST /api/sync/items`) と生バイト送信 (`POST /api/sync/photo` + `X-Photo-Hash` ヘッダー) による写真の個別分離送信。
+  - サーバーが保存後に自己計算した MD5 ハッシュのみを正として検証。
+- **編集対象ファイル (完了)**:
+  1. `tools/lib/Newtonsoft.Json.dll` (配置済み)
+  2. `tools/FurimaServerNative.cs`
+  3. `tools/SyncStore.cs`
+  4. `tools/FurimaSyncNative.cs`
+  5. `app/src/main/java/com/example/myapplication/data/server/SyncDtos.kt`
+  6. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+  7. `app/build.gradle.kts`
+#### [x] **フェーズ 2.1-B: PC母艦サーバーの超軽量GUI化・認証トークン・QRコード生成** 【実装完了 (2026/03/30 Build 11)】
 - **目的**: 
   - `furima-server.exe` 起動時に超軽量ウィンドウ（Windows Forms）を表示。
   - `cloudflared.exe` を背景起動して一時トンネルURLを発行、ランダム認証トークン付きの接続用QRコードを生成・描画。
-  - APIエンドポイントにワンタイム認証トークン検証ガードを追加し、安全なグローバル接続を確立。
-- **編集対象ファイル (最小限: 1ファイル)**:
-  1. `tools/FurimaServerNative.cs` (GUI、cloudflared連携、QR描画、トークンガード)
+  - APIエンドポイントにワンタイム認証トークン検証ガード（Bearer認証）を追加し、安全な接続を確立。
+- **編集対象ファイル**:
+  1. `tools/TunnelQrForm.cs` (新規)
+  2. `tools/FurimaServerNative.cs` (GUI、cloudflared連携、自前QR描画、トークンガード)
+  3. `tools/DashboardHtml.cs` (Build 11 表記統一)
+  4. `app/build.gradle.kts` (versionCode 11 更新)
 
-#### [ ] **フェーズ 2.1-C: スマホアプリ側のQRスキャナ連携 & トークン対応** 【未着手】
+#### [x] **フェーズ 2.1-C: スマホアプリ側のQRスキャナ連携 & トークン対応** 【実装完了 (2026/03/30 Build 12)】
 - **目的**: 
-  - 「PC連携」画面に「QRコード読み取り」ボタンを追加（Google Play Services Code Scanner 利用）。
+  - 「PC連携」画面に「QRコードを読み取る」ボタンを追加（Google Play Services Code Scanner 利用）。
   - QRから読み取ったトンネルURLと認証トークンを保持し、Wi-Fiアクセスポイント変更時もQRをかざすだけで即同期可能にする。
   - 旧「PCブラウザ連携」は「ローカルサーバー接続（直接/緊急用）」として保持し、明確に棲み分け。
-- **編集対象ファイル (最小限: 4ファイル)**:
-  1. `app/build.gradle.kts` (Code Scanner 依存関係追加)
+- **編集対象ファイル**:
+  1. `app/build.gradle.kts` (Code Scanner 依存関係追加 & versionCode 12 更新)
   2. `app/src/main/java/com/example/myapplication/ui/screens/PcSyncScreen.kt` (QR読み取りUI追加 & ローカル直接接続カード整理)
-  3. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt` (QRトークン・URL保持)
-  4. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt` (Bearer認証ヘッダー付与)
+  3. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt` (QRトークン・URL保持 & パース)
+  4. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt` (Bearer認証ヘッダー付与 & StoreID検証)
 
-#### [ ] **フェーズ 2.1-D: 同期ステータス可視化 (スマホ側 & PC側)** 【未着手】
+#### [x] **フェーズ 2.1-D: 同期ステータス可視化 (スマホ側 & PC側)** 【実装完了 (2026/03/30 Build 13)】
 - **目的**: 
-  - スマホ側およびPC側の両方に「〇件中〇件同期済み（未同期: X件）」のサマリー表示を追加。
-  - 未同期の商品カードにのみ目立つオレンジ色の「未同期」バッジを表示し、一目で同期漏れを判別可能にする。
-- **編集対象ファイル (最小限: 3ファイル)**:
-  1. `app/src/main/java/com/example/myapplication/ui/screens/ItemListScreen.kt` (カード未同期バッジ & 全体進捗)
-  2. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt` (同期ステータス集計 StateFlow)
-  3. `tools/FurimaServerNative.cs` (PCブラウザ画面ヘッダーでの同期状況表示)
+  - スマホ側およびPC側の両方に同期ステータス（未同期バッジ・原本なし件数およびリスト表示）を追加。
+  - 出品一覧カードに「未同期」および「原本なし」バッジを表示。
+  - PC連携画面に原本なし写真の一覧とクリップボードコピー機能を追加。
+  - 母艦ブラウザ管理画面のヘッダーにインデックス写真枚数と原本なし件数を表示。
+- **編集対象ファイル**:
+  1. `app/src/main/java/com/example/myapplication/ui/screens/ItemListScreen.kt` (カードバッジ追加)
+  2. `app/src/main/java/com/example/myapplication/ui/screens/PcSyncScreen.kt` (原本なし一覧 & コピー機能)
+  3. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt` (未同期・原本なし StateFlow & エクスポート)
+  4. `tools/DashboardHtml.cs` (ステータス表示追加 & Build 13 更新)
+  5. `app/build.gradle.kts` (versionCode 13 更新)
 
 #### [ ] **フェーズ 2.1-E: PCブラウザ管理画面の本格統合 & 余白最適化・数値強調** 【未着手】
 - **目的**: 
@@ -116,7 +136,40 @@
 
 ---
 
+## 注意事項 (開発・編集ルール)
+1. 返答・編集内容・コマンド・ログの要約のどこにも、アルファベット1文字の直後にコロンが付く書き方（ドライブ文字や短縮オプション等）を書かないこと。パスはプロジェクト相対パスで記述する。
+2. `tools/build-exe.bat` は手動修正済みのため編集しないこと。
+3. PowerShell の長い1行コマンドで変数を含むものは直接実行せず、必要に応じてスクリプトファイルを作成して実行すること。
+
+---
+
 ## 更新履歴 (Changelog)
+
+### [2026-03-30] フェーズ 2.1-D 実装完了 (同期ステータス可視化 - スマホ & PC) バージョン 2.1 (Build 13)
+- スマホ側: 出品一覧カードに「未同期」および「原本なし」バッジを表示。
+- スマホ側 (PC連携画面): 原本なし写真の一覧表示とクリップボードコピー機能を追加。
+- PCブラウザ管理画面 (`DashboardHtml.cs`): ヘッダーにインデックス写真枚数と原本なし件数をリアルタイム表示し、バージョンを `Build 13` に更新。
+- アプリ側 versionCode を `13` に更新し、Android / サーバー共にビルド成功を確認。
+
+### [2026-03-30] フェーズ 2.1-C 実装完了 (スマホアプリQRスキャナ連携 & トークン対応) バージョン 2.1 (Build 12)
+- Google Play Services Code Scanner (`play-services-code-scanner` / `GmsBarcodeScanning`) を導入し、スマホ「PC連携」画面に「QRコードを読み取る」ボタンを追加。
+- `furima:{url}|{token}|{storeId}` 形式の QR コードテキストを自動パースして URL・トークン・Store ID を保存・保持するロジックを ViewModel に実装。
+- すべての PC サーバー通信 (`checkServerStatus`, `sendHeartbeat`, `fetchServerHashes`, `syncDeltaToPcServer`) に `Authorization: Bearer` トークンを自動付与。
+- 応答 `storeId` と記憶された `storeId` が異なる場合は同期を中止して事故を防止。
+- アプリ側 versionCode を `12` に更新し、ビルド成功を確認。
+
+### [2026-03-30] フェーズ 2.1-B 実装完了 (PC母艦サーバーGUI化・認証トークン・QRコード生成) バージョン 2.1 (Build 11)
+- `furima-server.exe` 起動時に超軽量ウィンドウ (Windows Forms) を表示するコードを追加。
+- `cloudflared.exe` を子プロセスで背景起動し、`trycloudflare.com` トンネルURLを自動取得して表示。
+- トンネルURL・ワンタイム認証トークン・`storeId` を含んだ QRコードを自前描画 (System.Drawing) してウィンドウ上に提示。
+- ループバック以外からの `/api/` へのアクセスに対し `Authorization: Bearer` トークンチェックによる 401 ガードを追加。
+- `tools/DashboardHtml.cs` (Build 11) および `app/build.gradle.kts` (versionCode 11) を統一更新。
+
+### [2026-03-30] フェーズ 2.1-A3 完了 (Newtonsoft / Moshi 交換 & 写真の二段階 POST) バージョン 2.1 (Build 10)
+- PCサーバー側 (`tools/FurimaServerNative.cs` 等) から `JavaScriptSerializer` の依存を完全に除去し、`Newtonsoft.Json` に統一。
+- スマホアプリ側 (`SyncDtos.kt`, `PcServerClient.kt`) で `Moshi` を使用したプロトコル v3 の実装。
+- `POST /api/sync/items` (JSONメタデータ) と `POST /api/sync/photo` (生画像データ + `X-Photo-Hash` ヘッダー) の二段階通信を導入し、サーバー保存後の自己計算 MD5 のみを正として検証。
+- バージョン表記を `Build 10` (versionCode 10) に繰り上げ更新。
 
 ### [2026-11-07] 差分同期のギャップ調査と原因特定完了（既存写真未送信問題）
 - **現象**: PC側のハッシュ存在チェック（Integrity Check）および双方向クリーンアップ（Garbage Collection）を実装・再起動したものの、既存データの写真ファイルがPC側に再送・復元されない問題が発生。

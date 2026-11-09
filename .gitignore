@@ -25,6 +25,10 @@ debug.keystore
 
 # PC server local sync directory & tunnel executable & agent artifacts
 /出品写真_PC保存用/
+/tools/出品写真_PC保存用/
+/tools/store.json
+/tools/build.log
+/tools/update_build_bat.ps1
 /.artifacts/
 /tools/cloudflared.exe
 
