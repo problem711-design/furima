@@ -156,6 +156,12 @@
 
 ## 更新履歴 (Changelog)
 
+### [2026-03-30] 同期安定化バグ修正 & テストデータシード実装 (Build 15 完了)
+- PCサーバー側 (`FurimaServerNative.cs` の `HandleSyncItems`) において、送信データに含まれるアクティブ商品の重複防止（同IDの事前削除による上書き更新）および非同期商品の完全削除を修正。
+- スマホ側 (`PcServerClient.kt` の `activeFolderNames`) において、まとめ済み（`MERGED`）の子商品フォルダも保護対象として送信するよう修正し、まとめ買い作成・解除時の写真データ消失を完全に防止。
+- スマホ側 (`FleaMarketRepository.kt`) に起動時テストデータシード（サンプル画像付き10件）を実装し、テスト環境を整備。
+- UI側 (`ItemListScreen.kt`) において、同期完了時に正しく「送信済み」バッジが表示されるよう判定条件を修正。
+
 ### [2026-03-30] フェーズ 2.1-F 実装完了 (PC保存容量表示 & 売却30日経過写真クリーンアップ機能) バージョン 2.1 (Build 15)
 - PC母艦サーバー側 (`SyncStore.cs`, `FurimaServerNative.cs`) に、保存フォルダ (`出品写真_PC保存用`) の総容量計算関数、および売却成立から30日以上経過した写真ファイルのクリーンアップ判定・実行ロジックを追加。
 - プレビュー取得 API (`GET /api/cleanup/preview`) と削除実行 API (`POST /api/cleanup/execute`) を新設。
