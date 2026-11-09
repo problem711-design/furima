@@ -301,20 +301,38 @@ class FleaMarketRepository(private val context: Context) {
                 ItemEntity(title = "フレグランス オーデコロン 50ml", description = "爽やかなシトラス系の香水です。", price = 3200, status = "LISTED")
             )
 
-            val bitmap = android.graphics.Bitmap.createBitmap(300, 300, android.graphics.Bitmap.Config.RGB_565)
-            val canvas = android.graphics.Canvas(bitmap)
-            canvas.drawColor(android.graphics.Color.parseColor("#4F46E5"))
+            val colors = arrayOf("#4F46E5", "#059669", "#D97706", "#DC2626", "#7C3AED", "#2563EB", "#0D9488", "#CA8A04", "#475569", "#DB2777")
 
-            for (item in testItems) {
+            for ((index, item) in testItems.withIndex()) {
                 val itemId = dao.insertItem(item).toInt()
-
                 val photoFile = File(context.filesDir, "test_seed_${itemId}.jpg")
+
+                var success = false
                 try {
-                    photoFile.outputStream().use { out ->
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                        out.flush()
+                    val url = java.net.URL("https://picsum.photos/seed/item$index/300/300")
+                    val connection = url.openConnection() as java.net.HttpURLConnection
+                    connection.connectTimeout = 3000
+                    connection.readTimeout = 3000
+                    connection.inputStream.use { input ->
+                        photoFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    if (photoFile.exists() && photoFile.length() > 0) {
+                        success = true
                     }
                 } catch (e: Exception) {}
+
+                if (!success) {
+                    val bitmap = android.graphics.Bitmap.createBitmap(300, 300, android.graphics.Bitmap.Config.RGB_565)
+                    val canvas = android.graphics.Canvas(bitmap)
+                    canvas.drawColor(android.graphics.Color.parseColor(colors[index % colors.size]))
+                    try {
+                        photoFile.outputStream().use { out ->
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                        }
+                    } catch (e: Exception) {}
+                }
 
                 val md5 = photoStorageManager.calculateMd5(photoFile)
 
