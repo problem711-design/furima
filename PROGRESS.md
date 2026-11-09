@@ -156,6 +156,11 @@
 
 ## 更新履歴 (Changelog)
 
+### [2026-03-30] フェーズ 2.2 接続ステータス不具合の調査結果記録
+- **現象**: スマホアプリとC#母艦サーバー間で同期・通信は成功するが、PCブラウザ管理画面のステータスが「未接続」表示になる問題。
+- **原因特定**: フェーズ 2.2 で新規追加された C# サーバー側 API (`GET /api/items`, `POST /api/items`, `PUT /api/items/{id}`, `DELETE /api/items/{id}`) のハンドラー内において、`lastHeartbeat = DateTime.Now;` の更新処理が抜けていたため、これらを使用中に 10 秒のタイムアウト閾値を超えて `appConnected = false` と誤判定されていた。
+- **対策計画**: 各新規 API ハンドラーの冒頭で `lastHeartbeat = DateTime.Now;` を確実に更新するよう修正予定。
+
 ### [2026-03-30] フェーズ 2.2 実装完了 (PC側からの商品編集・削除・新規追加 & 双方向プル同期) バージョン 2.2 (Build 16)
 - PC母艦管理画面 (`DashboardHtml.cs`) に商品編集・削除モーダル、および新規商品追加フォーム (`POST /api/items`) を実装。
 - PC母艦サーバー (`FurimaServerNative.cs`) に商品更新 (`PUT /api/items/{id}`)、商品削除 (`DELETE /api/items/{id}`)、および新規商品作成 (`POST /api/items`) APIエンドポイントを新設。
