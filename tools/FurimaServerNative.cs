@@ -605,6 +605,8 @@ class FurimaServerNative
                                 { "photos", savedPhotosList }
                             };
 
+                            // 同一IDの既存エントリーがあれば重複防止のため削除してから追加 (上書き更新)
+                            itemsDb.RemoveAll(i => i != null && i.ContainsKey("id") && Convert.ToInt32(i["id"]) == id);
                             itemsDb.Add(newItemDict);
                         }
 
