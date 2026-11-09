@@ -314,6 +314,10 @@ class PcServerClient(
 
                     val isConfirmedOnServer = md5.isNotBlank() && allConfirmedHashes.contains(md5.lowercase())
 
+                    if (isConfirmedOnServer) {
+                        repository.getDao().updatePhotoPcSynced(photo.id, true)
+                    }
+
                     if (photo.isOriginalDeleted) {
                         if (md5.isNotBlank() && !isConfirmedOnServer) {
                             missingOriginalCount++
@@ -332,7 +336,6 @@ class PcServerClient(
                                     freedBytes += fileSize
                                     syncedPhotoCount++
                                     repository.getDao().updatePhotoOriginalDeleted(photo.id, true, photo.thumbnailPath)
-                                    repository.getDao().updatePhotoPcSynced(photo.id, true)
                                 }
                             }
                         }
