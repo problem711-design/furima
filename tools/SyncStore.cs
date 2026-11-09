@@ -120,4 +120,183 @@ public static class SyncStore
         }
         return missingHashes.Count;
     }
+
+    public static long GetDirectorySizeBytes(string dirPath)
+    {
+        if (string.IsNullOrEmpty(dirPath) || !Directory.Exists(dirPath)) return 0;
+        long total = 0;
+        try
+        {
+            var files = Directory.GetFiles(dirPath, "*.*", SearchOption.AllDirectories);
+            foreach (var f in files)
+            {
+                try
+                {
+                    FileInfo fi = new FileInfo(f);
+                    total += fi.Length;
+                }
+                catch { }
+            }
+        }
+        catch { }
+        return total;
+    }
+
+    public static string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1024 * 1024) return (bytes / 1024.0).ToString("F1") + " KB";
+        if (bytes < 1024 * 1024 * 1024) return (bytes / (1024.0 * 1024.0)).ToString("F1") + " MB";
+        return (bytes / (1024.0 * 1024.0 * 1024.0)).ToString("F1") + " GB";
+    }
+
+    public class CleanupCandidate
+    {
+        public int itemId { get; set; }
+        public string title { get; set; }
+        public string status { get; set; }
+        public string soldAtText { get; set; }
+        public string photoHash { get; set; }
+        public string fileName { get; set; }
+        public string filePath { get; set; }
+        public long sizeBytes { get; set; }
+        public string sizeFormatted { get; set; }
+    }
+
+    public class CleanupPreviewResult
+    {
+        public long totalStorageBytes { get; set; }
+        public string totalStorageFormatted { get; set; }
+        public int candidateCount { get; set; }
+        public long reclaimableBytes { get; set; }
+        public string reclaimableFormatted { get; set; }
+        public List<CleanupCandidate> candidates { get; set; }
+
+        public CleanupPreviewResult()
+        {
+            candidates = new List<CleanupCandidate>();
+        }
+    }
+
+    public static CleanupPreviewResult GetCleanupCandidates(List<Dictionary<string, object>> itemsDb, Dictionary<string, string> hashToFilePathMap, string syncDir)
+    {
+        var result = new CleanupPreviewResult();
+        result.totalStorageBytes = GetDirectorySizeBytes(syncDir);
+        result.totalStorageFormatted = FormatBytes(result.totalStorageBytes);
+
+        if (itemsDb == null || hashToFilePathMap == null) return result;
+
+        DateTime cutoff = DateTime.Now.AddDays(-30);
+
+        foreach (var item in itemsDb)
+        {
+            if (item == null) continue;
+
+            string status = item.ContainsKey("status") ? (item["status"] ?? "").ToString() : "";
+            string statusLabel = item.ContainsKey("statusLabel") ? (item["statusLabel"] ?? "").ToString() : "";
+
+            bool isSold = string.Equals(status, "SOLD", StringComparison.OrdinalIgnoreCase) ||
+                         string.Equals(status, "MERGED", StringComparison.OrdinalIgnoreCase) ||
+                         statusLabel.Contains("売却");
+
+            if (!isSold) continue;
+
+            // soldAt の解析
+            DateTime soldDate = DateTime.MinValue;
+            bool hasValidSoldAt = false;
+
+            if (item.ContainsKey("soldAt") && item["soldAt"] != null)
+            {
+                try
+                {
+                    long epochMs = Convert.ToInt64(item["soldAt"]);
+                    if (epochMs > 0)
+                    {
+                        soldDate = DateTimeOffset.FromUnixTimeMilliseconds(epochMs).LocalDateTime;
+                        hasValidSoldAt = true;
+                    }
+                }
+                catch { }
+            }
+
+            if (item.ContainsKey("photos") && item["photos"] != null)
+            {
+                var photosList = item["photos"] as System.Collections.IEnumerable;
+                if (photosList != null)
+                {
+                    foreach (var photoObj in photosList)
+                    {
+                        var photo = photoObj as Dictionary<string, object>;
+                        if (photo == null || !photo.ContainsKey("md5Hash") || photo["md5Hash"] == null) continue;
+
+                        string hash = photo["md5Hash"].ToString().Trim();
+                        if (string.IsNullOrEmpty(hash)) continue;
+
+                        string filePath;
+                        if (hashToFilePathMap.TryGetValue(hash, out filePath) && !string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+                        {
+                            FileInfo fi = new FileInfo(filePath);
+
+                            DateTime targetDate = hasValidSoldAt ? soldDate : fi.LastWriteTime;
+
+                            if (targetDate <= cutoff)
+                            {
+                                int id = item.ContainsKey("id") ? Convert.ToInt32(item["id"]) : 0;
+                                string title = item.ContainsKey("title") ? (item["title"] ?? "無題").ToString() : "無題";
+
+                                result.candidates.Add(new CleanupCandidate
+                                {
+                                    itemId = id,
+                                    title = title,
+                                    status = statusLabel,
+                                    soldAtText = targetDate.ToString("yyyy/MM/dd"),
+                                    photoHash = hash,
+                                    fileName = fi.Name,
+                                    filePath = filePath,
+                                    sizeBytes = fi.Length,
+                                    sizeFormatted = FormatBytes(fi.Length)
+                                });
+
+                                result.reclaimableBytes += fi.Length;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        result.candidateCount = result.candidates.Count;
+        result.reclaimableFormatted = FormatBytes(result.reclaimableBytes);
+        return result;
+    }
+
+    public static int ExecuteCleanup(List<CleanupCandidate> candidates, out long freedBytes)
+    {
+        int deletedCount = 0;
+        freedBytes = 0;
+
+        if (candidates == null) return 0;
+
+        foreach (var c in candidates)
+        {
+            try
+            {
+                if (!string.IsNullOrEmpty(c.filePath) && File.Exists(c.filePath))
+                {
+                    FileInfo fi = new FileInfo(c.filePath);
+                    long size = fi.Length;
+                    File.Delete(c.filePath);
+                    deletedCount++;
+                    freedBytes += size;
+                    Console.WriteLine("  -> [30日クリーンアップ] 削除成功: " + fi.Name + " (" + FormatBytes(size) + ")");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[30日クリーンアップ] ファイル削除失敗: " + c.filePath + " (" + ex.Message + ")");
+            }
+        }
+
+        return deletedCount;
+    }
 }

@@ -27,7 +27,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.1)
 
-現在のバージョン: **`v2.1 (Build 14)`**
+現在のバージョン: **`v2.1 (Build 15)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -135,12 +135,15 @@
   1. `tools/DashboardHtml.cs` (高密度UI、重要数値強調、写真拡大モーダル実装、Build 14 更新)
   2. `app/build.gradle.kts` (versionCode 14 更新)
 
-#### [ ] **フェーズ 2.1-F: PC側ディスク容量表示 & 30日経過写真クリーンアップ機能の移行** 【未着手】
+#### [x] **フェーズ 2.1-F: PC側ディスク容量表示 & 30日経過写真クリーンアップ機能の移行** 【完了 (2026/03/30 Build 15)】
 - **目的**: 
   - PC側画面に `出品写真_PC保存用` の総データサイズを表示。
   - スマホ側から移行した「売却から30日以上経過した写真の一括削除」機能、および削除による「削減見込みデータサイズ」を表示してワンクリック実行可能にする。
-- **編集対象ファイル (最小限: 1ファイル)**:
-  1. `tools/FurimaServerNative.cs` (容量計算、クリーンアップAPI & UI)
+- **編集対象ファイル**:
+  1. `tools/SyncStore.cs` (容量計算、クリーンアップ候補検出・実行処理)
+  2. `tools/FurimaServerNative.cs` (クリーンアップ API ルート `/api/cleanup/preview` & `/api/cleanup/execute` 追加)
+  3. `tools/DashboardHtml.cs` (PC容量表示、クリーンアッププレビュー/実行モーダル追加、Build 15 更新)
+  4. `app/build.gradle.kts` (versionCode 15 更新)
 
 ---
 
@@ -152,6 +155,12 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-03-30] フェーズ 2.1-F 実装完了 (PC保存容量表示 & 売却30日経過写真クリーンアップ機能) バージョン 2.1 (Build 15)
+- PC母艦サーバー側 (`SyncStore.cs`, `FurimaServerNative.cs`) に、保存フォルダ (`出品写真_PC保存用`) の総容量計算関数、および売却成立から30日以上経過した写真ファイルのクリーンアップ判定・実行ロジックを追加。
+- プレビュー取得 API (`GET /api/cleanup/preview`) と削除実行 API (`POST /api/cleanup/execute`) を新設。
+- PCブラウザ管理画面 (`DashboardHtml.cs`) のサイドバーに保存フォルダ使用量をリアルタイム表示し、「売却30日経過写真の整理」モーダルダイアログを実装（事前確認・削減見込みサイズ・対象ファイル一覧表示・一括削除実行に対応）。
+- アプリ側 `app/build.gradle.kts` versionCode および `DashboardHtml.cs` のバージョン表記を `15` (Build 15) に統一更新し、`build-exe.bat` および `assembleDebug` でビルド成功を確認。
 
 ### [2026-03-30] フェーズ 2.1-E 実装完了 (PCブラウザ管理画面の密度最適化 & 写真拡大モーダルプレビュー) バージョン 2.1 (Build 14)
 - PCブラウザ管理画面 (`tools/DashboardHtml.cs`) を高密度レイアウトへ刷新（パディング・余白削減、レスポンシブグリッド化）。

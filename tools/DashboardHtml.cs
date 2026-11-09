@@ -25,7 +25,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.1 (Build 14)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.1 (Build 15)</span>
     </div>
 
     <!-- ナビゲーションバー (高密度・インライン統合) -->
@@ -104,6 +104,19 @@ public static class DashboardHtml
 
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
+                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真整理
+                    </h2>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between'>
+                        <span class='text-[11px] text-slate-600 font-medium'>保存フォルダ容量</span>
+                        <span id='stat-storage-size' class='text-xs font-black text-slate-800'>...</span>
+                    </div>
+                    <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
+                    </button>
+                </div>
+
+                <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
+                    <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
                         <i class='fa-solid fa-sliders text-indigo-500'></i> コントロール
                     </h2>
                     <button onclick='fetchItems()' class='w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
@@ -113,6 +126,75 @@ public static class DashboardHtml
             </aside>
         </div>
     </main>
+
+    <!-- 30日経過写真クリーンアップモーダル -->
+    <div id='cleanup-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeCleanupModal()'>
+        <div class='bg-white rounded-xl max-w-2xl w-full max-h-[85vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <!-- モーダルヘッダー -->
+            <div class='bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between border-b border-slate-800'>
+                <div class='flex items-center gap-2.5'>
+                    <i class='fa-solid fa-broom text-amber-400 text-lg'></i>
+                    <div>
+                        <h3 class='font-bold text-sm tracking-tight'>売却30日経過写真のクリーンアップ</h3>
+                        <p class='text-[11px] text-slate-400'>売却成立から30日以上経過した商品の写真ファイルを安全に一括削除します</p>
+                    </div>
+                </div>
+                <button onclick='closeCleanupModal()' class='text-slate-400 hover:text-white text-lg font-bold p-1 transition'>
+                    <i class='fa-solid fa-xmark'></i>
+                </button>
+            </div>
+
+            <!-- モーダルボディ -->
+            <div class='p-5 flex-1 overflow-y-auto custom-scroll space-y-4'>
+                <div id='cleanup-summary-card' class='bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between'>
+                    <div>
+                        <p class='text-xs font-bold text-amber-900'>削減見込みデータサイズ</p>
+                        <p id='cleanup-reclaim-text' class='text-lg font-black text-amber-700'>計算中...</p>
+                    </div>
+                    <span id='cleanup-count-badge' class='bg-amber-600 text-white text-xs font-bold px-2.5 py-1 rounded-full'>0件のファイル</span>
+                </div>
+
+                <div>
+                    <h4 class='text-xs font-bold text-slate-700 mb-2 flex items-center gap-1'>
+                        <i class='fa-solid fa-list-check text-indigo-500'></i> 削除対象候補ファイル一覧
+                    </h4>
+                    <div class='border border-slate-200 rounded-lg overflow-hidden max-h-60 overflow-y-auto custom-scroll'>
+                        <table class='w-full text-left text-xs border-collapse'>
+                            <thead class='bg-slate-100 text-slate-600 font-bold sticky top-0 border-b border-slate-200'>
+                                <tr>
+                                    <th class='p-2'>商品タイトル</th>
+                                    <th class='p-2'>状態</th>
+                                    <th class='p-2'>売却/更新日</th>
+                                    <th class='p-2 text-right'>サイズ</th>
+                                </tr>
+                            </thead>
+                            <tbody id='cleanup-candidates-table' class='divide-y divide-slate-100 text-slate-700'>
+                                <!-- JSで動的生成 -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class='bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-[11px] text-slate-500 space-y-1'>
+                    <p class='font-bold text-slate-700 flex items-center gap-1'>
+                        <i class='fa-solid fa-shield-halved text-emerald-600'></i> 安全性のご案内
+                    </p>
+                    <p>・出品中・未出品の写真は削除対象に含まれません。</p>
+                    <p>・PC上の写真ファイルのみをクリーンアップし、商品テキストデータはそのまま保持されます。</p>
+                </div>
+            </div>
+
+            <!-- モーダルフッター -->
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
+                <button onclick='closeCleanupModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>
+                    キャンセル
+                </button>
+                <button id='cleanup-execute-btn' onclick='executeCleanup()' class='px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5'>
+                    <i class='fa-solid fa-trash-can'></i> クリーンアップを実行
+                </button>
+            </div>
+        </div>
+    </div>
 
     <!-- 写真拡大モーダル -->
     <div id='image-modal' class='fixed inset-0 bg-black/85 z-50 hidden flex flex-col items-center justify-center p-4' onclick='closeImageModal()'>
@@ -166,6 +248,8 @@ public static class DashboardHtml
                     }
                 }
             } catch (e) {}
+
+            fetchCleanupPreview();
         }
 
         function updateStats() {
@@ -307,6 +391,88 @@ public static class DashboardHtml
 
         function closeImageModal() {
             document.getElementById('image-modal').classList.add('hidden');
+        }
+
+        async function fetchCleanupPreview() {
+            try {
+                const res = await fetch('/api/cleanup/preview');
+                if (!res.ok) return null;
+                const data = await res.json();
+                if (data.status === 'ok') {
+                    const storageElem = document.getElementById('stat-storage-size');
+                    if (storageElem) storageElem.innerText = data.totalStorageFormatted || '0 B';
+                    return data;
+                }
+            } catch (e) {}
+            return null;
+        }
+
+        async function openCleanupModal() {
+            const data = await fetchCleanupPreview();
+            const modal = document.getElementById('cleanup-modal');
+            const table = document.getElementById('cleanup-candidates-table');
+            const reclaimText = document.getElementById('cleanup-reclaim-text');
+            const countBadge = document.getElementById('cleanup-count-badge');
+            const executeBtn = document.getElementById('cleanup-execute-btn');
+
+            if (data && data.status === 'ok') {
+                reclaimText.innerText = data.reclaimableFormatted + ' (' + data.candidateCount + 'ファイル)';
+                countBadge.innerText = data.candidateCount + '件のファイル';
+
+                if (data.candidates && data.candidates.length > 0) {
+                    table.innerHTML = data.candidates.map(c => `
+                        <tr class='hover:bg-amber-50/50 transition'>
+                            <td class='p-2 font-bold line-clamp-1 max-w-[200px]' title='${c.title}'>${c.title}</td>
+                            <td class='p-2'><span class='bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[10px] font-bold'>${c.status || '売却済'}</span></td>
+                            <td class='p-2 text-slate-500 font-mono text-[11px]'>${c.soldAtText}</td>
+                            <td class='p-2 text-right font-mono font-bold text-amber-800'>${c.sizeFormatted}</td>
+                        </tr>
+                    `).join('');
+                    executeBtn.disabled = false;
+                } else {
+                    table.innerHTML = `<tr><td colspan='4' class='p-4 text-center text-slate-400'>売却から30日以上経過した削除対象の写真はありません。</td></tr>`;
+                    executeBtn.disabled = true;
+                }
+            } else {
+                reclaimText.innerText = '取得失敗';
+                table.innerHTML = `<tr><td colspan='4' class='p-4 text-center text-rose-500'>候補データの取得に失敗しました。</td></tr>`;
+                executeBtn.disabled = true;
+            }
+
+            modal.classList.remove('hidden');
+        }
+
+        function closeCleanupModal() {
+            document.getElementById('cleanup-modal').classList.add('hidden');
+        }
+
+        async function executeCleanup() {
+            if (!confirm('売却から30日以上経過した写真ファイルをPCから削除します。実行してもよろしいですか？')) return;
+
+            const executeBtn = document.getElementById('cleanup-execute-btn');
+            executeBtn.disabled = true;
+            executeBtn.innerHTML = '<i class=\'fa-solid fa-spinner animate-spin\'></i> 削除実行中...';
+
+            try {
+                const res = await fetch('/api/cleanup/execute', { method: 'POST' });
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        alert('クリーンアップが完了しました。\n削除ファイル数: ' + result.deletedCount + '件\n削減データ容量: ' + result.freedFormatted);
+                        closeCleanupModal();
+                        fetchItems();
+                    } else {
+                        alert('エラーが発生しました: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラーが発生しました (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラーが発生しました: ' + e.message);
+            } finally {
+                executeBtn.disabled = false;
+                executeBtn.innerHTML = '<i class=\'fa-solid fa-trash-can\'></i> クリーンアップを実行';
+            }
         }
     </script>
 </body>

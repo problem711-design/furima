@@ -446,6 +446,7 @@ class FurimaServerNative
             else if (rawPath == "/api/server/heartbeat")
             {
                 lastHeartbeat = DateTime.Now;
+                if (qrForm != null) qrForm.OnAppConnected();
                 SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "timestamp", DateTime.Now.Ticks } });
             }
             else if (rawPath == "/api/sync/hashes")
@@ -471,12 +472,22 @@ class FurimaServerNative
             else if (rawPath == "/api/sync/items" && req.HttpMethod == "POST")
             {
                 lastHeartbeat = DateTime.Now;
+                if (qrForm != null) qrForm.OnAppConnected();
                 HandleSyncItems(req, res);
             }
             else if (rawPath == "/api/sync/photo" && req.HttpMethod == "POST")
             {
                 lastHeartbeat = DateTime.Now;
+                if (qrForm != null) qrForm.OnAppConnected();
                 HandleSyncPhoto(req, res);
+            }
+            else if (rawPath == "/api/cleanup/preview" && req.HttpMethod == "GET")
+            {
+                HandleCleanupPreview(res);
+            }
+            else if (rawPath == "/api/cleanup/execute" && req.HttpMethod == "POST")
+            {
+                HandleCleanupExecute(res);
             }
             else if (rawPath.StartsWith("/api/photos/"))
             {
@@ -734,6 +745,72 @@ class FurimaServerNative
         }
     }
 
+    private static void HandleCleanupPreview(HttpListenerResponse res)
+    {
+        try
+        {
+            SyncStore.CleanupPreviewResult preview;
+            lock (lockObj)
+            {
+                preview = SyncStore.GetCleanupCandidates(itemsDb, hashToFilePathMap, syncDir);
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "totalStorageBytes", preview.totalStorageBytes },
+                { "totalStorageFormatted", preview.totalStorageFormatted },
+                { "candidateCount", preview.candidateCount },
+                { "reclaimableBytes", preview.reclaimableBytes },
+                { "reclaimableFormatted", preview.reclaimableFormatted },
+                { "candidates", preview.candidates }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("CleanupPreview エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleCleanupExecute(HttpListenerResponse res)
+    {
+        try
+        {
+            SyncStore.CleanupPreviewResult preview;
+            lock (lockObj)
+            {
+                preview = SyncStore.GetCleanupCandidates(itemsDb, hashToFilePathMap, syncDir);
+            }
+
+            long freedBytes;
+            int deletedCount = SyncStore.ExecuteCleanup(preview.candidates, out freedBytes);
+
+            ScanAndIndexLocalPhotos();
+
+            if (qrForm != null)
+            {
+                int indexedCount = hashToFilePathMap.Count;
+                int missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+                qrForm.UpdateStatusInfo(indexedCount, missingCount);
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "deletedCount", deletedCount },
+                { "freedBytes", freedBytes },
+                { "freedFormatted", SyncStore.FormatBytes(freedBytes) }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("CleanupExecute エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
     private static void ServePhotoByHash(HttpListenerResponse res, string hash)
     {
         lock (lockObj)
@@ -785,6 +862,11 @@ public class TunnelQrForm : Form
     private PictureBox picQrCode;
     private Label lblInfo;
 
+    private NotifyIcon notifyIcon;
+    private ContextMenuStrip trayMenu;
+    private bool isExiting = false;
+    private bool hasPromptedBrowser = false;
+
     private string currentStoreId;
     private string currentSyncDir;
     private string currentLocalUrl;
@@ -799,13 +881,14 @@ public class TunnelQrForm : Form
         this.currentToken = token;
 
         InitializeComponent();
+        InitializeTrayIcon();
         UpdateDisplay();
     }
 
     private void InitializeComponent()
     {
         this.Text = "フリマ母艦サーバー - 接続情報 & QRコード";
-        this.Size = new Size(520, 680);
+        this.Size = new Size(520, 720);
         this.StartPosition = FormStartPosition.CenterScreen;
         this.FormBorderStyle = FormBorderStyle.FixedSingle;
         this.MaximizeBox = false;
@@ -814,7 +897,7 @@ public class TunnelQrForm : Form
         TableLayoutPanel mainLayout = new TableLayoutPanel();
         mainLayout.Dock = DockStyle.Fill;
         mainLayout.Padding = new Padding(15);
-        mainLayout.RowCount = 8;
+        mainLayout.RowCount = 9;
         mainLayout.ColumnCount = 2;
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110F));
         mainLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
@@ -876,7 +959,152 @@ public class TunnelQrForm : Form
         mainLayout.Controls.Add(lblInfo, 0, 7);
         mainLayout.SetColumnSpan(lblInfo, 2);
 
+        // 手動ブラウザ起動・トレイ格納ボタンエリア
+        FlowLayoutPanel btnPanel = new FlowLayoutPanel();
+        btnPanel.Dock = DockStyle.Fill;
+        btnPanel.FlowDirection = FlowDirection.LeftToRight;
+        btnPanel.Padding = new Padding(0, 5, 0, 0);
+
+        Button btnOpenBrowser = new Button();
+        btnOpenBrowser.Text = "🌐 PC管理画面を開く";
+        btnOpenBrowser.Font = new Font("Meiryo UI", 9F, FontStyle.Bold);
+        btnOpenBrowser.Size = new Size(160, 32);
+        btnOpenBrowser.Click += (s, e) => { ShowBrowserSelectionDialog(); };
+        btnPanel.Controls.Add(btnOpenBrowser);
+
+        Button btnMinimizeTray = new Button();
+        btnMinimizeTray.Text = "📥 タスクトレイへ格納";
+        btnMinimizeTray.Font = new Font("Meiryo UI", 9F);
+        btnMinimizeTray.Size = new Size(160, 32);
+        btnMinimizeTray.Click += (s, e) => { MinimizeToTray(); };
+        btnPanel.Controls.Add(btnMinimizeTray);
+
+        mainLayout.Controls.Add(btnPanel, 0, 8);
+        mainLayout.SetColumnSpan(btnPanel, 2);
+
         this.Controls.Add(mainLayout);
+        this.FormClosing += TunnelQrForm_FormClosing;
+    }
+
+    private void InitializeTrayIcon()
+    {
+        trayMenu = new ContextMenuStrip();
+        trayMenu.Items.Add("ウィンドウを表示(&S)", null, (s, e) => { RestoreFromTray(); });
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("PC管理画面を開く (Edge)", null, (s, e) => { LaunchBrowser("edge"); });
+        trayMenu.Items.Add("PC管理画面を開く (Chrome)", null, (s, e) => { LaunchBrowser("chrome"); });
+        trayMenu.Items.Add("PC管理画面を開く (デフォルト)", null, (s, e) => { LaunchBrowser("default"); });
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("母艦サーバーを終了(&X)", null, (s, e) => { ExitApp(); });
+
+        notifyIcon = new NotifyIcon();
+        notifyIcon.Text = "フリマ母艦サーバー (稼働中)";
+        notifyIcon.Icon = SystemIcons.Application;
+        notifyIcon.ContextMenuStrip = trayMenu;
+        notifyIcon.Visible = true;
+        notifyIcon.DoubleClick += (s, e) => { RestoreFromTray(); };
+    }
+
+    private void TunnelQrForm_FormClosing(object sender, FormClosingEventArgs e)
+    {
+        if (!isExiting && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            MinimizeToTray();
+        }
+    }
+
+    public void MinimizeToTray()
+    {
+        if (this.InvokeRequired)
+        {
+            this.Invoke(new Action(MinimizeToTray));
+            return;
+        }
+
+        this.Hide();
+        notifyIcon.ShowBalloonTip(2000, "フリマ母艦サーバー", "バックグラウンドで動作中です。トレイアイコンのダブルクリックで再表示できます。", ToolTipIcon.Info);
+    }
+
+    public void RestoreFromTray()
+    {
+        if (this.InvokeRequired)
+        {
+            this.Invoke(new Action(RestoreFromTray));
+            return;
+        }
+
+        this.Show();
+        this.WindowState = FormWindowState.Normal;
+        this.Activate();
+    }
+
+    public void ExitApp()
+    {
+        isExiting = true;
+        if (notifyIcon != null)
+        {
+            notifyIcon.Visible = false;
+            notifyIcon.Dispose();
+        }
+        this.Close();
+    }
+
+    /// <summary>
+    /// スマホアプリからの接続検知時に呼び出される処理
+    /// </summary>
+    public void OnAppConnected()
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action(OnAppConnected));
+            return;
+        }
+
+        lblStatus.Text = "● スマホアプリ接続中";
+        lblStatus.ForeColor = Color.DarkGreen;
+
+        if (hasPromptedBrowser) return;
+        hasPromptedBrowser = true;
+
+        // ウィンドウを前面に復元
+        RestoreFromTray();
+
+        // ブラウザ選択ダイアログを表示し、選択後に自動トレイ格納
+        ShowBrowserSelectionDialog();
+    }
+
+    public void ShowBrowserSelectionDialog()
+    {
+        using (BrowserSelectDialog dlg = new BrowserSelectDialog())
+        {
+            if (dlg.ShowDialog(this) == DialogResult.OK)
+            {
+                LaunchBrowser(dlg.SelectedBrowser);
+                MinimizeToTray();
+            }
+        }
+    }
+
+    public void LaunchBrowser(string browserType)
+    {
+        string url = currentLocalUrl;
+        try
+        {
+            if (browserType == "edge")
+            {
+                try { Process.Start("msedge.exe", url); return; } catch { }
+            }
+            else if (browserType == "chrome")
+            {
+                try { Process.Start("chrome.exe", url); return; } catch { }
+            }
+            Process.Start(url);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("ブラウザ起動に失敗しました: " + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
     public void UpdateTunnelUrl(string tunnelUrl)
@@ -891,14 +1119,20 @@ public class TunnelQrForm : Form
         if (!string.IsNullOrEmpty(tunnelUrl))
         {
             txtTunnelUrl.Text = tunnelUrl;
-            lblStatus.Text = "● トンネル接続完了 (QRコード準備完了)";
-            lblStatus.ForeColor = Color.Blue;
+            if (!lblStatus.Text.Contains("接続中"))
+            {
+                lblStatus.Text = "● トンネル接続完了 (QRコード準備完了)";
+                lblStatus.ForeColor = Color.Blue;
+            }
         }
         else
         {
             txtTunnelUrl.Text = "(トンネル接続失敗 - ローカル接続のみ)";
-            lblStatus.Text = "● ローカル接続のみ可";
-            lblStatus.ForeColor = Color.DarkOrange;
+            if (!lblStatus.Text.Contains("接続中"))
+            {
+                lblStatus.Text = "● ローカル接続のみ可";
+                lblStatus.ForeColor = Color.DarkOrange;
+            }
         }
 
         UpdateDisplay();
@@ -930,6 +1164,67 @@ public class TunnelQrForm : Form
         {
             Console.WriteLine("QRコード生成例外: " + ex.Message);
         }
+    }
+}
+
+/// <summary>
+/// スマホ接続検知時に起動ブラウザを選択させるダイアログフォーム
+/// </summary>
+public class BrowserSelectDialog : Form
+{
+    public string SelectedBrowser { get; private set; }
+
+    public BrowserSelectDialog()
+    {
+        this.SelectedBrowser = "default";
+        this.Text = "スマホ接続検知 - 管理画面ブラウザ選択";
+        this.Size = new Size(420, 260);
+        this.StartPosition = FormStartPosition.CenterParent;
+        this.FormBorderStyle = FormBorderStyle.FixedDialog;
+        this.MaximizeBox = false;
+        this.MinimizeBox = false;
+        this.ShowInTaskbar = false;
+
+        TableLayoutPanel layout = new TableLayoutPanel();
+        layout.Dock = DockStyle.Fill;
+        layout.Padding = new Padding(20);
+        layout.RowCount = 4;
+        layout.ColumnCount = 1;
+
+        Label lblMsg = new Label();
+        lblMsg.Text = "スマホアプリからの接続を確認しました！\nPC側で管理画面を開くブラウザを選択してください。";
+        lblMsg.Font = new Font("Meiryo UI", 9.5F, FontStyle.Bold);
+        lblMsg.ForeColor = Color.Navy;
+        lblMsg.AutoSize = true;
+        lblMsg.Dock = DockStyle.Fill;
+        lblMsg.TextAlign = ContentAlignment.TopCenter;
+        layout.Controls.Add(lblMsg);
+
+        Button btnEdge = new Button();
+        btnEdge.Text = "🌐 Microsoft Edge で開く";
+        btnEdge.Font = new Font("Meiryo UI", 9.5F, FontStyle.Bold);
+        btnEdge.Height = 36;
+        btnEdge.Dock = DockStyle.Fill;
+        btnEdge.Click += (s, e) => { SelectedBrowser = "edge"; this.DialogResult = DialogResult.OK; };
+        layout.Controls.Add(btnEdge);
+
+        Button btnChrome = new Button();
+        btnChrome.Text = "🌐 Google Chrome で開く";
+        btnChrome.Font = new Font("Meiryo UI", 9.5F, FontStyle.Bold);
+        btnChrome.Height = 36;
+        btnChrome.Dock = DockStyle.Fill;
+        btnChrome.Click += (s, e) => { SelectedBrowser = "chrome"; this.DialogResult = DialogResult.OK; };
+        layout.Controls.Add(btnChrome);
+
+        Button btnDefault = new Button();
+        btnDefault.Text = "💻 標準ブラウザで開く / キャンセル";
+        btnDefault.Font = new Font("Meiryo UI", 9F);
+        btnDefault.Height = 32;
+        btnDefault.Dock = DockStyle.Fill;
+        btnDefault.Click += (s, e) => { SelectedBrowser = "default"; this.DialogResult = DialogResult.OK; };
+        layout.Controls.Add(btnDefault);
+
+        this.Controls.Add(layout);
     }
 }
 
