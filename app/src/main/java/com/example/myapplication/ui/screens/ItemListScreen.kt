@@ -619,8 +619,8 @@ fun CompactItemCard(
                 }
 
                 // ステータスバッジ ＆ まとめバッジ
-                val hasOriginalMissing = photos.any { it.isOriginalDeleted }
                 val hasUnsynced = photos.any { !it.isPcSynced && java.io.File(it.filePath).exists() }
+                val isAllSynced = photos.isNotEmpty() && photos.all { it.isPcSynced }
 
                 Row(
                     modifier = Modifier
@@ -654,16 +654,7 @@ fun CompactItemCard(
                         )
                     }
 
-                    if (hasOriginalMissing) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(Color(0xFF0284C7))
-                                .padding(horizontal = 5.dp, vertical = 2.dp)
-                        ) {
-                            Text(text = "送信済み", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                        }
-                    } else if (hasUnsynced) {
+                    if (hasUnsynced) {
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
@@ -671,6 +662,15 @@ fun CompactItemCard(
                                 .padding(horizontal = 5.dp, vertical = 2.dp)
                         ) {
                             Text(text = "未同期", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else if (isAllSynced) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(Color(0xFF0284C7))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Text(text = "送信済み", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
