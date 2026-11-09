@@ -284,4 +284,25 @@ class FleaMarketRepository(context: Context) {
 
     fun getPhotoStorageManager(): PhotoStorageManager = photoStorageManager
     fun getDao(): ItemDao = dao
+
+    suspend fun seedInitialTestDataIfNeeded() {
+        val count = dao.getActiveItemsWithPhotosDirect().size
+        if (count == 0) {
+            val testItems = listOf(
+                ItemEntity(title = "ヴィンテージ デニムジャケット", description = "美品のヴィンテージGジャンです。サイズM。", price = 8500, status = "LISTED"),
+                ItemEntity(title = "レトロ スニーカー 27cm", description = "80年代風デザインの限定スニーカー。", price = 5400, status = "LISTED"),
+                ItemEntity(title = "本革 レザーハンドバッグ", description = "上質な牛革を使用した高級バッグ。", price = 12800, status = "LISTED"),
+                ItemEntity(title = "北欧風 チタン製マグカップ", description = "軽量でキャンプや登山に最適です。", price = 2200, status = "LISTED"),
+                ItemEntity(title = "ワイヤレス ノイズキャンセリングイヤホン", description = "高音質でバッテリー長持ちモデル。", price = 7900, status = "LISTED"),
+                ItemEntity(title = "ストリート系 キャップ 黒", description = "シンプルでどんな服装にも合わせやすい帽子。", price = 1800, status = "LISTED"),
+                ItemEntity(title = "アンティーク 真鍮製卓上ランプ", description = "温かみのある光のインテリアランプ。", price = 4500, status = "LISTED"),
+                ItemEntity(title = "ウール混 ざっくりニットセーター", description = "これからの季節にぴったりの暖かいセーター。", price = 3900, status = "LISTED"),
+                ItemEntity(title = "クリア スマホショルダーポーチ", description = "お出かけに便利なクリアスマホポシェット。", price = 1500, status = "LISTED"),
+                ItemEntity(title = "フレグランス オーデコロン 50ml", description = "爽やかなシトラス系の香水です。", price = 3200, status = "LISTED")
+            )
+            for (item in testItems) {
+                dao.insertItem(item)
+            }
+        }
+    }
 }

@@ -24,6 +24,10 @@ interface ItemDao {
     fun getAllItemsWithPhotos(): Flow<List<ItemWithPhotos>>
 
     @Transaction
+    @Query("SELECT * FROM items ORDER BY createdAt DESC")
+    suspend fun getAllItemsWithPhotosDirect(): List<ItemWithPhotos>
+
+    @Transaction
     @Query("SELECT * FROM items WHERE id = :id")
     suspend fun getItemWithPhotosById(id: Int): ItemWithPhotos?
 

@@ -60,6 +60,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     init {
         refreshServerIp()
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.seedInitialTestDataIfNeeded()
+        }
     }
 
     fun refreshServerIp() {

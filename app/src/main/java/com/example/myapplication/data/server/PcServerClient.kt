@@ -145,10 +145,21 @@ class PcServerClient(
             android.util.Log.i("PC_SYNC", "=== プロトコル v3 同期開始: $cleanUrl ===")
             val savedStoreId = getSavedStoreId()
 
-            // スマホ側の全商品・写真リストを取得
+            // スマホ側の全商品・写真リストを取得（同期対象は通常アクティブ商品）
             val itemsWithPhotos = repository.getActiveItemsWithPhotosDirect()
+            // PC側の不要フォルダ削除から保護するフォルダ名一覧（まとめ済みMERGED子商品フォルダも含む全商品）
+            val allItemsForFolders = repository.getDao().getAllItemsWithPhotosDirect()
             val dtoList = mutableListOf<SyncItemDto>()
             val activeFolderNames = mutableListOf<String>()
+
+            for (itemWithPhotos in allItemsForFolders) {
+                val item = itemWithPhotos.item
+                val safeTitle = item.title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                val itemFolderName = "${item.id}_$safeTitle"
+                if (!activeFolderNames.contains(itemFolderName)) {
+                    activeFolderNames.add(itemFolderName)
+                }
+            }
 
             // 写真ID -> (File, MD5) のマッピング
             val photoFileMap = mutableMapOf<Int, Pair<File, String>>()
