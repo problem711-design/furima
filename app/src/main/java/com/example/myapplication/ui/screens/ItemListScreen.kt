@@ -89,7 +89,8 @@ import java.util.Locale
 fun ItemListScreen(
     viewModel: FleaMarketViewModel,
     onNavigateToDetail: (Int) -> Unit,
-    onNavigateToAdd: () -> Unit
+    onNavigateToAdd: () -> Unit,
+    onNavigateToEdit: (Int) -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -133,7 +134,8 @@ fun ItemListScreen(
                 Toast.makeText(context, if (newStatus == "SOLD") "売却済みに変更しました" else "出品中に変更しました", Toast.LENGTH_SHORT).show()
             },
             onNavigateToEdit = {
-                onNavigateToDetail(itemWithPhotos.item.id)
+                // サムネ長押し→編集選択時にダイレクトに商品編集画面へ遷移
+                onNavigateToEdit(itemWithPhotos.item.id)
             },
             onCopyText = {
                 viewModel.copyListingTemplate(context, itemWithPhotos)
@@ -168,9 +170,9 @@ fun ItemListScreen(
                     newExpenseCost = expense,
                     childItemIds = itemIds,
                     asStatus = "LISTED"
-                ) { newParentId ->
+                ) { _ ->
                     showMergeDialog = false
-                    onNavigateToDetail(newParentId.toInt())
+                    Toast.makeText(context, "まとめ出品を作成しました！", Toast.LENGTH_SHORT).show()
                 }
             }
         )
@@ -393,6 +395,15 @@ fun ItemListScreen(
                         viewModel.setStatusFilter("ALL")
                     },
                     label = { Text("すべて (${filteredItems.size})", fontSize = 11.sp) },
+                    modifier = Modifier.height(28.dp)
+                )
+                FilterChip(
+                    selected = (statusFilter == "DRAFT"),
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        viewModel.setStatusFilter("DRAFT")
+                    },
+                    label = { Text("下書き", fontSize = 11.sp) },
                     modifier = Modifier.height(28.dp)
                 )
                 FilterChip(

@@ -73,6 +73,9 @@ fun FleaMarketApp() {
                 },
                 onNavigateToAdd = {
                     navController.navigate("item_edit/0")
+                },
+                onNavigateToEdit = { itemId ->
+                    navController.navigate("item_edit/$itemId")
                 }
             )
         }
@@ -114,7 +117,8 @@ fun FleaMarketApp() {
 fun MainTabsContainer(
     viewModel: FleaMarketViewModel,
     onNavigateToDetail: (Int) -> Unit,
-    onNavigateToAdd: () -> Unit
+    onNavigateToAdd: () -> Unit,
+    onNavigateToEdit: (Int) -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
 
@@ -153,7 +157,8 @@ fun MainTabsContainer(
                 0 -> ItemListScreen(
                     viewModel = viewModel,
                     onNavigateToDetail = onNavigateToDetail,
-                    onNavigateToAdd = onNavigateToAdd
+                    onNavigateToAdd = onNavigateToAdd,
+                    onNavigateToEdit = onNavigateToEdit
                 )
                 1 -> PcSyncScreen(
                     viewModel = viewModel

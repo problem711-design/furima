@@ -35,7 +35,7 @@ public class TunnelQrForm : Form
         this.currentStoreId = storeId;
         this.currentSyncDir = syncDir;
         this.currentLocalUrl = localUrl;
-        this.currentToken = token;
+        this.currentToken = !string.IsNullOrEmpty(token) ? token : SyncStore.AuthToken;
 
         InitializeComponent();
         InitializeTrayIcon();

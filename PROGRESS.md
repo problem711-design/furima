@@ -25,9 +25,9 @@
 
 ---
 
-## 全体ロードマップ (第2世代アーキテクチャ v2.2)
+## 全体ロードマップ (第2世代アーキテクチャ v2.3)
 
-現在のバージョン: **`v2.2 (Build 17)`**
+現在のバージョン: **`v2.3 (Build 18)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -188,6 +188,34 @@
 
 ---
 
+### フェーズ 2.3 (リアルタイム自動同期 & 操作導線強化 & 統合操作ワークステーション)
+
+#### [x] **フェーズ 2.3-A: スマホ側UX改善 & リアルタイム自動同期** 【完了 (2026/03/30 Build 18)】
+- **目的**:
+  - ① **リアルタイム自動同期**: ローカルデータ変更時（保存・ステータス更新・削除・まとめ・解除）に500msデバウンスで自動PUSH同期。ハートビート定期通信（12秒ごと）でPC側の更新や論理削除を自動PULL同期。
+  - ② **サムネ長押しダイレクト編集**: 商品一覧のサムネイル長押しからクイックアクションダイアログの「編集」を押した際、詳細画面を経由せず直接 `item_edit` 画面へ遷移。
+  - ③ **まとめ出品の説明文入力**: `MergeItemsDialog` に複数行の説明文入力欄を新設。自動生成された内訳テンプレートをその場で編集可能にし、作成後は一覧画面に留まりトースト通知を表示。
+  - ⑤ **新規出品のデフォルトステータスを下書き（DRAFT）へ変更**: `ItemEntity` および `ItemEditScreen` の初期値を `"DRAFT"` に変更し、出品一覧に「下書き」フィルターチップを追加。
+  - ⑧ **PCサーバー起動時GUIのワンタイムトークン表示保証**: `SyncStore.cs` で古い `store.json` の `authToken` が空の場合でも自動生成・永続保存し、`TunnelQrForm.cs` 上でトークンが確実に表示されるよう修正。
+- **編集対象ファイル (完了: 8ファイル)**:
+  1. `app/src/main/java/com/example/myapplication/data/local/ItemEntity.kt`
+  2. `app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt`
+  3. `app/src/main/java/com/example/myapplication/ui/screens/ItemListScreen.kt`
+  4. `app/src/main/java/com/example/myapplication/ui/components/MergeItemsDialog.kt`
+  5. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`
+  6. `app/src/main/java/com/example/myapplication/MainActivity.kt`
+  7. `tools/SyncStore.cs`
+  8. `tools/TunnelQrForm.cs`
+
+#### [ ] **フェーズ 2.3-B: PC母艦操作拡張 & 出品アシスタント & 売上分析拡充** 【次回予定】
+- **目的**:
+  - ④ PC管理画面での写真ドラッグ＆ドロップ追加、まとめ買い作成（チェックボックスはサムネイル外に配置）・解除機能。
+  - ⑥ Yahoo!フリマ出品画面の自動分割配置（案A: window.open による左右分割リサイズ配置）。
+  - ⑦ まとめ商品の写真集約管理 ＆ PC画面上の写真ギャラリービューア（DB登録写真の直接プレビュー・リンク表示）。
+  - ⑨ PC管理画面の売上分析をスマホ側と同じ項目構成に拡充（純利益、利益率、平均売価、送料・経費内訳）。
+
+---
+
 ## 注意事項 (開発・編集ルール)
 1. 返答・編集内容・コマンド・ログの要約のどこにも、アルファベット1文字の直後にコロンが付く書き方（ドライブ文字や短縮オプション等）を書かないこと。パスはプロジェクト相対パスで記述する。
 2. `tools/build-exe.bat` は手動修正済みのため編集しないこと。
@@ -196,6 +224,21 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-03-30] フェーズ 2.3-A 完了 (リアルタイム自動同期・長押し直接編集・まとめ説明文入力・デフォルト下書き化・GUIトークン表示) バージョン 2.3 (Build 18)
+- **リアルタイム自動同期 (要件1)**:
+  - `FleaMarketViewModel.kt` に `triggerAutoSync()`（500msデバウンス）を実装し、ローカルでの新規追加、更新、ステータス変更、削除、まとめ・解除時にバックグラウンドで自動PUSH同期。
+  - 定期ハートビート（約12秒ごと）でPC側の更新や論理削除を自動PULL同期。手動の差分同期ボタンはバックアップ用として維持。
+- **サムネ長押しダイレクト編集 (要件2)**:
+  - `MainActivity.kt` から `ItemListScreen` へ `onNavigateToEdit` を注入し、クイックダイアログの「編集」選択時に詳細画面を挟まずダイレクトに `item_edit/$itemId` へ遷移するよう短縮。
+- **まとめ出品の説明文入力 (要件3)**:
+  - `MergeItemsDialog.kt` に自動生成テンプレート付きの複数行説明文入力欄を追加。確認後は商品一覧画面に留まり「まとめ出品を作成しました！」トーストを表示。
+- **新規出品デフォルトステータスを下書きに変更 (要件5)**:
+  - `ItemEntity.kt` および `ItemEditScreen.kt` の初期ステータスを `"DRAFT"`（下書き）に変更。`ItemListScreen.kt` のフィルター行に「下書き」チップを追加。
+- **母艦サーバーGUIのワンタイムトークン表示保証 (要件8)**:
+  - `tools/SyncStore.cs` において、既存の `store.json` で `authToken` が空または未設定の場合に自動生成・保存するよう強化し、`TunnelQrForm.cs` で確実にトークンが表示されるよう修正。
+- **バージョン同期**:
+  - `app/build.gradle.kts` (versionCode 18, versionName 2.3)、`DashboardHtml.cs` (Build 18)、`WebDashboardHtml.kt` (Build 18) を同時統一更新。
 
 ### [2026-03-30] フェーズ 2.2-A〜D 完了 (Yahoo!フリマ特化PC出品支援・双方向同期論理削除・断捨離) バージョン 2.2 (Build 17)
 - **フェーズ 2.2-A (PC管理画面構文修復 & Yahoo!フリマ出品支援)**:

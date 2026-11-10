@@ -85,7 +85,7 @@ fun ItemEditScreen(
     var description by remember { mutableStateOf("") }
     var priceText by remember { mutableStateOf("") }
     var soldPriceText by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("LISTED") }
+    var status by remember { mutableStateOf("DRAFT") }
 
     // 費用設定
     var useCustomSettings by remember { mutableStateOf(false) }

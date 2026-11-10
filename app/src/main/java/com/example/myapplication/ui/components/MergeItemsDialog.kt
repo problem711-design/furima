@@ -167,6 +167,18 @@ fun MergeItemsDialog(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
+                // まとめ商品説明文（自動生成テンプレート・編集可能）
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it },
+                    label = { Text("まとめ商品説明文 (任意・自動生成テンプレート)") },
+                    minLines = 4,
+                    maxLines = 8,
+                    modifier = Modifier.fillMaxWidth().testTag("merge_description_input")
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
                 val discount = (totalOriginalPrice - inputPrice).coerceAtLeast(0)
                 // まとめ出品価格（手動自由入力）
                 OutlinedTextField(

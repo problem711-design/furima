@@ -36,11 +36,19 @@ public static class SyncStore
                 {
                     _storeId = cfg.storeId;
                     _syncDir = cfg.path;
-                    _authToken = !string.IsNullOrEmpty(cfg.authToken) ? cfg.authToken : serverAuthToken;
                     if (string.IsNullOrEmpty(cfg.authToken))
                     {
+                        _authToken = !string.IsNullOrEmpty(serverAuthToken) ? serverAuthToken : Guid.NewGuid().ToString("N").Substring(0, 12);
                         cfg.authToken = _authToken;
-                        File.WriteAllText(storeJsonPath, JsonConvert.SerializeObject(cfg, Formatting.Indented), Encoding.UTF8);
+                        try
+                        {
+                            File.WriteAllText(storeJsonPath, JsonConvert.SerializeObject(cfg, Formatting.Indented), Encoding.UTF8);
+                        }
+                        catch {}
+                    }
+                    else
+                    {
+                        _authToken = cfg.authToken;
                     }
                     if (!Directory.Exists(_syncDir))
                     {

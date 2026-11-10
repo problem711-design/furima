@@ -9,7 +9,7 @@ data class ItemEntity(
     val id: Int = 0,
     val title: String,
     val description: String = "", // 商品説明文（任意）
-    val status: String = "LISTED", // "LISTED" (出品中), "SOLD" (売却済み), "DRAFT" (未出品), "MERGED" (まとめ売却済み)
+    val status: String = "DRAFT", // "DRAFT" (下書き・未出品), "LISTED" (出品中), "SOLD" (売却済み), "MERGED" (まとめ売却済み)
     val price: Int = 0, // 出品価格
     val soldPrice: Int = 0, // 実際の売却価格
     val shippingCost: Int = 210, // 個別送料 (円)

@@ -172,6 +172,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             val matchesStatus = when (status) {
                 "LISTED" -> item.status == "LISTED"
                 "SOLD" -> item.status == "SOLD"
+                "DRAFT" -> item.status == "DRAFT"
                 else -> true
             }
 
@@ -364,6 +365,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 imageUris = imageUris,
                 existingFilePaths = existingFilePaths
             )
+            triggerAutoSync()
             onSuccess()
         }
     }
@@ -392,6 +394,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 asStatus = asStatus
             )
             clearSelection()
+            triggerAutoSync()
             onSuccess(newId)
         }
     }
@@ -402,6 +405,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     fun unmergeItem(parentId: Int, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             repository.unmergeItem(parentId)
+            triggerAutoSync()
             onSuccess()
         }
     }
@@ -413,12 +417,14 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     fun updateItemStatus(item: ItemEntity, newStatus: String) {
         viewModelScope.launch {
             repository.updateItemStatus(item, newStatus)
+            triggerAutoSync()
         }
     }
 
     fun deleteItem(itemWithPhotos: ItemWithPhotos, onSuccess: () -> Unit) {
         viewModelScope.launch {
             repository.deleteItem(itemWithPhotos)
+            triggerAutoSync()
             onSuccess()
         }
     }
@@ -552,6 +558,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     val isPcServerConnected: StateFlow<Boolean> = _isPcServerConnected.asStateFlow()
 
     private var heartbeatJob: Job? = null
+    private var autoSyncJob: Job? = null
 
     init {
         startHeartbeatLoop()
@@ -560,17 +567,45 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = viewModelScope.launch(Dispatchers.IO) {
+            var loopCount = 0
             while (isActive) {
                 val url = _pcServerUrl.value
                 val token = _pcAuthToken.value
                 if (url.isNotBlank()) {
                     val connected = pcServerClient.sendHeartbeat(url, token)
                     _isPcServerConnected.value = connected
+                    // 定期自動同期: 接続中は約12秒ごと (3ループに1回) にPC側の変更や削除を自動取得
+                    if (connected && loopCount % 3 == 0) {
+                        try {
+                            pcServerClient.fetchServerItems(url, token)
+                        } catch (_: Exception) {}
+                    }
                 } else {
                     _isPcServerConnected.value = false
                 }
+                loopCount++
                 delay(4000)
             }
+        }
+    }
+
+    /**
+     * ローカルデータ変更時にバックグラウンドでPC母艦へ自動差分Push（500msデバウンス）
+     */
+    fun triggerAutoSync() {
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank() || !_isPcServerConnected.value) return
+
+        autoSyncJob?.cancel()
+        autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(500)
+            try {
+                val result = pcServerClient.syncDeltaToPcServer(url, token)
+                if (result.isSuccess) {
+                    pcServerClient.fetchServerItems(url, token)
+                }
+            } catch (_: Exception) {}
         }
     }
 
