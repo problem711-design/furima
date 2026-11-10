@@ -156,6 +156,18 @@
 
 ## 更新履歴 (Changelog)
 
+### [2026-03-30] フェーズ 2.2-FIX 接続・操作不具合の根本原因特定 & 修復計画策定 (課題追記)
+- **現象**: 2.1→2.2に移行して双方向同期・PC側編集機能を導入した際、PC側管理画面でサーバー接続が失敗する、または編集・削除操作が機能しない問題が発生。
+- **調査結果（原因4点）**:
+  1. `tools/DashboardHtml.cs`: APIリクエスト時の `Authorization: Bearer` トークン付与漏れ（ループバック以外の接続で 401 Unauthorized エラー発生）。
+  2. `tools/DashboardHtml.cs`: `openEditModal` および `deleteItem` の JavaScript 関数定義欠落（クリック時に ReferenceError 発生）。
+  3. `tools/FurimaServerNative.cs`: `/api/` への全アクセスの無条件 `lastHeartbeat` 更新によるスマホ接続状態の誤判別。
+  4. `tools/FurimaServerNative.cs`: `HandleCreateItem` / `HandleUpdateItem` での `JObject` と `Dictionary<string, object>` のキャスト例外による 500 エラーリスク。
+- **修復計画**:
+  1. `tools/DashboardHtml.cs`: `Authorization: Bearer` ヘッダー自動付与、および `openEditModal` / `updateItem` / `deleteItem` 関数の補完実装。
+  2. `tools/FurimaServerNative.cs`: `lastHeartbeat` 更新をスマホからのリクエスト受信時のみに限定し、JSONデシリアライズ時の型変換処理を安全化。
+  3. `tools/build-exe.bat`: 再ビルド実行による `furima-server.exe` 差し替え。
+
 ### [2026-03-30] 接続ステータス「未接続」表示不具合の修復完了 (Build 16 修正)
 - **現象**: スマホアプリとC#母艦サーバー間で同期・通信は成功しリクエストも送られているが、PCブラウザ管理画面のステータス表示が「未接続」になっていた問題。
 - **原因**: サーバー側コードで `/api/` リクエスト時の `lastHeartbeat` 自動更新処理 (`if (rawPath.StartsWith("/api/")) { lastHeartbeat = DateTime.Now; }`) を追加・コミットしていたものの、実行ファイル `tools/furima-server.exe` の再ビルド・更新が未実施であったため、古い実行ファイルが動作し続けてタイムアウト判定（10秒経過）になっていた。

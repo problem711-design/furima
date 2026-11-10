@@ -365,3 +365,16 @@ Moshi は既に依存関係にある。Retrofit は足さないし、同期に�
 - **対策・修正内容**: バグ1の `itemsDb` 全量完全同期と合わせ、アクティブでないフォルダおよび写真ファイルのクリーンアップを同一サイクル内で即座に反映実行する。
 - **対象ファイル**:
   - `tools/FurimaServerNative.cs`
+
+### バグ4: フェーズ2.2 PC管理画面サーバー接続・操作不具合の修復計画
+- **現象**: 2.1→2.2移行後、PC側管理画面でサーバー接続が失敗する、または編集・削除操作が機能しない・誤判定される。
+- **原因1 (401 Unauthorized)**: PC管理画面 (`DashboardHtml.cs`) の全 fetch リクエストに `Authorization: Bearer` ヘッダー付与が欠落しており、ループバック以外の接続で拒否される。
+- **原因2 (JS未定義エラー)**: PC管理画面 (`DashboardHtml.cs`) に 2.2 で追加した `openEditModal` および `deleteItem` の JavaScript 関数定義が欠落しておりクリック時に ReferenceError となる。
+- **原因3 (ハートビート誤判定)**: `FurimaServerNative.cs` で `/api/` への全アクセス時に `lastHeartbeat` を無条件更新していたため、PCブラウザのポーリングでスマホ接続中と誤判別される。スマホアプリからの通話しのみ更新するよう正常化が必要。
+- **原因4 (C#型キャストリスク)**: `FurimaServerNative.cs` の新規ハンドラー (`HandleCreateItem`, `HandleUpdateItem`) での `JObject` と `Dictionary<string, object>` のキャスト例外による 500 エラーリスク。
+- **編集対象ファイル**:
+  1. `tools/DashboardHtml.cs` (Bearerヘッダー付与、openEditModal / updateItem / deleteItem のJS実装)
+  2. `tools/FurimaServerNative.cs` (lastHeartbeat更新条件をスマホリクエスト受信時のみに変更、JSONパース・ID比較の安定化)
+  3. `tools/build-exe.bat` (修正後の exe 再ビルド)
+  4. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt` (スマホアプリ側 Bearer ヘッダー・Pull同期エラー判定の最終検証)
+
