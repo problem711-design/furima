@@ -27,7 +27,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.2)
 
-現在のバージョン: **`v2.2 (Build 16)`**
+現在のバージョン: **`v2.2 (Build 17)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -150,37 +150,37 @@
 ### フェーズ 2.2 (Yahoo!フリマ特化PC出品支援・双方向同期安定化・不要機能断捨離)
 ※ 詳細は `PLAN_PHASE_2_2.md` を参照。変更規模の小さなフェーズから順に逐次実装する。
 
-#### [ ] **フェーズ 2.2-A: PC管理画面構文修復 & Yahoo!フリマ出品支援UI** 【次期未着手】
+#### [x] **フェーズ 2.2-A: PC管理画面構文修復 & Yahoo!フリマ出品支援UI** 【完了 (2026/03/30 Build 17)】
 - **目的**: 
   - `DashboardHtml.cs` の `<script>` 内HTML混入による JavaScript 構文エラーの解消。
   - 欠落していた商品編集モーダル（`<div id='edit-modal'>`）および関連関数（`openEditModal`, `updateItem`, `deleteItem`）の実装。
   - Yahoo!フリマPC出品支援機能（タイトル40文字カウンター、コピペボタン、写真保存フォルダのエクスプローラー即オープン、出品画面リンク）の実装。
   - サーバーからHTML生成時への `authToken` 注入によるLAN/トンネル接続時401エラーの防止。
   - `lastHeartbeat` 誤判定の解消（スマホ専用通信時のみ更新に戻し、ブラウザポーリングによる誤認を根絶）。
-- **編集対象ファイル (最小限: 2ファイル)**:
+- **編集対象ファイル (完了)**:
   1. `tools/DashboardHtml.cs`
   2. `tools/FurimaServerNative.cs`
 
-#### [ ] **フェーズ 2.2-B: 双方向同期の論理削除 (`isDeleted`) & ゾンビ復活根絶** 【未着手】
+#### [x] **フェーズ 2.2-B: 双方向同期の論理削除 (`isDeleted`) & ゾンビ復活根絶** 【完了 (2026/03/30 Build 17)】
 - **目的**: 
   - PC側で商品を削除した際、スマホ側Room DBからも確実に削除を伝播させ、次回同期で削除商品が復活する「ゾンビ現象」を100%防止する。
   - `updatedAt` による最終更新日時の衝突防止。
-- **編集対象ファイル (最小限: 2ファイル)**:
+- **編集対象ファイル (完了)**:
   1. `tools/FurimaServerNative.cs`
   2. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
 
-#### [ ] **フェーズ 2.2-C: スマホ側設定画面の断捨離** 【未着手】
+#### [x] **フェーズ 2.2-C: スマホ側設定画面の断捨離** 【完了 (2026/03/30 Build 17)】
 - **目的**: 
   - スマホ側設定画面（`SettingsStorageScreen.kt`）から不要になった古いクリーンアップ関連のUI・ダイアログの完全撤去。
   - スマホ側を「サムネイル保持・原本PC同期」のシンプル設計へ純化。
-- **編集対象ファイル (最小限: 1ファイル)**:
+- **編集対象ファイル (完了)**:
   1. `app/src/main/java/com/example/myapplication/ui/screens/SettingsStorageScreen.kt`
 
-#### [ ] **フェーズ 2.2-D: バージョン表記統一 (Build 17) & ビルド検証** 【未着手】
+#### [x] **フェーズ 2.2-D: バージョン表記統一 (Build 17) & ビルド検証** 【完了 (2026/03/30 Build 17)】
 - **目的**: 
   - `app/build.gradle.kts` (versionCode 17)、`DashboardHtml.cs` (Build 17)、`WebDashboardHtml.kt` (Build 17) を同時統一更新。
   - アプリビルド検証およびGit引き継ぎコミット作成。
-- **編集対象ファイル (最小限: 4ファイル)**:
+- **編集対象ファイル (完了)**:
   1. `app/build.gradle.kts`
   2. `tools/DashboardHtml.cs`
   3. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
@@ -197,7 +197,25 @@
 
 ## 更新履歴 (Changelog)
 
-### [2026-03-30] フェーズ 2.2-FIX 接続・操作不具合の根本原因特定 & 修復計画策定 (課題追記)
+### [2026-03-30] フェーズ 2.2-A〜D 完了 (Yahoo!フリマ特化PC出品支援・双方向同期論理削除・断捨離) バージョン 2.2 (Build 17)
+- **フェーズ 2.2-A (PC管理画面構文修復 & Yahoo!フリマ出品支援)**:
+  - `tools/DashboardHtml.cs` の `<script>` タグ内に混入していたHTMLタグ（`add-modal`）を正常なモーダル領域へ移動し、JavaScript SyntaxError を解消。
+  - 商品編集モーダル（`<div id='edit-modal'>`）および関連関数（`openEditModal`, `updateItem`, `deleteItem`）を完全実装。
+  - Yahoo!フリマ出品支援機能を追加：
+    - タイトル40文字カウンター表示（文字数超過時の警告付き）。
+    - タイトル・説明文・価格のワンクリックコピーボタン。
+    - Windowsエクスプローラー起動API (`POST /api/items/{id}/open-folder`) と連携した「📁 写真フォルダを開く」ボタン。
+    - ヘッダーにYahoo!フリマ出品画面直通リンクを配置。
+  - サーバーからHTML生成時に `authToken` を渡す仕様とし、全API呼び出しに Bearer トークンを自動付与してLAN/トンネル接続時の401エラーを防止。
+  - `FurimaServerNative.cs` の `/api/` 全アクセスでの無条件 `lastHeartbeat` 更新を撤廃し、スマホ専用リクエスト受信時のみ更新する安全仕様へ復帰。
+- **フェーズ 2.2-B (双方向同期の論理削除 & ゾンビ復活根絶)**:
+  - PC側削除（`DELETE /api/items/{id}`）で `isDeleted: true` と `updatedAt` を付与する論理削除へ移行。
+  - スマホ側プル同期 (`fetchServerItems`) において、`isDeleted == true` の商品を受信した際にスマホの Room DB およびローカル写真ファイルを即時同期削除する処理を追加し、次回同期で削除商品が復活する「ゾンビ現象」を100%防止。
+- **フェーズ 2.2-C (スマホ側設定画面の断捨離)**:
+  - スマホ側設定画面 (`SettingsStorageScreen.kt`) から、PC移行済みで不要となった「売却から30日以上経過した写真データの削除」ダイアログおよびボタンを撤去。写真ストレージ管理方針の分かりやすい案内カードへ整理。
+- **フェーズ 2.2-D (バージョン表記統一 & ビルド検証)**:
+  - `app/build.gradle.kts` (versionCode 17)、`DashboardHtml.cs` (Build 17)、`WebDashboardHtml.kt` (Build 17) を同時統一更新。
+  - `compile_applet` による正常ビルド通過を確認。
 - **現象**: 2.1→2.2に移行して双方向同期・PC側編集機能を導入した際、PC側管理画面でサーバー接続が失敗する、または編集・削除操作が機能しない問題が発生。
 - **調査結果（原因4点）**:
   1. `tools/DashboardHtml.cs`: APIリクエスト時の `Authorization: Bearer` トークン付与漏れ（ループバック以外の接続で 401 Unauthorized エラー発生）。

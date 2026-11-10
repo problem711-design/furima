@@ -379,13 +379,23 @@ class PcServerClient(
                     val obj = jsonArray.getJSONObject(i)
                     val id = obj.optInt("id", 0)
                     if (id <= 0) continue
+
+                    val isDeleted = obj.optBoolean("isDeleted", false)
+                    val existing = dao.getItemWithPhotosById(id)
+
+                    if (isDeleted) {
+                        if (existing != null) {
+                            repository.deleteItem(existing)
+                        }
+                        continue
+                    }
+
                     val title = obj.optString("title", "商品")
                     val description = obj.optString("description", "")
                     val status = obj.optString("status", "LISTED")
                     val price = obj.optInt("price", 0)
                     val soldPrice = obj.optInt("soldPrice", 0)
 
-                    val existing = dao.getItemWithPhotosById(id)
                     if (existing != null) {
                         val updated = existing.item.copy(
                             title = title,

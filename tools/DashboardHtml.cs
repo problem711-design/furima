@@ -2,14 +2,14 @@ using System;
 
 public static class DashboardHtml
 {
-    public static string GetHtml()
+    public static string GetHtml(string authToken = "")
     {
         return @"<!DOCTYPE html>
 <html lang='ja'>
 <head>
     <meta charset='UTF-8'>
     <meta name='viewport' content='width=device-width, initial-scale=1.0'>
-    <title>Remix フリマ出品・商品PC管理 (母艦PCサーバー)</title>
+    <title>フリマ商品PC管理 (Yahoo!フリマ対応母艦サーバー)</title>
     <script src='https://cdn.tailwindcss.com'></script>
     <link href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css' rel='stylesheet'>
     <style>
@@ -19,31 +19,40 @@ public static class DashboardHtml
     </style>
 </head>
 <body class='bg-slate-100 text-slate-800 min-h-screen'>
+    <!-- トースト通知 -->
+    <div id='toast' class='fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-lg shadow-xl text-xs font-bold flex items-center gap-2 transform transition-all duration-300 translate-y-20 opacity-0 pointer-events-none'>
+        <i class='fa-solid fa-circle-check text-emerald-400'></i>
+        <span id='toast-msg'>コピーしました</span>
+    </div>
+
     <!-- スマホ接続ステータス通知バナー -->
     <div id='status-banner' class='bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40'>
         <div class='flex items-center gap-2'>
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.2 (Build 16)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.2 (Build 17)</span>
     </div>
 
-    <!-- ナビゲーションバー (高密度・インライン統合) -->
+    <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
     <header class='bg-indigo-700 text-white shadow-md sticky top-7 z-30'>
         <div class='max-w-[1800px] mx-auto px-3 sm:px-4 h-12 flex items-center justify-between gap-3'>
-            <!-- 左側: タイトル & 接続ステータス -->
+            <!-- 左側: タイトル & Yahoo!フリマショートカット -->
             <div class='flex items-center space-x-2 shrink-0'>
                 <i class='fa-solid fa-boxes-stacked text-lg text-indigo-200'></i>
                 <h1 class='font-black text-sm tracking-tight whitespace-nowrap'>フリマ商品PC管理</h1>
                 <span class='bg-indigo-800/90 text-indigo-100 text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold border border-indigo-500'>母艦サーバー</span>
+                <a href='https://paypayfleamarket.yahoo.co.jp/sell' target='_blank' class='bg-rose-500 hover:bg-rose-600 text-white text-[11px] font-bold px-2.5 py-1 rounded-md shadow-sm transition flex items-center gap-1.5 ml-2 border border-rose-400/50'>
+                    <i class='fa-solid fa-arrow-up-right-from-square text-[10px]'></i> Yahoo!フリマ出品画面を開く
+                </a>
             </div>
 
             <!-- 中央・右側: ステータスフィルター & 検索ボックス -->
             <div class='flex items-center gap-2 flex-1 justify-end overflow-x-auto custom-scroll py-0.5'>
                 <div class='flex items-center gap-1 bg-indigo-800/60 p-0.5 rounded-lg shrink-0'>
                     <button onclick='setFilter(""ALL"")' id='filter-all' class='filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition'>すべて (<span id='count-all'>0</span>)</button>
+                    <button onclick='setFilter(""UNSHARED"")' id='filter-unshared' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>未出品 (<span id='count-unshared'>0</span>)</button>
                     <button onclick='setFilter(""LISTED"")' id='filter-listed' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>出品中 (<span id='count-listed'>0</span>)</button>
-                    <button onclick='setFilter(""UNSHARED"")' id='filter-unshared' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>未送信 (<span id='count-unshared'>0</span>)</button>
                     <button onclick='setFilter(""SOLD"")' id='filter-sold' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>売却済 (<span id='count-sold'>0</span>)</button>
                 </div>
 
@@ -58,7 +67,7 @@ public static class DashboardHtml
     <!-- メインコンテンツ -->
     <main class='max-w-[1800px] mx-auto px-3 sm:px-4 py-4'>
         <div class='flex flex-col lg:flex-row gap-4 items-start'>
-            <!-- 左側: メイン商品グリッド表示エリア (高密度レイアウト) -->
+            <!-- 左側: メイン商品グリッド表示エリア -->
             <div class='flex-1 w-full min-w-0'>
                 <div id='items-grid' class='grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3'>
                     <!-- JavaScriptで動的生成 -->
@@ -70,7 +79,7 @@ public static class DashboardHtml
                 </div>
             </div>
 
-            <!-- 右側: 固定コントロールパネル (コンパクト化) -->
+            <!-- 右側: 固定コントロールパネル -->
             <aside class='w-full lg:w-64 shrink-0 sticky top-24 space-y-3'>
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
@@ -133,7 +142,6 @@ public static class DashboardHtml
     <!-- 30日経過写真クリーンアップモーダル -->
     <div id='cleanup-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeCleanupModal()'>
         <div class='bg-white rounded-xl max-w-2xl w-full max-h-[85vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
-            <!-- モーダルヘッダー -->
             <div class='bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between border-b border-slate-800'>
                 <div class='flex items-center gap-2.5'>
                     <i class='fa-solid fa-broom text-amber-400 text-lg'></i>
@@ -142,12 +150,8 @@ public static class DashboardHtml
                         <p class='text-[11px] text-slate-400'>売却成立から30日以上経過した商品の写真ファイルを安全に一括削除します</p>
                     </div>
                 </div>
-                <button onclick='closeCleanupModal()' class='text-slate-400 hover:text-white text-lg font-bold p-1 transition'>
-                    <i class='fa-solid fa-xmark'></i>
-                </button>
+                <button onclick='closeCleanupModal()' class='text-slate-400 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-
-            <!-- モーダルボディ -->
             <div class='p-5 flex-1 overflow-y-auto custom-scroll space-y-4'>
                 <div id='cleanup-summary-card' class='bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-center justify-between'>
                     <div>
@@ -156,7 +160,6 @@ public static class DashboardHtml
                     </div>
                     <span id='cleanup-count-badge' class='bg-amber-600 text-white text-xs font-bold px-2.5 py-1 rounded-full'>0件のファイル</span>
                 </div>
-
                 <div>
                     <h4 class='text-xs font-bold text-slate-700 mb-2 flex items-center gap-1'>
                         <i class='fa-solid fa-list-check text-indigo-500'></i> 削除対象候補ファイル一覧
@@ -171,27 +174,18 @@ public static class DashboardHtml
                                     <th class='p-2 text-right'>サイズ</th>
                                 </tr>
                             </thead>
-                            <tbody id='cleanup-candidates-table' class='divide-y divide-slate-100 text-slate-700'>
-                                <!-- JSで動的生成 -->
-                            </tbody>
+                            <tbody id='cleanup-candidates-table' class='divide-y divide-slate-100 text-slate-700'></tbody>
                         </table>
                     </div>
                 </div>
-
                 <div class='bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-[11px] text-slate-500 space-y-1'>
-                    <p class='font-bold text-slate-700 flex items-center gap-1'>
-                        <i class='fa-solid fa-shield-halved text-emerald-600'></i> 安全性のご案内
-                    </p>
+                    <p class='font-bold text-slate-700 flex items-center gap-1'><i class='fa-solid fa-shield-halved text-emerald-600'></i> 安全性のご案内</p>
                     <p>・出品中・未出品の写真は削除対象に含まれません。</p>
                     <p>・PC上の写真ファイルのみをクリーンアップし、商品テキストデータはそのまま保持されます。</p>
                 </div>
             </div>
-
-            <!-- モーダルフッター -->
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
-                <button onclick='closeCleanupModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>
-                    キャンセル
-                </button>
+                <button onclick='closeCleanupModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
                 <button id='cleanup-execute-btn' onclick='executeCleanup()' class='px-4 py-2 text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white rounded-lg shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5'>
                     <i class='fa-solid fa-trash-can'></i> クリーンアップを実行
                 </button>
@@ -199,12 +193,10 @@ public static class DashboardHtml
         </div>
     </div>
 
-    <!-- 写真拡大モーダル -->
+    <!-- 写真拡大プレビューモーダル -->
     <div id='image-modal' class='fixed inset-0 bg-black/85 z-50 hidden flex flex-col items-center justify-center p-4' onclick='closeImageModal()'>
         <div class='relative max-w-5xl max-h-[92vh] flex flex-col items-center justify-center' onclick='event.stopPropagation()'>
-            <button onclick='closeImageModal()' class='absolute -top-10 right-0 text-white hover:text-slate-300 text-2xl font-bold p-2 transition'>
-                <i class='fa-solid fa-xmark'></i>
-            </button>
+            <button onclick='closeImageModal()' class='absolute -top-10 right-0 text-white hover:text-slate-300 text-2xl font-bold p-2 transition'><i class='fa-solid fa-xmark'></i></button>
             <div class='bg-slate-900 rounded-lg p-2 shadow-2xl flex items-center justify-center overflow-hidden max-h-[80vh]'>
                 <img id='modal-img' src='' class='max-h-[76vh] max-w-full object-contain rounded'>
             </div>
@@ -212,19 +204,175 @@ public static class DashboardHtml
         </div>
     </div>
 
+    <!-- 新規商品追加モーダル -->
+    <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeAddModal()'>
+        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-emerald-700 text-white px-5 py-3.5 flex items-center justify-between'>
+                <div class='flex items-center gap-2'>
+                    <i class='fa-solid fa-plus text-lg'></i>
+                    <h3 class='font-bold text-sm tracking-tight'>新規商品の追加 (PC母艦)</h3>
+                </div>
+                <button onclick='closeAddModal()' class='text-emerald-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='p-5 space-y-3.5 text-xs'>
+                <div>
+                    <div class='flex justify-between items-center mb-1'>
+                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内)</label>
+                        <span id='add-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                    </div>
+                    <input type='text' id='add-title' oninput='checkTitleLength(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット Mサイズ'>
+                </div>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>販売価格 (円)</label>
+                    <input type='number' id='add-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
+                </div>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
+                    <textarea id='add-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                </div>
+            </div>
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
+                <button onclick='closeAddModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
+                <button onclick='createItem()' class='px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition'>出品を追加</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 商品編集モーダル (Yahoo!フリマ対応) -->
+    <div id='edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeEditModal()'>
+        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between'>
+                <div class='flex items-center gap-2'>
+                    <i class='fa-solid fa-pen-to-square text-lg'></i>
+                    <h3 class='font-bold text-sm tracking-tight'>商品情報の編集 (Yahoo!フリマ)</h3>
+                </div>
+                <button onclick='closeEditModal()' class='text-indigo-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='p-5 space-y-3.5 text-xs max-h-[75vh] overflow-y-auto custom-scroll'>
+                <input type='hidden' id='edit-id'>
+                <div>
+                    <div class='flex justify-between items-center mb-1'>
+                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内)</label>
+                        <span id='edit-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                    </div>
+                    <input type='text' id='edit-title' oninput='checkTitleLength(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
+                </div>
+                <div class='grid grid-cols-2 gap-3'>
+                    <div>
+                        <label class='block font-bold text-slate-700 mb-1'>出品価格 (円)</label>
+                        <input type='number' id='edit-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
+                    </div>
+                    <div>
+                        <label class='block font-bold text-slate-700 mb-1'>ステータス</label>
+                        <select id='edit-status' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white'>
+                            <option value='DRAFT'>未出品 (出品準備中)</option>
+                            <option value='LISTED'>出品中</option>
+                            <option value='SOLD'>売却済</option>
+                        </select>
+                    </div>
+                </div>
+                <div id='edit-sold-price-group' class='hidden'>
+                    <label class='block font-bold text-slate-700 mb-1'>実際の売却価格 (円)</label>
+                    <input type='number' id='edit-sold-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
+                </div>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
+                    <textarea id='edit-description' rows='5' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
+                </div>
+                <div class='pt-1'>
+                    <button type='button' id='edit-open-folder-btn' class='w-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-regular fa-folder-open text-indigo-600'></i> 写真フォルダをPCエクスプローラーで開く
+                    </button>
+                </div>
+            </div>
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
+                <button onclick='closeEditModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
+                <button onclick='updateItem()' class='px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition'>変更を保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- メインスクリプト -->
     <script>
+        const AUTH_TOKEN = '" + authToken + @"';
         let allItems = [];
         let currentFilter = 'ALL';
         let currentModalPhotos = [];
 
+        function getHeaders() {
+            const h = { 'Content-Type': 'application/json' };
+            if (AUTH_TOKEN) {
+                h['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+            }
+            return h;
+        }
+
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            document.getElementById('toast-msg').innerText = msg;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 2500);
+        }
+
+        async function copyText(text, label) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast(label + 'をコピーしました！');
+            } catch (err) {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                showToast(label + 'をコピーしました！');
+            }
+        }
+
+        function checkTitleLength(prefix) {
+            const input = document.getElementById(prefix + '-title');
+            const counter = document.getElementById(prefix + '-title-count');
+            const len = (input.value || '').length;
+            counter.innerText = len + '/40文字';
+            if (len > 40) {
+                counter.className = 'text-[10px] font-mono text-rose-600 font-bold';
+            } else {
+                counter.className = 'text-[10px] font-mono text-slate-400';
+            }
+        }
+
+        async function openFolder(id) {
+            try {
+                const res = await fetch('/api/items/' + id + '/open-folder', {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (res.ok) {
+                    showToast('PC写真フォルダを開きました');
+                } else {
+                    showToast('フォルダ起動に失敗しました (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                showToast('通信エラー: ' + e.message);
+            }
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
             fetchItems();
             setInterval(fetchItems, 3000);
+            document.getElementById('edit-status').addEventListener('change', (e) => {
+                const isSold = e.target.value === 'SOLD';
+                document.getElementById('edit-sold-price-group').className = isSold ? 'block' : 'hidden';
+            });
         });
 
         async function fetchItems() {
             try {
-                const res = await fetch('/api/items');
+                const res = await fetch('/api/items', { headers: getHeaders() });
                 if (!res.ok) return;
                 allItems = await res.json();
                 updateStats();
@@ -232,7 +380,7 @@ public static class DashboardHtml
             } catch (e) {}
 
             try {
-                const statusRes = await fetch('/api/server/status');
+                const statusRes = await fetch('/api/server/status', { headers: getHeaders() });
                 if (statusRes.ok) {
                     const statusData = await statusRes.json();
                     const banner = document.getElementById('status-banner');
@@ -256,8 +404,10 @@ public static class DashboardHtml
         }
 
         function updateStats() {
-            const listed = allItems.filter(i => i.status === 'LISTED');
-            const sold = allItems.filter(i => i.status === 'SOLD');
+            const active = allItems.filter(i => !i.isDeleted);
+            const listed = active.filter(i => i.status === 'LISTED');
+            const unshared = active.filter(i => i.status === 'DRAFT' || !i.isShared);
+            const sold = active.filter(i => i.status === 'SOLD');
             const totalSales = sold.reduce((sum, i) => sum + (i.soldPrice > 0 ? i.soldPrice : i.price), 0);
             const totalProfit = sold.reduce((sum, i) => sum + (i.profit || 0), 0);
 
@@ -266,9 +416,9 @@ public static class DashboardHtml
             document.getElementById('stat-total-sales').innerText = '¥' + totalSales.toLocaleString();
             document.getElementById('stat-total-profit').innerText = '¥' + totalProfit.toLocaleString();
 
-            document.getElementById('count-all').innerText = allItems.length;
+            document.getElementById('count-all').innerText = active.length;
+            document.getElementById('count-unshared').innerText = unshared.length;
             document.getElementById('count-listed').innerText = listed.length;
-            document.getElementById('count-unshared').innerText = allItems.filter(i => !i.isShared).length;
             document.getElementById('count-sold').innerText = sold.length;
         }
 
@@ -278,8 +428,8 @@ public static class DashboardHtml
                 btn.className = 'filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition';
             });
             if (filter === 'ALL') document.getElementById('filter-all').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition';
-            if (filter === 'LISTED') document.getElementById('filter-listed').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition';
             if (filter === 'UNSHARED') document.getElementById('filter-unshared').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-amber-700 shadow-sm transition';
+            if (filter === 'LISTED') document.getElementById('filter-listed').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition';
             if (filter === 'SOLD') document.getElementById('filter-sold').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-emerald-700 shadow-sm transition';
             renderItems();
         }
@@ -290,8 +440,9 @@ public static class DashboardHtml
             const query = document.getElementById('search-input').value.trim().toLowerCase();
 
             let items = allItems.filter(item => {
+                if (item.isDeleted) return false;
                 if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                if (currentFilter === 'UNSHARED' && item.isShared) return false;
+                if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
                 if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
 
                 if (query) {
@@ -314,24 +465,45 @@ public static class DashboardHtml
                 const mainPhoto = photos.length > 0 ? (photos[0].md5Hash ? '/api/photos/' + photos[0].md5Hash : photos[0].photoUrl) : '';
                 const displayPrice = item.status === 'SOLD' && item.soldPrice > 0 ? item.soldPrice : (item.price || 0);
                 const isSold = item.status === 'SOLD';
+                const isDraft = item.status === 'DRAFT' || !item.isShared;
                 const profitText = item.profit != null ? ' (利益 ¥' + item.profit.toLocaleString() + ')' : '';
+                const titleLen = (item.title || '').length;
 
                 return `<div class='bg-white rounded-lg border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition flex flex-col'>
                     <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openImageModal(${itemIdx}, 0)'>
                         ${mainPhoto ? `<img src='${mainPhoto}' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>` : `<div class='w-full h-full flex items-center justify-center text-slate-300'><i class='fa-solid fa-image text-3xl'></i></div>`}
                         <div class='absolute top-1.5 left-1.5 flex gap-1 flex-wrap'>
-                            <span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${isSold ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}'>
-                                ${isSold ? '売却済' : (item.statusLabel || '出品中')}
+                            <span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${isSold ? 'bg-rose-600 text-white' : (isDraft ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white')}'>
+                                ${isSold ? '売却済' : (isDraft ? '未出品' : '出品中')}
                             </span>
-                            ${!item.isShared ? `<span class='px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500 text-white shadow-sm'>未送信</span>` : ''}
                         </div>
                         ${photos.length > 1 ? `<div class='absolute bottom-1.5 right-1.5 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1'><i class='fa-solid fa-camera'></i> ${photos.length}</div>` : ''}
                     </div>
-                    <div class='p-2.5 flex-1 flex flex-col justify-between space-y-1.5'>
+                    <div class='p-2.5 flex-1 flex flex-col justify-between space-y-2'>
                         <div>
-                            <h3 class='font-bold text-xs text-slate-800 line-clamp-1' title='${item.title || '無題'}'>${item.title || '無題'}</h3>
-                            <p class='text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-tight'>${item.description || ''}</p>
+                            <div class='flex items-center justify-between gap-1'>
+                                <h3 class='font-bold text-xs text-slate-800 line-clamp-1 flex-1' title='${escapeHtml(item.title || '無題')}'>${escapeHtml(item.title || '無題')}</h3>
+                                <span class='text-[9px] font-mono shrink-0 ${titleLen > 40 ? 'text-rose-600 font-bold' : 'text-slate-400'}'>${titleLen}/40字</span>
+                            </div>
+                            <p class='text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-tight'>${escapeHtml(item.description || '')}</p>
                         </div>
+
+                        <!-- Yahoo!フリマ出品コピペ & フォルダオープン支援バー -->
+                        <div class='bg-slate-50 border border-slate-100 rounded p-1 flex items-center justify-between gap-1 text-[10px]'>
+                            <button onclick='copyText(${JSON.stringify(item.title || '')}, ""タイトル"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='タイトルをコピー'>
+                                <i class='fa-regular fa-copy text-indigo-600'></i> 題名
+                            </button>
+                            <button onclick='copyText(${JSON.stringify(item.description || '')}, ""商品説明"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='商品説明をコピー'>
+                                <i class='fa-regular fa-copy text-indigo-600'></i> 説明
+                            </button>
+                            <button onclick='copyText(${JSON.stringify(displayPrice.toString())}, ""価格"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='価格をコピー'>
+                                <i class='fa-regular fa-copy text-indigo-600'></i> 価格
+                            </button>
+                            <button onclick='openFolder(${item.id})' class='bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded font-bold transition flex items-center justify-center' title='写真フォルダをPCで開く'>
+                                <i class='fa-regular fa-folder-open'></i>
+                            </button>
+                        </div>
+
                         <div class='border-t border-slate-100 pt-1.5 flex items-center justify-between'>
                             <div>
                                 <span class='text-base font-black ${isSold ? 'text-rose-600' : 'text-indigo-600'}'>¥${displayPrice.toLocaleString()}</span>
@@ -347,11 +519,15 @@ public static class DashboardHtml
             }).join('');
         }
 
+        function escapeHtml(str) {
+            return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/""/g, '&quot;');
+        }
+
         function openImageModal(itemIdx, photoIdx) {
             const query = document.getElementById('search-input').value.trim().toLowerCase();
             let filteredItems = allItems.filter(item => {
                 if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                if (currentFilter === 'UNSHARED' && item.isShared) return false;
+                if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
                 if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
                 if (query) {
                     const title = (item.title || '').toLowerCase();
@@ -400,9 +576,143 @@ public static class DashboardHtml
             document.getElementById('image-modal').classList.add('hidden');
         }
 
+        function openEditModal(id) {
+            const item = allItems.find(i => i.id == id);
+            if (!item) return;
+
+            document.getElementById('edit-id').value = item.id;
+            document.getElementById('edit-title').value = item.title || '';
+            document.getElementById('edit-price').value = item.price || 0;
+            document.getElementById('edit-sold-price').value = item.soldPrice || 0;
+            document.getElementById('edit-status').value = item.status || 'LISTED';
+            document.getElementById('edit-description').value = item.description || '';
+
+            checkTitleLength('edit');
+
+            const isSold = item.status === 'SOLD';
+            document.getElementById('edit-sold-price-group').className = isSold ? 'block' : 'hidden';
+
+            const folderBtn = document.getElementById('edit-open-folder-btn');
+            folderBtn.onclick = () => openFolder(item.id);
+
+            document.getElementById('edit-modal').classList.remove('hidden');
+        }
+
+        function closeEditModal() {
+            document.getElementById('edit-modal').classList.add('hidden');
+        }
+
+        async function updateItem() {
+            const id = document.getElementById('edit-id').value;
+            const title = document.getElementById('edit-title').value.trim();
+            const price = parseInt(document.getElementById('edit-price').value) || 0;
+            const status = document.getElementById('edit-status').value;
+            const soldPrice = status === 'SOLD' ? (parseInt(document.getElementById('edit-sold-price').value) || price) : 0;
+            const description = document.getElementById('edit-description').value.trim();
+
+            if (!title) {
+                alert('商品タイトルを入力してください。');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/items/' + id, {
+                    method: 'PUT',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ title, price, soldPrice, status, description })
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        closeEditModal();
+                        showToast('商品情報を更新しました！');
+                        fetchItems();
+                    } else {
+                        alert('更新失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        async function deleteItem(id) {
+            if (!confirm('商品ID: ' + id + ' を削除します。PCおよび次回同期時にスマホからも削除されます。よろしいですか？')) return;
+
+            try {
+                const res = await fetch('/api/items/' + id, {
+                    method: 'DELETE',
+                    headers: getHeaders()
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        showToast('商品を削除しました');
+                        fetchItems();
+                    } else {
+                        alert('削除失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        function openAddModal() {
+            document.getElementById('add-title').value = '';
+            document.getElementById('add-price').value = '';
+            document.getElementById('add-description').value = '';
+            checkTitleLength('add');
+            document.getElementById('add-modal').classList.remove('hidden');
+        }
+
+        function closeAddModal() {
+            document.getElementById('add-modal').classList.add('hidden');
+        }
+
+        async function createItem() {
+            const title = document.getElementById('add-title').value.trim();
+            const price = parseInt(document.getElementById('add-price').value) || 0;
+            const description = document.getElementById('add-description').value.trim();
+
+            if (!title) {
+                alert('商品タイトルを入力してください。');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/items', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ title, price, description })
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        closeAddModal();
+                        showToast('新規商品を追加しました！');
+                        fetchItems();
+                    } else {
+                        alert('追加失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
         async function fetchCleanupPreview() {
             try {
-                const res = await fetch('/api/cleanup/preview');
+                const res = await fetch('/api/cleanup/preview', { headers: getHeaders() });
                 if (!res.ok) return null;
                 const data = await res.json();
                 if (data.status === 'ok') {
@@ -461,7 +771,7 @@ public static class DashboardHtml
             executeBtn.innerHTML = '<i class=\'fa-solid fa-spinner animate-spin\'></i> 削除実行中...';
 
             try {
-                const res = await fetch('/api/cleanup/execute', { method: 'POST' });
+                const res = await fetch('/api/cleanup/execute', { method: 'POST', headers: getHeaders() });
                 if (res.ok) {
                     const result = await res.json();
                     if (result.status === 'ok') {
@@ -479,81 +789,6 @@ public static class DashboardHtml
             } finally {
                 executeBtn.disabled = false;
                 executeBtn.innerHTML = '<i class=\'fa-solid fa-trash-can\'></i> クリーンアップを実行';
-            }
-        }
-    <!-- 新規商品追加モーダル -->
-    <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeAddModal()'>
-        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
-            <div class='bg-emerald-700 text-white px-5 py-3.5 flex items-center justify-between'>
-                <div class='flex items-center gap-2'>
-                    <i class='fa-solid fa-plus text-lg'></i>
-                    <h3 class='font-bold text-sm tracking-tight'>新規商品の追加 (PC母艦)</h3>
-                </div>
-                <button onclick='closeAddModal()' class='text-emerald-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
-            </div>
-            <div class='p-5 space-y-3.5 text-xs'>
-                <div>
-                    <label class='block font-bold text-slate-700 mb-1'>商品タイトル</label>
-                    <input type='text' id='add-title' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット'>
-                </div>
-                <div>
-                    <label class='block font-bold text-slate-700 mb-1'>出品価格 (円)</label>
-                    <input type='number' id='add-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
-                </div>
-                <div>
-                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
-                    <textarea id='add-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
-                </div>
-            </div>
-            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
-                <button onclick='closeAddModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
-                <button onclick='createItem()' class='px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition'>出品を追加</button>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        function openAddModal() {
-            document.getElementById('add-title').value = '';
-            document.getElementById('add-price').value = '';
-            document.getElementById('add-description').value = '';
-            document.getElementById('add-modal').classList.remove('hidden');
-        }
-
-        function closeAddModal() {
-            document.getElementById('add-modal').classList.add('hidden');
-        }
-
-        async function createItem() {
-            const title = document.getElementById('add-title').value.trim();
-            const price = parseInt(document.getElementById('add-price').value) || 0;
-            const description = document.getElementById('add-description').value.trim();
-
-            if (!title) {
-                alert('商品タイトルを入力してください。');
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/items', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ title, price, description })
-                });
-
-                if (res.ok) {
-                    const result = await res.json();
-                    if (result.status === 'ok') {
-                        closeAddModal();
-                        fetchItems();
-                    } else {
-                        alert('追加失敗: ' + (result.message || '不明なエラー'));
-                    }
-                } else {
-                    alert('サーバー通信エラー (Status: ' + res.status + ')');
-                }
-            } catch (e) {
-                alert('通信エラー: ' + e.message);
             }
         }
     </script>

@@ -88,7 +88,6 @@ fun SettingsStorageScreen(
     var thumbDim by remember(currentSettings) { mutableIntStateOf(currentSettings.thumbnailMaxDimension) }
     var cleanupDays by remember(currentSettings) { mutableIntStateOf(currentSettings.autoCleanupSoldDays) }
 
-    var showCleanupSoldDialog by remember { mutableStateOf(false) }
     var showAddPresetDialog by remember { mutableStateOf(false) }
     var presetToDelete by remember { mutableStateOf<FeePreset?>(null) }
 
@@ -174,29 +173,7 @@ fun SettingsStorageScreen(
 
 
 
-    if (showCleanupSoldDialog) {
-        AlertDialog(
-            onDismissRequest = { showCleanupSoldDialog = false },
-            icon = { Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = Color.Red) },
-            title = { Text("売却後${cleanupDays}日経過写真の削除") },
-            text = { Text("売却完了から${cleanupDays}日以上経過した商品の写真ファイルを完全削除します（売上記録は残ります）。実行しますか？") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.cleanupSoldPhotosOlderThan(cleanupDays) { count ->
-                            showCleanupSoldDialog = false
-                            Toast.makeText(context, "${count}枚の古い取引写真を削除しました", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                ) {
-                    Text("削除する")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showCleanupSoldDialog = false }) { Text("キャンセル") }
-            }
-        )
-    }
+
 
     presetToDelete?.let { preset ->
         AlertDialog(
@@ -383,7 +360,7 @@ fun SettingsStorageScreen(
                 }
             }
 
-            // 3. ストレージ容量クリーンアップ
+            // 3. 写真ストレージ管理（PC母艦同期連携）
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -393,21 +370,14 @@ fun SettingsStorageScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(imageVector = Icons.Default.CleaningServices, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("🧹 スマホ容量クリーンアップ", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("📷 写真ストレージ管理方針", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                     Text(
-                        text = "PCへ転送済みの高画質写真や、取引終了から時間が経った写真を整理してスマホの空き容量を確保します。",
+                        text = "PCへ同期が完了した出品写真は、スマホ端末内では自動的に軽量サムネイルに切り替わり、スマホの空き容量を最大化します。高画質原本の長期保存や売却済み写真のデータクリーンアップは、PC母艦ブラウザ管理画面からワンクリックで安全に実行できます。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp)
+                        modifier = Modifier.padding(top = 4.dp)
                     )
-
-                    OutlinedButton(
-                        onClick = { showCleanupSoldDialog = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("売却から${cleanupDays}日以上経過した写真を一括削除")
-                    }
                 }
             }
 

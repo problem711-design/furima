@@ -401,10 +401,6 @@ class FurimaServerNative
         }
 
         string rawPath = req.Url.AbsolutePath;
-        if (rawPath.StartsWith("/api/"))
-        {
-            lastHeartbeat = DateTime.Now;
-        }
 
         if (rawPath != "/api/server/heartbeat")
         {
@@ -495,6 +491,10 @@ class FurimaServerNative
             else if (rawPath == "/api/cleanup/execute" && req.HttpMethod == "POST")
             {
                 HandleCleanupExecute(res);
+            }
+            else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/open-folder") && req.HttpMethod == "POST")
+            {
+                HandleOpenFolder(res, rawPath);
             }
             else if (rawPath.StartsWith("/api/items/") && req.HttpMethod == "PUT")
             {
@@ -617,6 +617,8 @@ class FurimaServerNative
                                 { "profit", profit },
                                 { "statusLabel", statusLabel },
                                 { "isShared", true },
+                                { "isDeleted", false },
+                                { "updatedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
                                 { "photos", savedPhotosList }
                             };
 
@@ -862,7 +864,8 @@ class FurimaServerNative
                 string status = json.Value<string>("status") ?? "LISTED";
                 string description = json.Value<string>("description") ?? "";
 
-                string statusLabel = status == "SOLD" ? "売却済み" : "出品中";
+                string statusLabel = status == "SOLD" ? "売却済み" : (status == "DRAFT" ? "未出品" : "出品中");
+                int profit = price - 210 - (price * 5 / 100) - 55;
 
                 lock (lockObj)
                 {
@@ -880,6 +883,36 @@ class FurimaServerNative
                     item["status"] = status;
                     item["statusLabel"] = statusLabel;
                     item["description"] = description;
+                    item["profit"] = profit;
+                    item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                    try
+                    {
+                        string safeTitle = title;
+                        foreach (char c in Path.GetInvalidFileNameChars()) safeTitle = safeTitle.Replace(c, '_');
+                        string targetDir = null;
+                        if (Directory.Exists(syncDir))
+                        {
+                            foreach (string d in Directory.GetDirectories(syncDir))
+                            {
+                                string name = Path.GetFileName(d);
+                                if (name.StartsWith(itemId + "_") || name == itemId.ToString())
+                                {
+                                    targetDir = d;
+                                    break;
+                                }
+                            }
+                        }
+                        if (targetDir == null) targetDir = Path.Combine(syncDir, itemId + "_" + safeTitle);
+                        Directory.CreateDirectory(targetDir);
+                        string txtPath = Path.Combine(targetDir, "商品情報_説明文.txt");
+                        string txtContent = "【商品ID】 " + itemId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【ステータス】 " + statusLabel + "\n\n--- 商品説明 ---\n" + description;
+                        File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("説明文txt更新例外: " + ex.Message);
+                    }
                 }
 
                 SaveItemsDbToDisk();
@@ -890,6 +923,63 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("UpdateItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleOpenFolder(HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length);
+            idStr = idStr.Substring(0, idStr.Length - "/open-folder".Length).Trim();
+            int itemId;
+            if (!int.TryParse(idStr, out itemId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid ID" } });
+                return;
+            }
+
+            string targetDir = null;
+            if (Directory.Exists(syncDir))
+            {
+                foreach (string dir in Directory.GetDirectories(syncDir))
+                {
+                    string dirName = Path.GetFileName(dir);
+                    if (dirName.StartsWith(itemId + "_") || dirName == itemId.ToString())
+                    {
+                        targetDir = dir;
+                        break;
+                    }
+                }
+            }
+
+            if (targetDir == null || !Directory.Exists(targetDir))
+            {
+                targetDir = Path.Combine(syncDir, itemId + "_商品");
+                Directory.CreateDirectory(targetDir);
+            }
+
+            try
+            {
+                Process.Start("explorer.exe", targetDir);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("エクスプローラー起動通知: " + ex.Message);
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "folderPath", targetDir }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleOpenFolder エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }
@@ -910,7 +1000,12 @@ class FurimaServerNative
 
             lock (lockObj)
             {
-                itemsDb.RemoveAll(i => i != null && Convert.ToInt32(i["id"]) == itemId);
+                var item = itemsDb.Find(i => Convert.ToInt32(i["id"]) == itemId);
+                if (item != null)
+                {
+                    item["isDeleted"] = true;
+                    item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                }
             }
 
             SaveItemsDbToDisk();
@@ -972,6 +1067,8 @@ class FurimaServerNative
                         { "profit", price - 210 - (price * 5 / 100) - 55 },
                         { "statusLabel", "出品中" },
                         { "isShared", true },
+                        { "isDeleted", false },
+                        { "updatedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
                         { "photos", new List<Dictionary<string, object>>() }
                     };
 
@@ -1022,7 +1119,7 @@ class FurimaServerNative
 
     private static void ServeDashboardHtml(HttpListenerResponse res)
     {
-        string html = DashboardHtml.GetHtml();
+        string html = DashboardHtml.GetHtml(authToken);
         byte[] bytes = Encoding.UTF8.GetBytes(html);
         res.ContentType = "text/html; charset=utf-8";
         res.ContentLength64 = bytes.Length;
