@@ -21,7 +21,7 @@
    - 明確な大型新機能追加・基本構造移行: マイナーバージョンを繰り上げる（例: `2.0` ➔ `2.1`）。
    - **バージョン表記の更新義務**: バージョン更新時は、**スマホアプリ側 (`app/build.gradle.kts`)** と **PCブラウザ管理画面 (`WebDashboardHtml.kt`)** の両方を**必ず同時に統一して更新**する。
 7. **仕様・実装計画書の併せての確認ルール (Plan File Verification Rule)**:
-   - 作業開始時、およびビルドナンバー（Build番号）更新時には、本ファイル (`PROGRESS.md`) に加えて、仕様・計画書である `PLAN_PHASE_2_1.md` を**必ず同時に確認・参照**する。
+   - 作業開始時、およびビルドナンバー（Build番号）更新時には、本ファイル (`PROGRESS.md`) に加えて、最新の仕様・計画書である `PLAN_PHASE_2_2.md`（旧: `PLAN_PHASE_2_1.md`）を**必ず同時に確認・参照・更新**する。
 
 ---
 
@@ -144,6 +144,47 @@
   2. `tools/FurimaServerNative.cs` (クリーンアップ API ルート `/api/cleanup/preview` & `/api/cleanup/execute` 追加)
   3. `tools/DashboardHtml.cs` (PC容量表示、クリーンアッププレビュー/実行モーダル追加、Build 15 更新)
   4. `app/build.gradle.kts` (versionCode 15 更新)
+
+---
+
+### フェーズ 2.2 (Yahoo!フリマ特化PC出品支援・双方向同期安定化・不要機能断捨離)
+※ 詳細は `PLAN_PHASE_2_2.md` を参照。変更規模の小さなフェーズから順に逐次実装する。
+
+#### [ ] **フェーズ 2.2-A: PC管理画面構文修復 & Yahoo!フリマ出品支援UI** 【次期未着手】
+- **目的**: 
+  - `DashboardHtml.cs` の `<script>` 内HTML混入による JavaScript 構文エラーの解消。
+  - 欠落していた商品編集モーダル（`<div id='edit-modal'>`）および関連関数（`openEditModal`, `updateItem`, `deleteItem`）の実装。
+  - Yahoo!フリマPC出品支援機能（タイトル40文字カウンター、コピペボタン、写真保存フォルダのエクスプローラー即オープン、出品画面リンク）の実装。
+  - サーバーからHTML生成時への `authToken` 注入によるLAN/トンネル接続時401エラーの防止。
+  - `lastHeartbeat` 誤判定の解消（スマホ専用通信時のみ更新に戻し、ブラウザポーリングによる誤認を根絶）。
+- **編集対象ファイル (最小限: 2ファイル)**:
+  1. `tools/DashboardHtml.cs`
+  2. `tools/FurimaServerNative.cs`
+
+#### [ ] **フェーズ 2.2-B: 双方向同期の論理削除 (`isDeleted`) & ゾンビ復活根絶** 【未着手】
+- **目的**: 
+  - PC側で商品を削除した際、スマホ側Room DBからも確実に削除を伝播させ、次回同期で削除商品が復活する「ゾンビ現象」を100%防止する。
+  - `updatedAt` による最終更新日時の衝突防止。
+- **編集対象ファイル (最小限: 2ファイル)**:
+  1. `tools/FurimaServerNative.cs`
+  2. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+
+#### [ ] **フェーズ 2.2-C: スマホ側設定画面の断捨離** 【未着手】
+- **目的**: 
+  - スマホ側設定画面（`SettingsStorageScreen.kt`）から不要になった古いクリーンアップ関連のUI・ダイアログの完全撤去。
+  - スマホ側を「サムネイル保持・原本PC同期」のシンプル設計へ純化。
+- **編集対象ファイル (最小限: 1ファイル)**:
+  1. `app/src/main/java/com/example/myapplication/ui/screens/SettingsStorageScreen.kt`
+
+#### [ ] **フェーズ 2.2-D: バージョン表記統一 (Build 17) & ビルド検証** 【未着手】
+- **目的**: 
+  - `app/build.gradle.kts` (versionCode 17)、`DashboardHtml.cs` (Build 17)、`WebDashboardHtml.kt` (Build 17) を同時統一更新。
+  - アプリビルド検証およびGit引き継ぎコミット作成。
+- **編集対象ファイル (最小限: 4ファイル)**:
+  1. `app/build.gradle.kts`
+  2. `tools/DashboardHtml.cs`
+  3. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
+  4. `PROGRESS.md` / `PLAN_PHASE_2_2.md`
 
 ---
 
