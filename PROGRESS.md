@@ -218,6 +218,38 @@
   1. `tools/FurimaServerNative.cs`
   2. `tools/DashboardHtml.cs`
   3. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
+
+---
+
+### フェーズ 2.4 (新問題1〜4の段階的修復 & 機能強化)
+
+#### [ ] **フェーズ 2.4-A: まとめ買いフィールド完全同期 & バッジ・解除UI復元**
+- **目的**: スマホ・PC母艦間の `SyncItemDto`, `PcServerClient.kt`, `FurimaServerNative.cs` でまとめ買いフィールドを完全伝播・保存。PC画面で紫色の「まとめ (X点)」バッジと「解除」ボタンを表示。
+- **編集対象ファイル**:
+  1. `app/src/main/java/com/example/myapplication/data/server/SyncDtos.kt`
+  2. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+  3. `tools/FurimaServerNative.cs`
+  4. `tools/DashboardHtml.cs`
+
+#### [ ] **フェーズ 2.4-B: まとめ買い作成 API (Status 500) & 型変換・文字コード修復**
+- **目的**: `req.ContentEncoding ?? Encoding.UTF8` へのフォールバック指定、`JValue(null)` キャスト例外を防止する `ParseIntSafe` ヘルパー関数の導入、写真オブジェクトの型チェック強化。親商品データと物理写真フォルダ・説明文テキストの確実な保存。
+- **編集対象ファイル**:
+  1. `tools/FurimaServerNative.cs`
+
+#### [ ] **フェーズ 2.4-C: PC新規出品モーダルの項目拡充 & スマホ側完全連動**
+- **目的**: `DashboardHtml.cs` の新規出品モーダルにステータス（下書き/出品中）、送料、手数料、経費、個別費用設定スイッチ、リアルタイム利益プレビューを追加。`HandleCreateItem` で全項目を受信・保存し、スマホ側 `fetchServerItems` で完全取り込み。
+- **編集対象ファイル**:
+  1. `tools/DashboardHtml.cs`
+  2. `tools/FurimaServerNative.cs`
+  3. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+
+#### [ ] **フェーズ 2.4-D: QRコード描画の正常化 (.NET 4.0 純 C# ISO/IEC 18004 規格準拠)**
+- **目的**: 8bitバイトモード、リード・ソロモン誤り訂正コード（ECC）、15bit形式情報を正しく算出・配置する純 C# エンコーダーに差し替え。クワイエットゾーン（4セル白フチ）と NearestNeighbor 整数描写により、スキャナーで一瞬で認識できるクリアで高精細な QRコードを生成。
+- **編集対象ファイル**:
+  1. `tools/TunnelQrForm.cs`
+
+#### [ ] **フェーズ 2.4-E: バージョン表記統一 (Build 20) & アプリ・サーバービルド & エミュレータ検証 & Git全同期**
+- **目的**: バージョン表記を Build 20 に統一。PCサーバーアプリおよび Android APK をビルドし、エミュレータにてデプロイ・動作検証。Git コミットと GitHub への最終同期完了。
   4. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
 
 ---
