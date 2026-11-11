@@ -102,7 +102,7 @@ public class TunnelQrForm : Form
         picQrCode = new PictureBox();
         picQrCode.Size = new Size(240, 240);
         picQrCode.SizeMode = PictureBoxSizeMode.Zoom;
-        picQrCode.Anchor = AnchorStyles.Center;
+        picQrCode.Anchor = AnchorStyles.None;
         picQrCode.BorderStyle = BorderStyle.FixedSingle;
         mainLayout.Controls.Add(picQrCode, 0, 6);
         mainLayout.SetColumnSpan(picQrCode, 2);
@@ -120,7 +120,6 @@ public class TunnelQrForm : Form
         FlowLayoutPanel btnPanel = new FlowLayoutPanel();
         btnPanel.Dock = DockStyle.Fill;
         btnPanel.FlowDirection = FlowDirection.LeftToRight;
-        btnPanel.Alignment = ToolStripItemAlignment.Right;
         btnPanel.Padding = new Padding(0, 5, 0, 0);
 
         Button btnOpenBrowser = new Button();
