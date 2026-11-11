@@ -492,6 +492,18 @@ class FurimaServerNative
             {
                 HandleCleanupExecute(res);
             }
+            else if (rawPath == "/api/items/merge" && req.HttpMethod == "POST")
+            {
+                HandleMergeItems(req, res);
+            }
+            else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/unmerge") && req.HttpMethod == "POST")
+            {
+                HandleUnmergeItem(res, rawPath);
+            }
+            else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/add") && req.HttpMethod == "POST")
+            {
+                HandleAddPhoto(req, res, rawPath);
+            }
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/open-folder") && req.HttpMethod == "POST")
             {
                 HandleOpenFolder(res, rawPath);
@@ -1083,6 +1095,349 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("CreateItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleMergeItems(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+            {
+                string jsonStr = reader.ReadToEnd();
+                JObject json = JObject.Parse(jsonStr);
+
+                var childIdsArray = json["childItemIds"] as JArray;
+                if (childIdsArray == null || childIdsArray.Count < 2)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "2点以上の商品を選択してください" } });
+                    return;
+                }
+
+                List<int> childItemIds = new List<int>();
+                foreach (var token in childIdsArray)
+                {
+                    childItemIds.Add(token.Value<int>());
+                }
+
+                string mergedTitle = json.Value<string>("mergedTitle") ?? "まとめ買い商品";
+                string mergedDescription = json.Value<string>("mergedDescription") ?? "";
+                int totalSoldPrice = json.Value<int>("totalSoldPrice");
+                int newShippingCost = json.Value<int>("newShippingCost");
+                if (newShippingCost <= 0) newShippingCost = 210;
+                int newFeeRatePercent = json.Value<int>("newFeeRatePercent");
+                if (newFeeRatePercent <= 0) newFeeRatePercent = 5;
+                int newExpenseCost = json.Value<int>("newExpenseCost");
+                if (newExpenseCost <= 0) newExpenseCost = 55;
+                string asStatus = json.Value<string>("asStatus") ?? "LISTED";
+
+                int newParentId = 1;
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+                lock (lockObj)
+                {
+                    foreach (var i in itemsDb)
+                    {
+                        int id = Convert.ToInt32(i["id"]);
+                        if (id >= newParentId) newParentId = id + 1;
+                    }
+
+                    var childItems = new List<Dictionary<string, object>>();
+                    foreach (int cid in childItemIds)
+                    {
+                        var found = itemsDb.Find(item => Convert.ToInt32(item["id"]) == cid);
+                        if (found != null)
+                        {
+                            childItems.Add(found);
+                        }
+                    }
+
+                    if (childItems.Count < 2)
+                    {
+                        res.StatusCode = 400;
+                        SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "有効な子商品が見つかりません" } });
+                        return;
+                    }
+
+                    List<string> childTitlesList = new List<string>();
+                    int originalTotal = 0;
+                    int maxChildLevel = 0;
+                    List<Dictionary<string, object>> parentPhotos = new List<Dictionary<string, object>>();
+                    int photoOrder = 0;
+
+                    foreach (var child in childItems)
+                    {
+                        string cTitle = child.ContainsKey("title") ? child["title"].ToString() : "";
+                        int cPrice = child.ContainsKey("price") ? Convert.ToInt32(child["price"]) : 0;
+                        childTitlesList.Add("【" + cTitle + "】¥" + cPrice.ToString("N0"));
+                        originalTotal += cPrice;
+
+                        if (child.ContainsKey("bundleLevel"))
+                        {
+                            int lvl = Convert.ToInt32(child["bundleLevel"]);
+                            if (lvl > maxChildLevel) maxChildLevel = lvl;
+                        }
+
+                        // 元の子商品の写真レコードを参照（ハッシュ・ID・ファイル複製は一切行わない）
+                        if (child.ContainsKey("photos") && child["photos"] is System.Collections.IEnumerable)
+                        {
+                            foreach (var pObj in (System.Collections.IEnumerable)child["photos"])
+                            {
+                                var pDict = pObj as Dictionary<string, object>;
+                                if (pDict != null)
+                                {
+                                    var photoCopy = new Dictionary<string, object>(pDict);
+                                    photoCopy["id"] = 0;
+                                    photoCopy["itemId"] = newParentId;
+                                    photoCopy["displayOrder"] = photoOrder++;
+                                    photoCopy["childItemId"] = child["id"];
+                                    photoCopy["childItemTitle"] = cTitle;
+                                    parentPhotos.Add(photoCopy);
+                                }
+                            }
+                        }
+
+                        // 子商品のステータスを MERGED に更新（子商品ID・出品日時・写真はそのまま保持）
+                        child["status"] = "MERGED";
+                        child["statusLabel"] = "まとめ売却済";
+                        child["mergedParentId"] = newParentId;
+                        child["updatedAt"] = now;
+                    }
+
+                    int profit = totalSoldPrice - newShippingCost - (totalSoldPrice * newFeeRatePercent / 100) - newExpenseCost;
+
+                    var parentDict = new Dictionary<string, object>
+                    {
+                        { "id", newParentId },
+                        { "title", mergedTitle },
+                        { "description", mergedDescription },
+                        { "status", asStatus },
+                        { "statusLabel", asStatus == "SOLD" ? "売却済み" : "出品中" },
+                        { "price", totalSoldPrice },
+                        { "soldPrice", asStatus == "SOLD" ? totalSoldPrice : 0 },
+                        { "profit", profit },
+                        { "shippingCost", newShippingCost },
+                        { "feeRatePercent", newFeeRatePercent },
+                        { "expenseCost", newExpenseCost },
+                        { "useCustomSettings", true },
+                        { "mergedChildCount", childItemIds.Count },
+                        { "mergedChildTitles", string.Join(", ", childTitlesList.ToArray()) },
+                        { "originalTotalBundlePrice", originalTotal },
+                        { "discountAmount", Math.Max(0, originalTotal - totalSoldPrice) },
+                        { "bundleLevel", maxChildLevel + 1 },
+                        { "createdAt", now },
+                        { "updatedAt", now },
+                        { "isShared", true },
+                        { "isDeleted", false },
+                        { "photos", parentPhotos }
+                    };
+
+                    itemsDb.Add(parentDict);
+
+                    try
+                    {
+                        string safeTitle = mergedTitle;
+                        foreach (char c in Path.GetInvalidFileNameChars()) safeTitle = safeTitle.Replace(c, '_');
+                        string parentDir = Path.Combine(syncDir, newParentId + "_" + safeTitle);
+                        Directory.CreateDirectory(parentDir);
+                        string txtPath = Path.Combine(parentDir, "商品情報_説明文.txt");
+                        string txtContent = "【まとめ商品ID】 " + newParentId + "\n【タイトル】 " + mergedTitle + "\n【販売価格】 ¥" + totalSoldPrice.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【内訳 (" + childItemIds.Count + "点)】\n" + string.Join("\n", childTitlesList.ToArray()) + "\n\n--- 商品説明 ---\n" + mergedDescription;
+                        File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("まとめ商品txt作成例外: " + ex.Message);
+                    }
+                }
+
+                SaveItemsDbToDisk();
+
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "status", "ok" },
+                    { "parentId", newParentId },
+                    { "message", "まとめ買い商品を作成しました" }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleMergeItems エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleUnmergeItem(HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length);
+            idStr = idStr.Substring(0, idStr.Length - "/unmerge".Length).Trim();
+            int parentId;
+            if (!int.TryParse(idStr, out parentId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid Parent ID" } });
+                return;
+            }
+
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            int restoredCount = 0;
+
+            lock (lockObj)
+            {
+                var parentItem = itemsDb.Find(i => Convert.ToInt32(i["id"]) == parentId);
+                if (parentItem == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Parent item not found" } });
+                    return;
+                }
+
+                // 子商品をすべて出品中 (LISTED) に復元し、mergedParentId を解除
+                foreach (var item in itemsDb)
+                {
+                    if (item.ContainsKey("mergedParentId") && item["mergedParentId"] != null)
+                    {
+                        int mPid = Convert.ToInt32(item["mergedParentId"]);
+                        if (mPid == parentId)
+                        {
+                            item["status"] = "LISTED";
+                            item["statusLabel"] = "出品中";
+                            item["mergedParentId"] = null;
+                            item["updatedAt"] = now;
+                            restoredCount++;
+                        }
+                    }
+                }
+
+                // 親商品は論理削除（スマホへの削除伝播とゾンビ復活防止のため）
+                parentItem["isDeleted"] = true;
+                parentItem["updatedAt"] = now;
+            }
+
+            SaveItemsDbToDisk();
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "restoredCount", restoredCount },
+                { "message", "まとめ買いを解除し、個別商品を復元しました" }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleUnmergeItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleAddPhoto(HttpListenerRequest req, HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length);
+            idStr = idStr.Substring(0, idStr.Length - "/photos/add".Length).Trim();
+            int itemId;
+            if (!int.TryParse(idStr, out itemId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid ID" } });
+                return;
+            }
+
+            byte[] photoBytes;
+            using (var ms = new MemoryStream())
+            {
+                req.InputStream.CopyTo(ms);
+                photoBytes = ms.ToArray();
+            }
+
+            if (photoBytes.Length == 0)
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "画像データが空です" } });
+                return;
+            }
+
+            string computedHash;
+            using (var md5 = MD5.Create())
+            {
+                byte[] hashBytes = md5.ComputeHash(photoBytes);
+                computedHash = BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+            }
+
+            lock (lockObj)
+            {
+                var item = itemsDb.Find(i => Convert.ToInt32(i["id"]) == itemId);
+                if (item == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Item not found" } });
+                    return;
+                }
+
+                string title = item.ContainsKey("title") ? item["title"].ToString() : "";
+                foreach (char c in Path.GetInvalidFileNameChars()) title = title.Replace(c, '_');
+
+                string itemFolder = Path.Combine(syncDir, itemId + "_" + title);
+                Directory.CreateDirectory(itemFolder);
+
+                string photoFileName = "photo_" + computedHash.Substring(0, 8) + ".jpg";
+                string photoFilePath = Path.Combine(itemFolder, photoFileName);
+                if (!File.Exists(photoFilePath))
+                {
+                    File.WriteAllBytes(photoFilePath, photoBytes);
+                }
+
+                hashToFilePathMap[computedHash] = photoFilePath;
+
+                var photosList = item.ContainsKey("photos") && item["photos"] is List<Dictionary<string, object>>
+                    ? (List<Dictionary<string, object>>)item["photos"]
+                    : new List<Dictionary<string, object>>();
+
+                bool exists = false;
+                foreach (var p in photosList)
+                {
+                    if (p.ContainsKey("md5Hash") && string.Equals(p["md5Hash"] != null ? p["md5Hash"].ToString() : "", computedHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+
+                if (!exists)
+                {
+                    photosList.Add(new Dictionary<string, object>
+                    {
+                        { "id", 0 },
+                        { "itemId", itemId },
+                        { "photoUrl", "" },
+                        { "md5Hash", computedHash },
+                        { "displayOrder", photosList.Count }
+                    });
+                    item["photos"] = photosList;
+                    item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                }
+            }
+
+            SaveItemsDbToDisk();
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "hash", computedHash },
+                { "message", "写真を追加しました" }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleAddPhoto エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

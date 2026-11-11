@@ -396,6 +396,13 @@ class PcServerClient(
                     val price = obj.optInt("price", 0)
                     val soldPrice = obj.optInt("soldPrice", 0)
 
+                    val mergedParentId = if (obj.has("mergedParentId") && !obj.isNull("mergedParentId")) obj.getInt("mergedParentId") else null
+                    val mergedChildCount = obj.optInt("mergedChildCount", 0)
+                    val mergedChildTitles = obj.optString("mergedChildTitles", "")
+                    val originalTotalBundlePrice = obj.optInt("originalTotalBundlePrice", 0)
+                    val discountAmount = obj.optInt("discountAmount", 0)
+                    val bundleLevel = obj.optInt("bundleLevel", 0)
+
                     if (existing != null) {
                         val updated = existing.item.copy(
                             title = title,
@@ -403,6 +410,12 @@ class PcServerClient(
                             status = status,
                             price = price,
                             soldPrice = soldPrice,
+                            mergedParentId = mergedParentId,
+                            mergedChildCount = if (mergedChildCount > 0) mergedChildCount else existing.item.mergedChildCount,
+                            mergedChildTitles = if (mergedChildTitles.isNotBlank()) mergedChildTitles else existing.item.mergedChildTitles,
+                            originalTotalBundlePrice = if (originalTotalBundlePrice > 0) originalTotalBundlePrice else existing.item.originalTotalBundlePrice,
+                            discountAmount = if (discountAmount > 0) discountAmount else existing.item.discountAmount,
+                            bundleLevel = if (bundleLevel > 0) bundleLevel else existing.item.bundleLevel,
                             updatedAt = System.currentTimeMillis()
                         )
                         dao.updateItem(updated)
@@ -414,11 +427,41 @@ class PcServerClient(
                             status = status,
                             price = price,
                             soldPrice = soldPrice,
+                            shippingCost = obj.optInt("shippingCost", 210),
+                            feeRatePercent = obj.optInt("feeRatePercent", 5),
+                            expenseCost = obj.optInt("expenseCost", 55),
+                            useCustomSettings = obj.optBoolean("useCustomSettings", false),
+                            mergedParentId = mergedParentId,
+                            mergedChildCount = mergedChildCount,
+                            mergedChildTitles = mergedChildTitles,
+                            originalTotalBundlePrice = originalTotalBundlePrice,
+                            discountAmount = discountAmount,
+                            bundleLevel = bundleLevel,
                             isShared = true,
                             createdAt = System.currentTimeMillis(),
                             updatedAt = System.currentTimeMillis()
                         )
                         dao.insertItem(newItem)
+
+                        val photosArray = obj.optJSONArray("photos")
+                        if (photosArray != null && photosArray.length() > 0) {
+                            val newPhotoEntities = mutableListOf<com.example.myapplication.data.local.PhotoEntity>()
+                            for (pIdx in 0 until photosArray.length()) {
+                                val pObj = photosArray.getJSONObject(pIdx)
+                                val md5 = pObj.optString("md5Hash", "")
+                                newPhotoEntities.add(
+                                    com.example.myapplication.data.local.PhotoEntity(
+                                        itemId = id,
+                                        filePath = "",
+                                        md5Hash = md5,
+                                        displayOrder = pIdx
+                                    )
+                                )
+                            }
+                            if (newPhotoEntities.isNotEmpty()) {
+                                dao.insertPhotos(newPhotoEntities)
+                            }
+                        }
                     }
                 }
                 true
