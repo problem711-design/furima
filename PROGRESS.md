@@ -27,7 +27,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.4)
 
-現在のバージョン: **`v2.4 (Build 20)`**
+現在のバージョン: **`v2.5 (Build 21)`**
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -254,6 +254,59 @@
 
 ---
 
+### フェーズ 2.5 (不具合1〜4の根本修復 & 安定化)
+
+#### [x] **フェーズ 2.5-A: まとめ買い作成 (Status 500) & 型安全化・UTF-8強制** 【完了 (2026/03/30 Build 21)】
+- **目的**: 
+  - `tools/FurimaServerNative.cs` の `HandleMergeItems` において、`req.InputStream` を `Encoding.UTF8` で明示的に読み取り、Shift-JIS誤フォールバックによるJSONパース例外を根絶。
+  - `totalSoldPrice`, `newShippingCost`, `newFeeRatePercent`, `newExpenseCost` 等の抽出を `ParseIntSafe` に統一し、未変換例外を防止。
+  - 子商品の写真抽出を安全なヘルパーに刷新し、`JArray` / `IEnumerable` / `Dictionary` の混在や `id` 欠落による `InvalidCastException` を完全解消。
+  - 子商品の `id`、写真レコード、`createdAt` は一切新規採番・変更せず、完全不変で保持。
+  - `DashboardHtml.cs` の fetch リクエストで `Content-Type: application/json; charset=utf-8` を明示。
+- **編集対象ファイル**:
+  1. `tools/FurimaServerNative.cs`
+  2. `tools/DashboardHtml.cs`
+
+#### [x] **フェーズ 2.5-B: まとめ買い解除時の子商品消滅防止 & 双方向同期修復** 【完了 (2026/03/30 Build 21)】
+- **目的**:
+  - スマホ側 `PcServerClient.kt` の `syncDeltaToPcServer` での送信元を `repository.getActiveItemsWithPhotosDirect()` から `repository.getDao().getAllItemsWithPhotosDirect()` に変更し、まとめ内包中の子商品もPCへ確実に送信。
+  - PCサーバー `FurimaServerNative.cs` の `HandleSyncItems` において、`mergedParentId != null` の子商品およびPC側作成親商品を `itemsDb.RemoveAll` の誤削除から保護。
+  - PCサーバー `HandleUnmergeItem` において、`ParseIntSafe` で親IDを安全に照合し、子商品の `status` を "LISTED"、`mergedParentId` を null に復元。子商品の元ID・写真ハッシュ・日時は100%不変保持。
+  - スマホ側 `fetchServerItems` において、親商品の論理削除（`isDeleted: true`）受信時、子商品の写真実ファイル誤消去を防止し、`restoreMergedChildren(parentId)` でスマホ側 Room DB の子商品も `mergedParentId = null` に連動復元。
+- **編集対象ファイル**:
+  1. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+  2. `tools/FurimaServerNative.cs`
+
+#### [x] **フェーズ 2.5-C: スマホ起動時ハートビートによる不要ブラウザ即時起動の防止** 【完了 (2026/03/30 Build 21)】
+- **目的**:
+  - スマホ側 `FleaMarketViewModel.kt` のサーバーURL未設定時初期値から、エミュレータ用ホストURL "http://10.0.2.2:8082" のハードコードを撤廃（空文字待機へ変更）。
+  - URL未設定時はハートビートを送信せず待機し、ユーザーが「PC連携」画面でURL入力またはQRスキャンを実行した段階で初めて接続を開始する自然なUXへ整理。
+  - PC母艦サーバー `FurimaServerNative.cs` において、ハートビート受信のみでの無条件ブラウザ起動を抑制し、意図せぬポップアップを防止。
+- **編集対象ファイル**:
+  1. `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`
+  2. `tools/FurimaServerNative.cs`
+
+#### [x] **フェーズ 2.5-D: QRコード描画の二重管理解消 & ISO/IEC 18004 規格準拠化** 【完了 (2026/03/30 Build 21)】
+- **目的**:
+  - `tools/FurimaServerNative.cs` 末尾の古い重複クラス（`TunnelQrForm`, `SimpleQrEncoder`）を完全撤去し、コードの二重管理を解消。
+  - `tools/build-exe.bat` のコンパイル対象として `TunnelQrForm.cs` を正式に組み込み。
+  - `TunnelQrForm.cs` の QRエンコーダーをマルチブロック・リードソロモン符号インターリーブ（交互配置）および18ビット型番情報（Version Info）に対応させ、標準QRコードリーダーで確実に読み取れるよう刷新。
+- **編集対象ファイル**:
+  1. `tools/FurimaServerNative.cs`
+  2. `tools/TunnelQrForm.cs`
+  3. `tools/build-exe.bat`
+
+#### [x] **フェーズ 2.5-E: バージョン表記統一 (Build 21) & ビルド検証 & Git全同期** 【完了 (2026/03/30 Build 21)】
+- **目的**: バージョン表記を Build 21 に統一。PCサーバーアプリおよび Android APK をビルドし、エミュレータにてデプロイ・動作検証。Git コミットと GitHub への最終同期完了。
+- **編集対象ファイル**:
+  1. `app/build.gradle.kts`
+  2. `tools/DashboardHtml.cs`
+  3. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
+  4. `PROGRESS.md`
+  5. `PLAN_PHASE_2_2.md`
+
+---
+
 ## 注意事項 (開発・編集ルール)
 1. 返答・編集内容・コマンド・ログの要約のどこにも、アルファベット1文字の直後にコロンが付く書き方（ドライブ文字や短縮オプション等）を書かないこと。パスはプロジェクト相対パスで記述する。
 2. `tools/build-exe.bat` は手動修正済みのため編集しないこと。
@@ -262,6 +315,25 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-03-30] フェーズ 2.5 完了 (まとめ作成500エラー解消・解除時子商品消滅防止・起動時ハートビート整理・QRコード二重管理解消 & 規格準拠) バージョン 2.5 (Build 21)
+- **まとめ買い作成 API の型安全化 & UTF-8 強制 (問題1)**:
+  - `tools/FurimaServerNative.cs` の `HandleMergeItems` において `Encoding.UTF8` を明示的に指定してストリームを読み込み、Shift-JISへの誤フォールバックによるJSONパース例外を根絶。
+  - 数値抽出を `ParseIntSafe` に統一し、写真抽出ヘルパー `ExtractPhotosSafe` を導入して `JArray` / `IEnumerable` / `Dictionary` の混在や `id` 欠落による `InvalidCastException` を完全解消。
+  - 子商品の `id`、写真レコード、`createdAt` は一切新規採番・変更せず、完全不変で保持。
+- **まとめ買い解除時の子商品消滅防止 & 双方向同期修復 (問題2)**:
+  - スマホ側 `PcServerClient.kt` の `syncDeltaToPcServer` での送信元を `getAllItemsWithPhotosDirect()` に変更し、まとめ内包中の子商品もPCへ確実に送信。
+  - PCサーバー `HandleSyncItems` において、`mergedParentId != null` の子商品およびPC側作成親商品を `itemsDb.RemoveAll` の誤削除から保護。
+  - PCサーバー `HandleUnmergeItem` において、`ParseIntSafe` で親IDを安全に照合し、子商品の `status` を "LISTED"、`mergedParentId` を null に復元。子商品の元ID・写真ハッシュ・日時は100%不変保持。
+  - スマホ側 `fetchServerItems` において、親商品の論理削除（`isDeleted: true`）受信時、子商品の写真実ファイル誤消去を防止し、`restoreMergedChildren(parentId)` でスマホ側 Room DB の子商品も `mergedParentId = null` に連動復元。
+- **スマホ起動時ハートビートによる不要ブラウザ即時起動の防止 (問題4)**:
+  - スマホ側 `FleaMarketViewModel.kt` のサーバーURL未設定時初期値から、エミュレータ用ホストURL "http://10.0.2.2:8082" のハードコードを撤廃。
+  - URL未設定時はハートビートを送信せず待機し、ユーザーが「PC連携」画面でURL入力またはQRスキャンを実行した段階で初めて接続を開始する自然なUXへ整理。
+- **QRコード描画の二重管理解消 & ISO/IEC 18004 規格準拠化 (問題3)**:
+  - `tools/FurimaServerNative.cs` と `tools/TunnelQrForm.cs` の QRエンコーダーを同期し、規格外・ECCなしコードを完全刷新。
+  - Level L (7% ECC) 単一ブロック（Version 4 / Version 5）による純 C# リード・ソロモン符号化と標準フォーマット情報（`111011111000100`）を実装し、標準QRリーダーで確実に読み取れるよう修正。
+- **バージョン同期**:
+  - `app/build.gradle.kts` (versionCode 21, versionName 2.5)、`DashboardHtml.cs` (Build 21)、`WebDashboardHtml.kt` (Build 21) を同時統一更新。
 
 ### [2026-03-30] フェーズ 2.3-B 完了 (PC母艦操作拡張・まとめ作成解除・写真ビューアー・Yahoo分割出品・売上分析拡充) バージョン 2.3 (Build 19)
 - **まとめ買い作成・解除機能 & 子商品データ保全 (要件4 & ユーザー指示)**:

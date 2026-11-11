@@ -561,7 +561,15 @@ class FurimaServerNative
                         }
 
                         // スマホ側に存在しない古い商品を itemsDb から一括除去 (完全同期)
-                        itemsDb.RemoveAll(i => i != null && i.ContainsKey("id") && !activeIds.Contains(Convert.ToInt32(i["id"])));
+                        // ※ ただし、まとめ内包中の子商品 (mergedParentId != null) や、PC側で作成されたまとめ親商品は誤削除から保護
+                        itemsDb.RemoveAll(i => {
+                            if (i == null || !i.ContainsKey("id")) return false;
+                            int itemId = ParseIntSafe(i["id"]);
+                            if (activeIds.Contains(itemId)) return false;
+                            if (i.ContainsKey("mergedParentId") && ParseIntSafe(i["mergedParentId"], 0) > 0) return false;
+                            if (i.ContainsKey("mergedChildCount") && ParseIntSafe(i["mergedChildCount"], 0) > 0 && !(bool)(i.ContainsKey("isDeleted") && (bool)i["isDeleted"])) return false;
+                            return true;
+                        });
 
                         foreach (JObject item in itemsArr)
                         {
@@ -1131,11 +1139,69 @@ class FurimaServerNative
         try { return Convert.ToInt32(val); } catch { return defaultVal; }
     }
 
+    private static void ExtractPhotosSafe(object photosObj, int parentId, int childId, string childTitle, ref int photoOrder, List<Dictionary<string, object>> parentPhotos)
+    {
+        if (photosObj == null) return;
+        if (photosObj is Newtonsoft.Json.Linq.JArray)
+        {
+            var jArr = (Newtonsoft.Json.Linq.JArray)photosObj;
+            foreach (var token in jArr)
+            {
+                if (token is Newtonsoft.Json.Linq.JObject)
+                {
+                    var pObj = (Newtonsoft.Json.Linq.JObject)token;
+                    int pId = ParseIntSafe(pObj["id"], 0);
+                    string md5 = (pObj.Value<string>("md5Hash") ?? "").Trim().ToLower();
+                    if (!string.IsNullOrEmpty(md5))
+                    {
+                        parentPhotos.Add(new Dictionary<string, object>
+                        {
+                            { "id", pId > 0 ? pId : (parentId * 1000 + photoOrder) },
+                            { "itemId", parentId },
+                            { "md5Hash", md5 },
+                            { "photoUrl", "/api/photos/" + md5 },
+                            { "displayOrder", photoOrder++ },
+                            { "childItemId", childId },
+                            { "childItemTitle", childTitle }
+                        });
+                    }
+                }
+            }
+        }
+        else if (photosObj is System.Collections.IEnumerable)
+        {
+            var enumPhotos = (System.Collections.IEnumerable)photosObj;
+            foreach (var pObj in enumPhotos)
+            {
+                var pDict = pObj as Dictionary<string, object>;
+                if (pDict != null)
+                {
+                    int pId = pDict.ContainsKey("id") ? ParseIntSafe(pDict["id"], 0) : 0;
+                    string md5 = (pDict.ContainsKey("md5Hash") && pDict["md5Hash"] != null ? pDict["md5Hash"].ToString() : "").Trim().ToLower();
+                    if (!string.IsNullOrEmpty(md5))
+                    {
+                        parentPhotos.Add(new Dictionary<string, object>
+                        {
+                            { "id", pId > 0 ? pId : (parentId * 1000 + photoOrder) },
+                            { "itemId", parentId },
+                            { "md5Hash", md5 },
+                            { "photoUrl", "/api/photos/" + md5 },
+                            { "displayOrder", photoOrder++ },
+                            { "childItemId", childId },
+                            { "childItemTitle", childTitle }
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     private static void HandleMergeItems(HttpListenerRequest req, HttpListenerResponse res)
     {
         try
         {
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+            // UTF-8 エンコーディングを強制し、Shift-JIS への誤フォールバックによるパース破損を根絶
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
@@ -1151,17 +1217,25 @@ class FurimaServerNative
                 List<int> childItemIds = new List<int>();
                 foreach (var token in childIdsArray)
                 {
-                    childItemIds.Add(token.Value<int>());
+                    int cid = ParseIntSafe(token, 0);
+                    if (cid > 0) childItemIds.Add(cid);
+                }
+
+                if (childItemIds.Count < 2)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "有効な商品IDが2点以上必要です" } });
+                    return;
                 }
 
                 string mergedTitle = json.Value<string>("mergedTitle") ?? "まとめ買い商品";
                 string mergedDescription = json.Value<string>("mergedDescription") ?? "";
-                int totalSoldPrice = json.Value<int>("totalSoldPrice");
-                int newShippingCost = json.Value<int>("newShippingCost");
+                int totalSoldPrice = ParseIntSafe(json["totalSoldPrice"], 0);
+                int newShippingCost = ParseIntSafe(json["newShippingCost"], 210);
                 if (newShippingCost <= 0) newShippingCost = 210;
-                int newFeeRatePercent = json.Value<int>("newFeeRatePercent");
+                int newFeeRatePercent = ParseIntSafe(json["newFeeRatePercent"], 5);
                 if (newFeeRatePercent <= 0) newFeeRatePercent = 5;
-                int newExpenseCost = json.Value<int>("newExpenseCost");
+                int newExpenseCost = ParseIntSafe(json["newExpenseCost"], 55);
                 if (newExpenseCost <= 0) newExpenseCost = 55;
                 string asStatus = json.Value<string>("asStatus") ?? "LISTED";
 
@@ -1212,47 +1286,10 @@ class FurimaServerNative
                             if (lvl > maxChildLevel) maxChildLevel = lvl;
                         }
 
-                        // 元の子商品の写真レコードを参照
+                        // 元の子商品の写真レコードを参照（※子商品自身のIDや写真情報は一切変更せず完全不変）
                         if (child.ContainsKey("photos") && child["photos"] != null)
                         {
-                            var photosObj = child["photos"];
-                            if (photosObj is JArray)
-                            {
-                                var jPhotos = (JArray)photosObj;
-                                foreach (JObject pObj in jPhotos)
-                                {
-                                    int pId = pObj.Value<int>("id");
-                                    string md5Hash = (pObj.Value<string>("md5Hash") ?? "").Trim().ToLower();
-                                    parentPhotos.Add(new Dictionary<string, object>
-                                    {
-                                        { "id", pId },
-                                        { "itemId", newParentId },
-                                        { "md5Hash", md5Hash },
-                                        { "photoUrl", "/api/photos/" + md5Hash },
-                                        { "displayOrder", photoOrder++ },
-                                        { "childItemId", ParseIntSafe(child["id"]) },
-                                        { "childItemTitle", cTitle }
-                                    });
-                                }
-                            }
-                            else if (photosObj is System.Collections.IEnumerable)
-                            {
-                                var enumPhotos = (System.Collections.IEnumerable)photosObj;
-                                foreach (var pObj in enumPhotos)
-                                {
-                                    var pDict = pObj as Dictionary<string, object>;
-                                    if (pDict != null)
-                                    {
-                                        var photoCopy = new Dictionary<string, object>(pDict);
-                                        photoCopy["id"] = pDict.ContainsKey("id") ? ParseIntSafe(pDict["id"]) : 0;
-                                        photoCopy["itemId"] = newParentId;
-                                        photoCopy["displayOrder"] = photoOrder++;
-                                        photoCopy["childItemId"] = ParseIntSafe(child["id"]);
-                                        photoCopy["childItemTitle"] = cTitle;
-                                        parentPhotos.Add(photoCopy);
-                                    }
-                                }
-                            }
+                            ExtractPhotosSafe(child["photos"], newParentId, ParseIntSafe(child["id"]), cTitle, ref photoOrder, parentPhotos);
                         }
 
                         // 子商品のステータスを MERGED に更新（子商品ID・出品日時・写真はそのまま保持）
@@ -1299,7 +1336,16 @@ class FurimaServerNative
                         string parentDir = Path.Combine(syncDir, newParentId + "_" + safeTitle);
                         Directory.CreateDirectory(parentDir);
                         string txtPath = Path.Combine(parentDir, "商品情報_説明文.txt");
-                        string txtContent = "【まとめ商品ID】 " + newParentId + "\n【タイトル】 " + mergedTitle + "\n【販売価格】 ¥" + totalSoldPrice.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【内訳 (" + childItemIds.Count + "点)】\n" + string.Join("\n", childTitlesList.ToArray()) + "\n\n--- 商品説明 ---\n" + mergedDescription;
+                        string txtContent = "【まとめ商品ID】 " + newParentId + "
+【タイトル】 " + mergedTitle + "
+【販売価格】 ¥" + totalSoldPrice.ToString("N0") + "
+【純利益】 ¥" + profit.ToString("N0") + "
+【内訳 (" + childItemIds.Count + "点)】
+" + string.Join("
+", childTitlesList.ToArray()) + "
+
+--- 商品説明 ---
+" + mergedDescription;
                         File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
                     }
                     catch (Exception ex)
@@ -1345,7 +1391,7 @@ class FurimaServerNative
 
             lock (lockObj)
             {
-                var parentItem = itemsDb.Find(i => Convert.ToInt32(i["id"]) == parentId);
+                var parentItem = itemsDb.Find(i => ParseIntSafe(i["id"]) == parentId);
                 if (parentItem == null)
                 {
                     res.StatusCode = 404;
@@ -1354,11 +1400,12 @@ class FurimaServerNative
                 }
 
                 // 子商品をすべて出品中 (LISTED) に復元し、mergedParentId を解除
+                // ※ 子商品のID、写真ハッシュ、作成日時などは一切変更せず完全不変保持
                 foreach (var item in itemsDb)
                 {
                     if (item.ContainsKey("mergedParentId") && item["mergedParentId"] != null)
                     {
-                        int mPid = Convert.ToInt32(item["mergedParentId"]);
+                        int mPid = ParseIntSafe(item["mergedParentId"], 0);
                         if (mPid == parentId)
                         {
                             item["status"] = "LISTED";
@@ -1538,6 +1585,16 @@ class FurimaServerNative
     }
 }
 
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.IO;
+using System.Text;
+using System.Windows.Forms;
+
 public class TunnelQrForm : Form
 {
     private Label lblStatus;
@@ -1565,7 +1622,7 @@ public class TunnelQrForm : Form
         this.currentStoreId = storeId;
         this.currentSyncDir = syncDir;
         this.currentLocalUrl = localUrl;
-        this.currentToken = token;
+        this.currentToken = !string.IsNullOrEmpty(token) ? token : SyncStore.AuthToken;
 
         InitializeComponent();
         InitializeTrayIcon();
@@ -1632,7 +1689,7 @@ public class TunnelQrForm : Form
         picQrCode = new PictureBox();
         picQrCode.Size = new Size(240, 240);
         picQrCode.SizeMode = PictureBoxSizeMode.Zoom;
-        picQrCode.Anchor = AnchorStyles.None;
+        picQrCode.Anchor = AnchorStyles.Center;
         picQrCode.BorderStyle = BorderStyle.FixedSingle;
         mainLayout.Controls.Add(picQrCode, 0, 6);
         mainLayout.SetColumnSpan(picQrCode, 2);
@@ -1650,6 +1707,7 @@ public class TunnelQrForm : Form
         FlowLayoutPanel btnPanel = new FlowLayoutPanel();
         btnPanel.Dock = DockStyle.Fill;
         btnPanel.FlowDirection = FlowDirection.LeftToRight;
+        btnPanel.Alignment = ToolStripItemAlignment.Right;
         btnPanel.Padding = new Padding(0, 5, 0, 0);
 
         Button btnOpenBrowser = new Button();
@@ -1916,24 +1974,29 @@ public class BrowserSelectDialog : Form
 }
 
 /// <summary>
-/// 外部DLL依存なしでQRコードBitmapを自前生成する軽量エンコーダクラス
+/// 外部DLL依存なしでISO/IEC 18004規格準拠の正則QRコードBitmapを生成する軽量純C#エンコーダ
+/// (8bit Byte Mode, Reed-Solomon Error Correction, Format Info 15-bit BCH, Mask Pattern 0)
 /// </summary>
 public static class SimpleQrEncoder
 {
-    public static Bitmap GenerateQrBitmap(string content, int width, int height)
+    public static Bitmap GenerateQrBitmap(string content, int targetWidth, int targetHeight)
     {
-        bool[,] modules = EncodeToMatrix(content);
-        int matrixSize = modules.GetLength(0);
+        bool[,] matrix = EncodeToMatrix(content);
+        int matrixSize = matrix.GetLength(0);
 
-        Bitmap bmp = new Bitmap(width, height);
+        int quietZone = 4;
+        int fullSize = matrixSize + quietZone * 2;
+        int scale = Math.Max(1, Math.Min(targetWidth / fullSize, targetHeight / fullSize));
+        int imgWidth = fullSize * scale;
+        int imgHeight = fullSize * scale;
+
+        Bitmap bmp = new Bitmap(imgWidth, imgHeight);
         using (Graphics g = Graphics.FromImage(bmp))
         {
             g.Clear(Color.White);
             g.InterpolationMode = InterpolationMode.NearestNeighbor;
-
-            float scale = Math.Min((float)width / (matrixSize + 4), (float)height / (matrixSize + 4));
-            float offsetX = (width - matrixSize * scale) / 2f;
-            float offsetY = (height - matrixSize * scale) / 2f;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.SmoothingMode = SmoothingMode.None;
 
             using (SolidBrush blackBrush = new SolidBrush(Color.Black))
             {
@@ -1941,9 +2004,9 @@ public static class SimpleQrEncoder
                 {
                     for (int c = 0; c < matrixSize; c++)
                     {
-                        if (modules[r, c])
+                        if (matrix[r, c])
                         {
-                            g.FillRectangle(blackBrush, offsetX + c * scale, offsetY + r * scale, scale + 0.5f, scale + 0.5f);
+                            g.FillRectangle(blackBrush, (c + quietZone) * scale, (r + quietZone) * scale, scale, scale);
                         }
                     }
                 }
@@ -1954,76 +2017,248 @@ public static class SimpleQrEncoder
 
     private static bool[,] EncodeToMatrix(string content)
     {
-        byte[] dataBytes = Encoding.UTF8.GetBytes(content);
+        byte[] rawBytes = Encoding.UTF8.GetBytes(content);
+
+        // ISO/IEC 18004 Level L (7% ECC) Single-block configurations
+        // Version 4-L: 80 data, 20 ECC (capacity 78 bytes)
+        // Version 5-L: 108 data, 26 ECC (capacity 106 bytes)
         int version = 4;
-        if (dataBytes.Length > 62) version = 7;
-        if (dataBytes.Length > 120) version = 10;
+        int dataCapacity = 80;
+        int eccCount = 20;
+
+        if (rawBytes.Length > 78)
+        {
+            version = 5;
+            dataCapacity = 108;
+            eccCount = 26;
+        }
 
         int size = 17 + version * 4;
         bool[,] matrix = new bool[size, size];
         bool[,] reserved = new bool[size, size];
 
+        // 1. Finder patterns (3 corners)
         PlaceFinderPattern(matrix, reserved, 0, 0);
         PlaceFinderPattern(matrix, reserved, size - 7, 0);
         PlaceFinderPattern(matrix, reserved, 0, size - 7);
 
+        // 2. Timing patterns
         for (int i = 8; i < size - 8; i++)
         {
-            matrix[6, i] = (i % 2 == 0);
-            reserved[6, i] = true;
-            matrix[i, 6] = (i % 2 == 0);
-            reserved[i, 6] = true;
+            if (!reserved[6, i]) { matrix[6, i] = (i % 2 == 0); reserved[6, i] = true; }
+            if (!reserved[i, 6]) { matrix[i, 6] = (i % 2 == 0); reserved[i, 6] = true; }
         }
 
-        if (version >= 2)
+        // 3. Alignment patterns
+        int[] alignPos = GetAlignmentPositions(version);
+        foreach (int r in alignPos)
         {
-            int alignPos = size - 7;
-            PlaceAlignmentPattern(matrix, reserved, alignPos - 2, alignPos - 2);
+            foreach (int c in alignPos)
+            {
+                if (!reserved[r, c])
+                {
+                    PlaceAlignmentPattern(matrix, reserved, r - 2, c - 2);
+                }
+            }
         }
 
+        // 4. Reserve Format Information
+        ReserveFormatInfo(matrix, reserved, size);
+
+        // 5. Build payload (8-bit byte mode + count + payload + term + pad + RS ECC)
+        byte[] codewords = BuildCodewords(rawBytes, dataCapacity, eccCount);
+
+        // 6. Convert Codewords to Bits
         List<bool> bits = new List<bool>();
-        bits.Add(false); bits.Add(true); bits.Add(false); bits.Add(false);
-
-        int count = dataBytes.Length;
-        for (int i = 7; i >= 0; i--) bits.Add(((count >> i) & 1) == 1);
-
-        foreach (byte b in dataBytes)
+        foreach (byte b in codewords)
         {
             for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
         }
 
-        for (int i = 0; i < 4; i++) bits.Add(false);
+        // 7. Place Data Bits & Apply Mask Pattern 0: (row + col) % 2 == 0
+        PlaceDataBits(matrix, reserved, bits, size);
 
-        int bitIdx = 0;
-        int direction = -1;
-        int x = size - 1;
-        while (x > 0)
+        // 8. Place Format Information (Level L, Mask 0: 111011111000100)
+        PlaceFormatInfo(matrix, size);
+
+        return matrix;
+    }
+
+    private static byte[] BuildCodewords(byte[] data, int maxDataLen, int eccLen)
+    {
+        List<bool> bits = new List<bool>();
+
+        // Mode: 8bit Byte Mode (0100)
+        bits.Add(false); bits.Add(true); bits.Add(false); bits.Add(false);
+
+        // Character count indicator (8-bit for version 1-9 byte mode)
+        int len = data.Length;
+        for (int i = 7; i >= 0; i--) bits.Add(((len >> i) & 1) == 1);
+
+        // Data payload
+        foreach (byte b in data)
         {
-            if (x == 6) x--;
-            for (int y = (direction == -1 ? size - 1 : 0); y >= 0 && y < size; y += direction)
+            for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
+        }
+
+        // Terminator (up to 4 zero bits)
+        for (int i = 0; i < 4 && bits.Count < maxDataLen * 8; i++) bits.Add(false);
+
+        // Byte align
+        while (bits.Count % 8 != 0) bits.Add(false);
+
+        // Padding bytes (0xEC, 0x11)
+        byte[] padBytes = new byte[] { 0xEC, 0x11 };
+        int padIdx = 0;
+        while (bits.Count / 8 < maxDataLen)
+        {
+            byte pad = padBytes[padIdx % 2];
+            for (int i = 7; i >= 0; i--) bits.Add(((pad >> i) & 1) == 1);
+            padIdx++;
+        }
+
+        byte[] dataCodewords = new byte[maxDataLen];
+        for (int i = 0; i < maxDataLen; i++)
+        {
+            byte b = 0;
+            for (int bit = 0; bit < 8; bit++)
             {
-                for (int col = x; col > x - 2; col--)
+                if (bits[i * 8 + bit]) b |= (byte)(1 << (7 - bit));
+            }
+            dataCodewords[i] = b;
+        }
+
+        byte[] eccCodewords = CalculateReedSolomonECC(dataCodewords, eccLen);
+
+        byte[] fullResult = new byte[maxDataLen + eccLen];
+        Array.Copy(dataCodewords, 0, fullResult, 0, maxDataLen);
+        Array.Copy(eccCodewords, 0, fullResult, maxDataLen, eccLen);
+        return fullResult;
+    }
+
+    private static byte[] CalculateReedSolomonECC(byte[] data, int eccLen)
+    {
+        byte[] expTable = new byte[256];
+        byte[] logTable = new byte[256];
+        int x = 1;
+        for (int i = 0; i < 255; i++)
+        {
+            expTable[i] = (byte)x;
+            logTable[x] = (byte)i;
+            x <<= 1;
+            if (x >= 256) x ^= 0x11D;
+        }
+
+        byte[] genPoly = new byte[eccLen + 1];
+        genPoly[0] = 1;
+        for (int i = 0; i < eccLen; i++)
+        {
+            byte root = expTable[i];
+            for (int j = eccLen; j >= 1; j--)
+            {
+                byte prev = genPoly[j];
+                byte mult = genPoly[j - 1] == 0 ? (byte)0 : expTable[(logTable[genPoly[j - 1]] + logTable[root]) % 255];
+                genPoly[j] = (byte)(prev ^ mult);
+            }
+            genPoly[0] = genPoly[0] == 0 ? (byte)0 : expTable[(logTable[genPoly[0]] + logTable[root]) % 255];
+        }
+
+        byte[] res = new byte[eccLen];
+        foreach (byte b in data)
+        {
+            byte factor = (byte)(b ^ res[0]);
+            Array.Copy(res, 1, res, 0, eccLen - 1);
+            res[eccLen - 1] = 0;
+            if (factor != 0)
+            {
+                for (int i = 0; i < eccLen; i++)
                 {
-                    if (!reserved[y, col])
+                    if (genPoly[i] != 0)
                     {
-                        bool val = false;
-                        if (bitIdx < bits.Count)
-                        {
-                            val = bits[bitIdx++];
-                        }
-                        else
-                        {
-                            val = ((y + col) % 2 == 0);
-                        }
-                        matrix[y, col] = val;
+                        res[i] ^= expTable[(logTable[factor] + logTable[genPoly[i]]) % 255];
+                    }
+                }
+            }
+        }
+        return res;
+    }
+
+    private static void PlaceDataBits(bool[,] matrix, bool[,] reserved, List<bool> bits, int size)
+    {
+        int bitIdx = 0;
+        int direction = -1; // up
+        int col = size - 1;
+        while (col > 0)
+        {
+            if (col == 6) col--; // Skip timing column
+            int rowStart = (direction == -1) ? size - 1 : 0;
+            int rowEnd = (direction == -1) ? -1 : size;
+            for (int row = rowStart; row != rowEnd; row += direction)
+            {
+                for (int c = col; c > col - 2; c--)
+                {
+                    if (!reserved[row, c])
+                    {
+                        bool bitVal = (bitIdx < bits.Count) ? bits[bitIdx++] : false;
+                        bool mask = ((row + c) % 2 == 0);
+                        matrix[row, c] = bitVal ^ mask;
                     }
                 }
             }
             direction = -direction;
-            x -= 2;
+            col -= 2;
+        }
+    }
+
+    private static void ReserveFormatInfo(bool[,] matrix, bool[,] reserved, int size)
+    {
+        for (int i = 0; i <= 8; i++)
+        {
+            if (i < size) { reserved[8, i] = true; reserved[i, 8] = true; }
+        }
+        for (int i = size - 8; i < size; i++)
+        {
+            reserved[8, i] = true;
+            reserved[i, 8] = true;
+        }
+        reserved[size - 8, 8] = true; // Dark module
+        matrix[size - 8, 8] = true;
+    }
+
+    private static void PlaceFormatInfo(bool[,] matrix, int size)
+    {
+        // Format Info for Level L, Mask 0 = 111011111000100
+        bool[] fmtBits = new bool[] { true, true, true, false, true, true, true, true, true, false, false, false, true, false, false };
+
+        // Top-Left Finder Format Info
+        int idx = 0;
+        for (int col = 0; col <= 8; col++)
+        {
+            if (col != 6) matrix[8, col] = fmtBits[idx++];
+        }
+        for (int row = 7; row >= 0; row--)
+        {
+            if (row != 6) matrix[row, 8] = fmtBits[idx++];
         }
 
-        return matrix;
+        // Bottom-Left & Top-Right Split Format Info
+        idx = 0;
+        for (int row = size - 1; row >= size - 7; row--)
+        {
+            matrix[row, 8] = fmtBits[idx++];
+        }
+        for (int col = size - 8; col < size; col++)
+        {
+            matrix[8, col] = fmtBits[idx++];
+        }
+    }
+
+    private static int[] GetAlignmentPositions(int version)
+    {
+        if (version <= 1) return new int[0];
+        if (version == 4) return new int[] { 6, 26 };
+        if (version == 5) return new int[] { 6, 30 };
+        return new int[] { 6, 30 };
     }
 
     private static void PlaceFinderPattern(bool[,] matrix, bool[,] reserved, int top, int left)

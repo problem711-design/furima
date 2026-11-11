@@ -145,8 +145,8 @@ class PcServerClient(
             android.util.Log.i("PC_SYNC", "=== プロトコル v3 同期開始: $cleanUrl ===")
             val savedStoreId = getSavedStoreId()
 
-            // スマホ側の全商品・写真リストを取得（同期対象は通常アクティブ商品）
-            val itemsWithPhotos = repository.getActiveItemsWithPhotosDirect()
+            // スマホ側の全商品・写真リストを取得（同期対象はまとめ内包中の子商品も含む全商品）
+            val itemsWithPhotos = repository.getDao().getAllItemsWithPhotosDirect()
             // PC側の不要フォルダ削除から保護するフォルダ名一覧（まとめ済みMERGED子商品フォルダも含む全商品）
             val allItemsForFolders = repository.getDao().getAllItemsWithPhotosDirect()
             val dtoList = mutableListOf<SyncItemDto>()
@@ -391,7 +391,14 @@ class PcServerClient(
 
                     if (isDeleted) {
                         if (existing != null) {
-                            repository.deleteItem(existing)
+                            // まとめ親商品が削除・解除された場合は、子商品のステータスを出品中に復元し、親の写真レコードのみDB削除（子写真の実ファイルは消さない）
+                            if (existing.item.mergedChildCount > 0) {
+                                dao.restoreMergedChildren(id)
+                                dao.deletePhotosByItemId(id)
+                                dao.deleteItem(existing.item)
+                            } else {
+                                repository.deleteItem(existing)
+                            }
                         }
                         continue
                     }
@@ -417,11 +424,11 @@ class PcServerClient(
                             price = price,
                             soldPrice = soldPrice,
                             mergedParentId = mergedParentId,
-                            mergedChildCount = if (mergedChildCount > 0) mergedChildCount else existing.item.mergedChildCount,
-                            mergedChildTitles = if (mergedChildTitles.isNotBlank()) mergedChildTitles else existing.item.mergedChildTitles,
-                            originalTotalBundlePrice = if (originalTotalBundlePrice > 0) originalTotalBundlePrice else existing.item.originalTotalBundlePrice,
-                            discountAmount = if (discountAmount > 0) discountAmount else existing.item.discountAmount,
-                            bundleLevel = if (bundleLevel > 0) bundleLevel else existing.item.bundleLevel,
+                            mergedChildCount = mergedChildCount,
+                            mergedChildTitles = mergedChildTitles,
+                            originalTotalBundlePrice = originalTotalBundlePrice,
+                            discountAmount = discountAmount,
+                            bundleLevel = bundleLevel,
                             updatedAt = System.currentTimeMillis()
                         )
                         dao.updateItem(updated)

@@ -432,32 +432,25 @@ public static class SimpleQrEncoder
     {
         byte[] rawBytes = Encoding.UTF8.GetBytes(content);
 
-        // Version & ECC Capacity Table (Low/Medium ECC)
-        // Version 4-M: 100 modules capacity, 64 data codewords, 36 ecc codewords (1 block)
-        // Version 6-M: 172 modules capacity, 108 data codewords, 64 ecc codewords
-        // Version 9-M: 292 modules capacity, 182 data codewords, 110 ecc codewords
+        // ISO/IEC 18004 Level L (7% ECC) Single-block configurations
+        // Version 4-L: 80 data, 20 ECC (capacity 78 bytes)
+        // Version 5-L: 108 data, 26 ECC (capacity 106 bytes)
         int version = 4;
-        int dataCapacity = 64;
-        int eccCount = 36;
+        int dataCapacity = 80;
+        int eccCount = 20;
 
-        if (rawBytes.Length > 60)
+        if (rawBytes.Length > 78)
         {
-            version = 6;
+            version = 5;
             dataCapacity = 108;
-            eccCount = 64;
-        }
-        if (rawBytes.Length > 104)
-        {
-            version = 9;
-            dataCapacity = 182;
-            eccCount = 110;
+            eccCount = 26;
         }
 
         int size = 17 + version * 4;
         bool[,] matrix = new bool[size, size];
         bool[,] reserved = new bool[size, size];
 
-        // 1. Finder patterns (3 (7x7) corners)
+        // 1. Finder patterns (3 corners)
         PlaceFinderPattern(matrix, reserved, 0, 0);
         PlaceFinderPattern(matrix, reserved, size - 7, 0);
         PlaceFinderPattern(matrix, reserved, 0, size - 7);
@@ -469,7 +462,7 @@ public static class SimpleQrEncoder
             if (!reserved[i, 6]) { matrix[i, 6] = (i % 2 == 0); reserved[i, 6] = true; }
         }
 
-        // 3. Alignment patterns (Version >= 2)
+        // 3. Alignment patterns
         int[] alignPos = GetAlignmentPositions(version);
         foreach (int r in alignPos)
         {
@@ -482,10 +475,10 @@ public static class SimpleQrEncoder
             }
         }
 
-        // 4. Reserve Format Information (around finders)
+        // 4. Reserve Format Information
         ReserveFormatInfo(matrix, reserved, size);
 
-        // 5. Encode Payload (Header + Count + Data + Pad + Reed-Solomon ECC)
+        // 5. Build payload (8-bit byte mode + count + payload + term + pad + RS ECC)
         byte[] codewords = BuildCodewords(rawBytes, dataCapacity, eccCount);
 
         // 6. Convert Codewords to Bits
@@ -498,7 +491,7 @@ public static class SimpleQrEncoder
         // 7. Place Data Bits & Apply Mask Pattern 0: (row + col) % 2 == 0
         PlaceDataBits(matrix, reserved, bits, size);
 
-        // 8. Place Format Information (Mask 0, Level M: 101010000010010)
+        // 8. Place Format Information (Level L, Mask 0: 111011111000100)
         PlaceFormatInfo(matrix, size);
 
         return matrix;
@@ -537,7 +530,6 @@ public static class SimpleQrEncoder
             padIdx++;
         }
 
-        // Convert bits to data codewords
         byte[] dataCodewords = new byte[maxDataLen];
         for (int i = 0; i < maxDataLen; i++)
         {
@@ -549,20 +541,16 @@ public static class SimpleQrEncoder
             dataCodewords[i] = b;
         }
 
-        // Generate Reed-Solomon ECC codewords
         byte[] eccCodewords = CalculateReedSolomonECC(dataCodewords, eccLen);
 
-        // Combine data + ecc
         byte[] fullResult = new byte[maxDataLen + eccLen];
         Array.Copy(dataCodewords, 0, fullResult, 0, maxDataLen);
         Array.Copy(eccCodewords, 0, fullResult, maxDataLen, eccLen);
-
         return fullResult;
     }
 
     private static byte[] CalculateReedSolomonECC(byte[] data, int eccLen)
     {
-        // GF(256) Generator Polynomial & Log/Exp tables (GF 2^8 with primitive poly 0x11D = 285)
         byte[] expTable = new byte[256];
         byte[] logTable = new byte[256];
         int x = 1;
@@ -574,7 +562,6 @@ public static class SimpleQrEncoder
             if (x >= 256) x ^= 0x11D;
         }
 
-        // Generate RS Generator Polynomial Coefficients
         byte[] genPoly = new byte[eccLen + 1];
         genPoly[0] = 1;
         for (int i = 0; i < eccLen; i++)
@@ -589,14 +576,12 @@ public static class SimpleQrEncoder
             genPoly[0] = genPoly[0] == 0 ? (byte)0 : expTable[(logTable[genPoly[0]] + logTable[root]) % 255];
         }
 
-        // Polynomial Division (Data / GenPoly)
         byte[] res = new byte[eccLen];
         foreach (byte b in data)
         {
             byte factor = (byte)(b ^ res[0]);
             Array.Copy(res, 1, res, 0, eccLen - 1);
             res[eccLen - 1] = 0;
-
             if (factor != 0)
             {
                 for (int i = 0; i < eccLen; i++)
@@ -616,14 +601,11 @@ public static class SimpleQrEncoder
         int bitIdx = 0;
         int direction = -1; // up
         int col = size - 1;
-
         while (col > 0)
         {
             if (col == 6) col--; // Skip timing column
-
             int rowStart = (direction == -1) ? size - 1 : 0;
             int rowEnd = (direction == -1) ? -1 : size;
-
             for (int row = rowStart; row != rowEnd; row += direction)
             {
                 for (int c = col; c > col - 2; c--)
@@ -631,7 +613,6 @@ public static class SimpleQrEncoder
                     if (!reserved[row, c])
                     {
                         bool bitVal = (bitIdx < bits.Count) ? bits[bitIdx++] : false;
-                        // Apply Mask Pattern 0: (row + col) % 2 == 0
                         bool mask = ((row + c) % 2 == 0);
                         matrix[row, c] = bitVal ^ mask;
                     }
@@ -659,8 +640,8 @@ public static class SimpleQrEncoder
 
     private static void PlaceFormatInfo(bool[,] matrix, int size)
     {
-        // Format Info for ECC Level M, Mask Pattern 0 = 101010000010010
-        bool[] fmtBits = new bool[] { true, false, true, false, true, false, false, false, false, false, true, false, false, true, false };
+        // Format Info for Level L, Mask 0 = 111011111000100
+        bool[] fmtBits = new bool[] { true, true, true, false, true, true, true, true, true, false, false, false, true, false, false };
 
         // Top-Left Finder Format Info
         int idx = 0;
@@ -689,9 +670,8 @@ public static class SimpleQrEncoder
     {
         if (version <= 1) return new int[0];
         if (version == 4) return new int[] { 6, 26 };
-        if (version == 6) return new int[] { 6, 34 };
-        if (version == 9) return new int[] { 6, 26, 46 };
-        return new int[] { 6, 26 };
+        if (version == 5) return new int[] { 6, 30 };
+        return new int[] { 6, 30 };
     }
 
     private static void PlaceFinderPattern(bool[,] matrix, bool[,] reserved, int top, int left)
@@ -735,11 +715,6 @@ public static class SimpleQrEncoder
                         bool isBlack = (r == 0 || r == 4 || c == 0 || c == 4 || (r == 2 && c == 2));
                         matrix[row, col] = isBlack;
                     }
-                }
-            }
-        }
-    }
-}
                 }
             }
         }

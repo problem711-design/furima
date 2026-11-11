@@ -545,7 +545,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private val pcServerClient = com.example.myapplication.data.server.PcServerClient(getApplication(), repository)
 
     private val _pcServerUrl = MutableStateFlow<String>(
-        pcServerClient.getSavedServerUrl().ifBlank { "http://10.0.2.2:8082" }
+        pcServerClient.getSavedServerUrl()
     )
     val pcServerUrl: StateFlow<String> = _pcServerUrl.asStateFlow()
 
