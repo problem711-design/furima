@@ -19,7 +19,13 @@ data class SyncItemDto(
     @param:Json(name = "soldPrice") val soldPrice: Int,
     @param:Json(name = "profit") val profit: Int,
     @param:Json(name = "statusLabel") val statusLabel: String,
-    @param:Json(name = "photos") val photos: List<SyncPhotoDto>
+    @param:Json(name = "photos") val photos: List<SyncPhotoDto>,
+    @param:Json(name = "mergedParentId") val mergedParentId: Int? = null,
+    @param:Json(name = "mergedChildCount") val mergedChildCount: Int? = null,
+    @param:Json(name = "bundleLevel") val bundleLevel: Int? = null,
+    @param:Json(name = "mergedChildTitles") val mergedChildTitles: String? = null,
+    @param:Json(name = "originalTotalBundlePrice") val originalTotalBundlePrice: Int? = null,
+    @param:Json(name = "discountAmount") val discountAmount: Int? = null
 )
 
 @JsonClass(generateAdapter = true)

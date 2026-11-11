@@ -631,7 +631,13 @@ class FurimaServerNative
                                 { "isShared", true },
                                 { "isDeleted", false },
                                 { "updatedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
-                                { "photos", savedPhotosList }
+                                { "photos", savedPhotosList },
+                                { "mergedParentId", item["mergedParentId"] },
+                                { "mergedChildCount", item["mergedChildCount"] },
+                                { "bundleLevel", item["bundleLevel"] },
+                                { "mergedChildTitles", item["mergedChildTitles"] },
+                                { "originalTotalBundlePrice", item["originalTotalBundlePrice"] },
+                                { "discountAmount", item["discountAmount"] }
                             };
 
                             // 同一IDの既存エントリーがあれば重複防止のため削除してから追加 (上書き更新)
@@ -1100,11 +1106,19 @@ class FurimaServerNative
         }
     }
 
+    private static int ParseIntSafe(object val, int defaultVal = 0)
+    {
+        if (val == null) return defaultVal;
+        var jv = val as Newtonsoft.Json.Linq.JValue;
+        if (jv != null && jv.Type == Newtonsoft.Json.Linq.JTokenType.Null) return defaultVal;
+        try { return Convert.ToInt32(val); } catch { return defaultVal; }
+    }
+
     private static void HandleMergeItems(HttpListenerRequest req, HttpListenerResponse res)
     {
         try
         {
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
@@ -1141,14 +1155,14 @@ class FurimaServerNative
                 {
                     foreach (var i in itemsDb)
                     {
-                        int id = Convert.ToInt32(i["id"]);
+                        int id = ParseIntSafe(i["id"]);
                         if (id >= newParentId) newParentId = id + 1;
                     }
 
                     var childItems = new List<Dictionary<string, object>>();
                     foreach (int cid in childItemIds)
                     {
-                        var found = itemsDb.Find(item => Convert.ToInt32(item["id"]) == cid);
+                        var found = itemsDb.Find(item => ParseIntSafe(item["id"]) == cid);
                         if (found != null)
                         {
                             childItems.Add(found);
@@ -1170,32 +1184,56 @@ class FurimaServerNative
 
                     foreach (var child in childItems)
                     {
-                        string cTitle = child.ContainsKey("title") ? child["title"].ToString() : "";
-                        int cPrice = child.ContainsKey("price") ? Convert.ToInt32(child["price"]) : 0;
+                        string cTitle = child.ContainsKey("title") ? (child["title"] ?? "").ToString() : "";
+                        int cPrice = child.ContainsKey("price") ? ParseIntSafe(child["price"]) : 0;
                         childTitlesList.Add("【" + cTitle + "】¥" + cPrice.ToString("N0"));
                         originalTotal += cPrice;
 
                         if (child.ContainsKey("bundleLevel"))
                         {
-                            int lvl = Convert.ToInt32(child["bundleLevel"]);
+                            int lvl = ParseIntSafe(child["bundleLevel"]);
                             if (lvl > maxChildLevel) maxChildLevel = lvl;
                         }
 
-                        // 元の子商品の写真レコードを参照（ハッシュ・ID・ファイル複製は一切行わない）
-                        if (child.ContainsKey("photos") && child["photos"] is System.Collections.IEnumerable)
+                        // 元の子商品の写真レコードを参照
+                        if (child.ContainsKey("photos") && child["photos"] != null)
                         {
-                            foreach (var pObj in (System.Collections.IEnumerable)child["photos"])
+                            var photosObj = child["photos"];
+                            if (photosObj is JArray)
                             {
-                                var pDict = pObj as Dictionary<string, object>;
-                                if (pDict != null)
+                                var jPhotos = (JArray)photosObj;
+                                foreach (JObject pObj in jPhotos)
                                 {
-                                    var photoCopy = new Dictionary<string, object>(pDict);
-                                    photoCopy["id"] = 0;
-                                    photoCopy["itemId"] = newParentId;
-                                    photoCopy["displayOrder"] = photoOrder++;
-                                    photoCopy["childItemId"] = child["id"];
-                                    photoCopy["childItemTitle"] = cTitle;
-                                    parentPhotos.Add(photoCopy);
+                                    int pId = pObj.Value<int>("id");
+                                    string md5Hash = (pObj.Value<string>("md5Hash") ?? "").Trim().ToLower();
+                                    parentPhotos.Add(new Dictionary<string, object>
+                                    {
+                                        { "id", pId },
+                                        { "itemId", newParentId },
+                                        { "md5Hash", md5Hash },
+                                        { "photoUrl", "/api/photos/" + md5Hash },
+                                        { "displayOrder", photoOrder++ },
+                                        { "childItemId", ParseIntSafe(child["id"]) },
+                                        { "childItemTitle", cTitle }
+                                    });
+                                }
+                            }
+                            else if (photosObj is System.Collections.IEnumerable)
+                            {
+                                var enumPhotos = (System.Collections.IEnumerable)photosObj;
+                                foreach (var pObj in enumPhotos)
+                                {
+                                    var pDict = pObj as Dictionary<string, object>;
+                                    if (pDict != null)
+                                    {
+                                        var photoCopy = new Dictionary<string, object>(pDict);
+                                        photoCopy["id"] = pDict.ContainsKey("id") ? ParseIntSafe(pDict["id"]) : 0;
+                                        photoCopy["itemId"] = newParentId;
+                                        photoCopy["displayOrder"] = photoOrder++;
+                                        photoCopy["childItemId"] = ParseIntSafe(child["id"]);
+                                        photoCopy["childItemTitle"] = cTitle;
+                                        parentPhotos.Add(photoCopy);
+                                    }
                                 }
                             }
                         }

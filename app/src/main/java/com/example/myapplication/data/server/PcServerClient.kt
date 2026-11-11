@@ -206,7 +206,13 @@ class PcServerClient(
                             "DRAFT" -> "未出品"
                             else -> "出品中"
                         },
-                        photos = photoDtoList
+                        photos = photoDtoList,
+                        mergedParentId = item.mergedParentId,
+                        mergedChildCount = item.mergedChildCount,
+                        bundleLevel = item.bundleLevel,
+                        mergedChildTitles = item.mergedChildTitles,
+                        originalTotalBundlePrice = item.originalTotalBundlePrice,
+                        discountAmount = item.discountAmount
                     )
                 )
             }
