@@ -1042,21 +1042,33 @@ class FurimaServerNative
     {
         try
         {
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
 
                 string title = json.Value<string>("title") ?? "新規商品";
                 int price = json.Value<int>("price");
+                string status = json.Value<string>("status") ?? "DRAFT";
                 string description = json.Value<string>("description") ?? "";
+                bool useCustomSettings = json.Value<bool>("useCustomSettings");
+                int shippingCost = json.Value<int>("shippingCost");
+                if (shippingCost <= 0) shippingCost = 210;
+                int feeRatePercent = json.Value<int>("feeRatePercent");
+                if (feeRatePercent <= 0) feeRatePercent = 5;
+                int expenseCost = json.Value<int>("expenseCost");
+                if (expenseCost <= 0) expenseCost = 55;
+
+                int profit = price - (price * feeRatePercent / 100) - shippingCost - expenseCost;
+                string statusLabel = status == "SOLD" ? "売却済み" : (status == "DRAFT" ? "未出品" : "出品中");
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
                 int newId = 1;
                 lock (lockObj)
                 {
                     foreach (var i in itemsDb)
                     {
-                        int id = Convert.ToInt32(i["id"]);
+                        int id = ParseIntSafe(i["id"]);
                         if (id >= newId) newId = id + 1;
                     }
 
@@ -1071,7 +1083,7 @@ class FurimaServerNative
                     Directory.CreateDirectory(itemDirPath);
 
                     string txtPath = Path.Combine(itemDirPath, "商品情報_説明文.txt");
-                    string txtContent = "【商品ID】 " + newId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【ステータス】 出品中\n\n--- 商品説明 ---\n" + description;
+                    string txtContent = "【商品ID】 " + newId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【ステータス】 " + statusLabel + "\n\n--- 商品説明 ---\n" + description;
                     File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
 
                     var newItemDict = new Dictionary<string, object>
@@ -1079,14 +1091,19 @@ class FurimaServerNative
                         { "id", newId },
                         { "title", title },
                         { "description", description },
-                        { "status", "LISTED" },
+                        { "status", status },
+                        { "statusLabel", statusLabel },
                         { "price", price },
                         { "soldPrice", 0 },
-                        { "profit", price - 210 - (price * 5 / 100) - 55 },
-                        { "statusLabel", "出品中" },
+                        { "profit", profit },
+                        { "shippingCost", shippingCost },
+                        { "feeRatePercent", feeRatePercent },
+                        { "expenseCost", expenseCost },
+                        { "useCustomSettings", useCustomSettings },
                         { "isShared", true },
                         { "isDeleted", false },
-                        { "updatedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+                        { "createdAt", now },
+                        { "updatedAt", now },
                         { "photos", new List<Dictionary<string, object>>() }
                     };
 

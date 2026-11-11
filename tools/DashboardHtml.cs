@@ -370,7 +370,7 @@ public static class DashboardHtml
                 </div>
                 <button onclick='closeAddModal()' class='text-emerald-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='p-5 space-y-3.5 text-xs'>
+            <div class='p-5 space-y-3.5 text-xs max-h-[75vh] overflow-y-auto custom-scroll'>
                 <div>
                     <div class='flex justify-between items-center mb-1'>
                         <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内)</label>
@@ -378,10 +378,45 @@ public static class DashboardHtml
                     </div>
                     <input type='text' id='add-title' oninput='checkTitleLength(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット Mサイズ'>
                 </div>
-                <div>
-                    <label class='block font-bold text-slate-700 mb-1'>販売価格 (円)</label>
-                    <input type='number' id='add-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
+                <div class='grid grid-cols-2 gap-3'>
+                    <div>
+                        <label class='block font-bold text-slate-700 mb-1'>販売価格 (円)</label>
+                        <input type='number' id='add-price' oninput='calcAddProfit()' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
+                    </div>
+                    <div>
+                        <label class='block font-bold text-slate-700 mb-1'>初期ステータス</label>
+                        <select id='add-status' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white'>
+                            <option value='DRAFT' selected>未出品 (下書き)</option>
+                            <option value='LISTED'>出品中</option>
+                        </select>
+                    </div>
                 </div>
+
+                <!-- 費用・利益プレビュー設定 -->
+                <div class='bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2.5'>
+                    <div class='flex items-center justify-between'>
+                        <label class='flex items-center gap-1.5 cursor-pointer font-bold text-slate-700'>
+                            <input type='checkbox' id='add-use-custom' onchange='toggleAddCustomSettings()' class='w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500'>
+                            <span>個別費用設定を使用する</span>
+                        </label>
+                        <span id='add-profit-preview' class='font-bold text-emerald-600 font-mono'>概算利益: ¥0 (0%)</span>
+                    </div>
+                    <div id='add-custom-settings-fields' class='grid grid-cols-3 gap-2 hidden pt-1'>
+                        <div>
+                            <label class='block text-[10px] font-bold text-slate-600 mb-0.5'>送料 (円)</label>
+                            <input type='number' id='add-shipping' value='210' oninput='calcAddProfit()' class='w-full p-1.5 border border-slate-300 rounded text-xs'>
+                        </div>
+                        <div>
+                            <label class='block text-[10px] font-bold text-slate-600 mb-0.5'>手数料 (%)</label>
+                            <input type='number' id='add-fee-rate' value='5' oninput='calcAddProfit()' class='w-full p-1.5 border border-slate-300 rounded text-xs'>
+                        </div>
+                        <div>
+                            <label class='block text-[10px] font-bold text-slate-600 mb-0.5'>経費 (円)</label>
+                            <input type='number' id='add-expense' value='55' oninput='calcAddProfit()' class='w-full p-1.5 border border-slate-300 rounded text-xs'>
+                        </div>
+                    </div>
+                </div>
+
                 <div>
                     <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
                     <textarea id='add-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
@@ -1213,7 +1248,10 @@ public static class DashboardHtml
         function openAddModal() {
             document.getElementById('add-title').value = '';
             document.getElementById('add-price').value = '';
+            document.getElementById('add-status').value = 'DRAFT';
             document.getElementById('add-description').value = '';
+            document.getElementById('add-use-custom').checked = false;
+            toggleAddCustomSettings();
             checkTitleLength('add');
             document.getElementById('add-modal').classList.remove('hidden');
         }
@@ -1222,10 +1260,38 @@ public static class DashboardHtml
             document.getElementById('add-modal').classList.add('hidden');
         }
 
+        function toggleAddCustomSettings() {
+            const useCustom = document.getElementById('add-use-custom').checked;
+            const fields = document.getElementById('add-custom-settings-fields');
+            if (useCustom) fields.classList.remove('hidden');
+            else fields.classList.add('hidden');
+            calcAddProfit();
+        }
+
+        function calcAddProfit() {
+            const price = parseInt(document.getElementById('add-price').value) || 0;
+            const useCustom = document.getElementById('add-use-custom').checked;
+            const shipping = useCustom ? (parseInt(document.getElementById('add-shipping').value) || 0) : 210;
+            const feeRate = useCustom ? (parseFloat(document.getElementById('add-fee-rate').value) || 0) : 5;
+            const expense = useCustom ? (parseInt(document.getElementById('add-expense').value) || 0) : 55;
+
+            const fee = Math.floor(price * feeRate / 100);
+            const profit = price - fee - shipping - expense;
+            const margin = price > 0 ? Math.round((profit / price) * 100) : 0;
+
+            const elem = document.getElementById('add-profit-preview');
+            if (elem) elem.innerText = '概算利益: ¥' + profit.toLocaleString() + ' (' + margin + '%)';
+        }
+
         async function createItem() {
             const title = document.getElementById('add-title').value.trim();
             const price = parseInt(document.getElementById('add-price').value) || 0;
+            const status = document.getElementById('add-status').value;
             const description = document.getElementById('add-description').value.trim();
+            const useCustomSettings = document.getElementById('add-use-custom').checked;
+            const shippingCost = useCustomSettings ? (parseInt(document.getElementById('add-shipping').value) || 210) : 210;
+            const feeRatePercent = useCustomSettings ? (parseFloat(document.getElementById('add-fee-rate').value) || 5) : 5;
+            const expenseCost = useCustomSettings ? (parseInt(document.getElementById('add-expense').value) || 55) : 55;
 
             if (!title) {
                 alert('商品タイトルを入力してください。');
@@ -1236,14 +1302,17 @@ public static class DashboardHtml
                 const res = await fetch('/api/items', {
                     method: 'POST',
                     headers: getHeaders(),
-                    body: JSON.stringify({ title, price, description })
+                    body: JSON.stringify({
+                        title, price, status, description,
+                        useCustomSettings, shippingCost, feeRatePercent, expenseCost
+                    })
                 });
 
                 if (res.ok) {
                     const result = await res.json();
                     if (result.status === 'ok') {
                         closeAddModal();
-                        showToast('新規商品を追加しました！');
+                        showToast('新規商品（' + (status === 'DRAFT' ? '下書き' : '出品中') + '）を追加しました！');
                         fetchItems();
                     } else {
                         alert('追加失敗: ' + (result.message || '不明なエラー'));
