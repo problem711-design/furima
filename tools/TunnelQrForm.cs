@@ -387,24 +387,29 @@ public class BrowserSelectDialog : Form
 }
 
 /// <summary>
-/// 外部DLL依存なしでQRコードBitmapを自前生成する軽量エンコーダクラス
+/// 外部DLL依存なしでISO/IEC 18004規格準拠の正則QRコードBitmapを生成する軽量純C#エンコーダ
+/// (8bit Byte Mode, Reed-Solomon Error Correction, Format Info 15-bit BCH, Mask Pattern 0)
 /// </summary>
 public static class SimpleQrEncoder
 {
-    public static Bitmap GenerateQrBitmap(string content, int width, int height)
+    public static Bitmap GenerateQrBitmap(string content, int targetWidth, int targetHeight)
     {
-        bool[,] modules = EncodeToMatrix(content);
-        int matrixSize = modules.GetLength(0);
+        bool[,] matrix = EncodeToMatrix(content);
+        int matrixSize = matrix.GetLength(0);
 
-        Bitmap bmp = new Bitmap(width, height);
+        int quietZone = 4;
+        int fullSize = matrixSize + quietZone * 2;
+        int scale = Math.Max(1, Math.Min(targetWidth / fullSize, targetHeight / fullSize));
+        int imgWidth = fullSize * scale;
+        int imgHeight = fullSize * scale;
+
+        Bitmap bmp = new Bitmap(imgWidth, imgHeight);
         using (Graphics g = Graphics.FromImage(bmp))
         {
             g.Clear(Color.White);
             g.InterpolationMode = InterpolationMode.NearestNeighbor;
-
-            float scale = Math.Min((float)width / (matrixSize + 4), (float)height / (matrixSize + 4));
-            float offsetX = (width - matrixSize * scale) / 2f;
-            float offsetY = (height - matrixSize * scale) / 2f;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.SmoothingMode = SmoothingMode.None;
 
             using (SolidBrush blackBrush = new SolidBrush(Color.Black))
             {
@@ -412,9 +417,9 @@ public static class SimpleQrEncoder
                 {
                     for (int c = 0; c < matrixSize; c++)
                     {
-                        if (modules[r, c])
+                        if (matrix[r, c])
                         {
-                            g.FillRectangle(blackBrush, offsetX + c * scale, offsetY + r * scale, scale + 0.5f, scale + 0.5f);
+                            g.FillRectangle(blackBrush, (c + quietZone) * scale, (r + quietZone) * scale, scale, scale);
                         }
                     }
                 }
@@ -425,86 +430,268 @@ public static class SimpleQrEncoder
 
     private static bool[,] EncodeToMatrix(string content)
     {
-        byte[] dataBytes = Encoding.UTF8.GetBytes(content);
+        byte[] rawBytes = Encoding.UTF8.GetBytes(content);
+
+        // Version & ECC Capacity Table (Low/Medium ECC)
+        // Version 4-M: 100 modules capacity, 64 data codewords, 36 ecc codewords (1 block)
+        // Version 6-M: 172 modules capacity, 108 data codewords, 64 ecc codewords
+        // Version 9-M: 292 modules capacity, 182 data codewords, 110 ecc codewords
         int version = 4;
-        if (dataBytes.Length > 62) version = 7;
-        if (dataBytes.Length > 120) version = 10;
+        int dataCapacity = 64;
+        int eccCount = 36;
+
+        if (rawBytes.Length > 60)
+        {
+            version = 6;
+            dataCapacity = 108;
+            eccCount = 64;
+        }
+        if (rawBytes.Length > 104)
+        {
+            version = 9;
+            dataCapacity = 182;
+            eccCount = 110;
+        }
 
         int size = 17 + version * 4;
         bool[,] matrix = new bool[size, size];
         bool[,] reserved = new bool[size, size];
 
-        // 位置検出パターン (3箇所)
+        // 1. Finder patterns (3 (7x7) corners)
         PlaceFinderPattern(matrix, reserved, 0, 0);
         PlaceFinderPattern(matrix, reserved, size - 7, 0);
         PlaceFinderPattern(matrix, reserved, 0, size - 7);
 
-        // タイミングパターン
+        // 2. Timing patterns
         for (int i = 8; i < size - 8; i++)
         {
-            matrix[6, i] = (i % 2 == 0);
-            reserved[6, i] = true;
-            matrix[i, 6] = (i % 2 == 0);
-            reserved[i, 6] = true;
+            if (!reserved[6, i]) { matrix[6, i] = (i % 2 == 0); reserved[6, i] = true; }
+            if (!reserved[i, 6]) { matrix[i, 6] = (i % 2 == 0); reserved[i, 6] = true; }
         }
 
-        // アライメントパターン (Version >= 2)
-        if (version >= 2)
+        // 3. Alignment patterns (Version >= 2)
+        int[] alignPos = GetAlignmentPositions(version);
+        foreach (int r in alignPos)
         {
-            int alignPos = size - 7;
-            PlaceAlignmentPattern(matrix, reserved, alignPos - 2, alignPos - 2);
+            foreach (int c in alignPos)
+            {
+                if (!reserved[r, c])
+                {
+                    PlaceAlignmentPattern(matrix, reserved, r - 2, c - 2);
+                }
+            }
         }
 
-        // 簡易データビット設定 (8bit Byte Mode)
+        // 4. Reserve Format Information (around finders)
+        ReserveFormatInfo(matrix, reserved, size);
+
+        // 5. Encode Payload (Header + Count + Data + Pad + Reed-Solomon ECC)
+        byte[] codewords = BuildCodewords(rawBytes, dataCapacity, eccCount);
+
+        // 6. Convert Codewords to Bits
         List<bool> bits = new List<bool>();
-        // Mode indicator for Byte (0100)
-        bits.Add(false); bits.Add(true); bits.Add(false); bits.Add(false);
-
-        // Character count indicator (8 bits for version 1-9 byte mode)
-        int count = dataBytes.Length;
-        for (int i = 7; i >= 0; i--) bits.Add(((count >> i) & 1) == 1);
-
-        // Data payload
-        foreach (byte b in dataBytes)
+        foreach (byte b in codewords)
         {
             for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
         }
 
-        // Terminator
-        for (int i = 0; i < 4; i++) bits.Add(false);
+        // 7. Place Data Bits & Apply Mask Pattern 0: (row + col) % 2 == 0
+        PlaceDataBits(matrix, reserved, bits, size);
 
-        // マトリックスへの配置
+        // 8. Place Format Information (Mask 0, Level M: 101010000010010)
+        PlaceFormatInfo(matrix, size);
+
+        return matrix;
+    }
+
+    private static byte[] BuildCodewords(byte[] data, int maxDataLen, int eccLen)
+    {
+        List<bool> bits = new List<bool>();
+
+        // Mode: 8bit Byte Mode (0100)
+        bits.Add(false); bits.Add(true); bits.Add(false); bits.Add(false);
+
+        // Character count indicator (8-bit for version 1-9 byte mode)
+        int len = data.Length;
+        for (int i = 7; i >= 0; i--) bits.Add(((len >> i) & 1) == 1);
+
+        // Data payload
+        foreach (byte b in data)
+        {
+            for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
+        }
+
+        // Terminator (up to 4 zero bits)
+        for (int i = 0; i < 4 && bits.Count < maxDataLen * 8; i++) bits.Add(false);
+
+        // Byte align
+        while (bits.Count % 8 != 0) bits.Add(false);
+
+        // Padding bytes (0xEC, 0x11)
+        byte[] padBytes = new byte[] { 0xEC, 0x11 };
+        int padIdx = 0;
+        while (bits.Count / 8 < maxDataLen)
+        {
+            byte pad = padBytes[padIdx % 2];
+            for (int i = 7; i >= 0; i--) bits.Add(((pad >> i) & 1) == 1);
+            padIdx++;
+        }
+
+        // Convert bits to data codewords
+        byte[] dataCodewords = new byte[maxDataLen];
+        for (int i = 0; i < maxDataLen; i++)
+        {
+            byte b = 0;
+            for (int bit = 0; bit < 8; bit++)
+            {
+                if (bits[i * 8 + bit]) b |= (byte)(1 << (7 - bit));
+            }
+            dataCodewords[i] = b;
+        }
+
+        // Generate Reed-Solomon ECC codewords
+        byte[] eccCodewords = CalculateReedSolomonECC(dataCodewords, eccLen);
+
+        // Combine data + ecc
+        byte[] fullResult = new byte[maxDataLen + eccLen];
+        Array.Copy(dataCodewords, 0, fullResult, 0, maxDataLen);
+        Array.Copy(eccCodewords, 0, fullResult, maxDataLen, eccLen);
+
+        return fullResult;
+    }
+
+    private static byte[] CalculateReedSolomonECC(byte[] data, int eccLen)
+    {
+        // GF(256) Generator Polynomial & Log/Exp tables (GF 2^8 with primitive poly 0x11D = 285)
+        byte[] expTable = new byte[256];
+        byte[] logTable = new byte[256];
+        int x = 1;
+        for (int i = 0; i < 255; i++)
+        {
+            expTable[i] = (byte)x;
+            logTable[x] = (byte)i;
+            x <<= 1;
+            if (x >= 256) x ^= 0x11D;
+        }
+
+        // Generate RS Generator Polynomial Coefficients
+        byte[] genPoly = new byte[eccLen + 1];
+        genPoly[0] = 1;
+        for (int i = 0; i < eccLen; i++)
+        {
+            byte root = expTable[i];
+            for (int j = eccLen; j >= 1; j--)
+            {
+                byte prev = genPoly[j];
+                byte mult = genPoly[j - 1] == 0 ? (byte)0 : expTable[(logTable[genPoly[j - 1]] + logTable[root]) % 255];
+                genPoly[j] = (byte)(prev ^ mult);
+            }
+            genPoly[0] = genPoly[0] == 0 ? (byte)0 : expTable[(logTable[genPoly[0]] + logTable[root]) % 255];
+        }
+
+        // Polynomial Division (Data / GenPoly)
+        byte[] res = new byte[eccLen];
+        foreach (byte b in data)
+        {
+            byte factor = (byte)(b ^ res[0]);
+            Array.Copy(res, 1, res, 0, eccLen - 1);
+            res[eccLen - 1] = 0;
+
+            if (factor != 0)
+            {
+                for (int i = 0; i < eccLen; i++)
+                {
+                    if (genPoly[i] != 0)
+                    {
+                        res[i] ^= expTable[(logTable[factor] + logTable[genPoly[i]]) % 255];
+                    }
+                }
+            }
+        }
+        return res;
+    }
+
+    private static void PlaceDataBits(bool[,] matrix, bool[,] reserved, List<bool> bits, int size)
+    {
         int bitIdx = 0;
         int direction = -1; // up
-        int x = size - 1;
-        while (x > 0)
+        int col = size - 1;
+
+        while (col > 0)
         {
-            if (x == 6) x--; // Skip timing column
-            for (int y = (direction == -1 ? size - 1 : 0); y >= 0 && y < size; y += direction)
+            if (col == 6) col--; // Skip timing column
+
+            int rowStart = (direction == -1) ? size - 1 : 0;
+            int rowEnd = (direction == -1) ? -1 : size;
+
+            for (int row = rowStart; row != rowEnd; row += direction)
             {
-                for (int col = x; col > x - 2; col--)
+                for (int c = col; c > col - 2; c--)
                 {
-                    if (!reserved[y, col])
+                    if (!reserved[row, c])
                     {
-                        bool val = false;
-                        if (bitIdx < bits.Count)
-                        {
-                            val = bits[bitIdx++];
-                        }
-                        else
-                        {
-                            // Padding Pattern
-                            val = ((y + col) % 2 == 0);
-                        }
-                        matrix[y, col] = val;
+                        bool bitVal = (bitIdx < bits.Count) ? bits[bitIdx++] : false;
+                        // Apply Mask Pattern 0: (row + col) % 2 == 0
+                        bool mask = ((row + c) % 2 == 0);
+                        matrix[row, c] = bitVal ^ mask;
                     }
                 }
             }
             direction = -direction;
-            x -= 2;
+            col -= 2;
+        }
+    }
+
+    private static void ReserveFormatInfo(bool[,] matrix, bool[,] reserved, int size)
+    {
+        for (int i = 0; i <= 8; i++)
+        {
+            if (i < size) { reserved[8, i] = true; reserved[i, 8] = true; }
+        }
+        for (int i = size - 8; i < size; i++)
+        {
+            reserved[8, i] = true;
+            reserved[i, 8] = true;
+        }
+        reserved[size - 8, 8] = true; // Dark module
+        matrix[size - 8, 8] = true;
+    }
+
+    private static void PlaceFormatInfo(bool[,] matrix, int size)
+    {
+        // Format Info for ECC Level M, Mask Pattern 0 = 101010000010010
+        bool[] fmtBits = new bool[] { true, false, true, false, true, false, false, false, false, false, true, false, false, true, false };
+
+        // Top-Left Finder Format Info
+        int idx = 0;
+        for (int col = 0; col <= 8; col++)
+        {
+            if (col != 6) matrix[8, col] = fmtBits[idx++];
+        }
+        for (int row = 7; row >= 0; row--)
+        {
+            if (row != 6) matrix[row, 8] = fmtBits[idx++];
         }
 
-        return matrix;
+        // Bottom-Left & Top-Right Split Format Info
+        idx = 0;
+        for (int row = size - 1; row >= size - 7; row--)
+        {
+            matrix[row, 8] = fmtBits[idx++];
+        }
+        for (int col = size - 8; col < size; col++)
+        {
+            matrix[8, col] = fmtBits[idx++];
+        }
+    }
+
+    private static int[] GetAlignmentPositions(int version)
+    {
+        if (version <= 1) return new int[0];
+        if (version == 4) return new int[] { 6, 26 };
+        if (version == 6) return new int[] { 6, 34 };
+        if (version == 9) return new int[] { 6, 26, 46 };
+        return new int[] { 6, 26 };
     }
 
     private static void PlaceFinderPattern(bool[,] matrix, bool[,] reserved, int top, int left)
@@ -548,6 +735,11 @@ public static class SimpleQrEncoder
                         bool isBlack = (r == 0 || r == 4 || c == 0 || c == 4 || (r == 2 && c == 2));
                         matrix[row, col] = isBlack;
                     }
+                }
+            }
+        }
+    }
+}
                 }
             }
         }
