@@ -212,7 +212,11 @@ class PcServerClient(
                         bundleLevel = item.bundleLevel,
                         mergedChildTitles = item.mergedChildTitles,
                         originalTotalBundlePrice = item.originalTotalBundlePrice,
-                        discountAmount = item.discountAmount
+                        discountAmount = item.discountAmount,
+                        shippingCost = item.shippingCost,
+                        feeRatePercent = item.feeRatePercent,
+                        expenseCost = item.expenseCost,
+                        useCustomSettings = item.useCustomSettings
                     )
                 )
             }
@@ -380,6 +384,7 @@ class PcServerClient(
 
                 val jsonArray = org.json.JSONArray(bodyStr)
                 val dao = repository.getDao()
+                val allExistingPhotos = dao.getAllItemsWithPhotosDirect().flatMap { it.photos }
 
                 for (i in 0 until jsonArray.length()) {
                     val obj = jsonArray.getJSONObject(i)
@@ -425,10 +430,14 @@ class PcServerClient(
                             soldPrice = soldPrice,
                             mergedParentId = mergedParentId,
                             mergedChildCount = mergedChildCount,
-                            mergedChildTitles = mergedChildTitles,
-                            originalTotalBundlePrice = originalTotalBundlePrice,
-                            discountAmount = discountAmount,
-                            bundleLevel = bundleLevel,
+                            mergedChildTitles = if (mergedChildTitles.isNotBlank()) mergedChildTitles else existing.item.mergedChildTitles,
+                            originalTotalBundlePrice = if (originalTotalBundlePrice > 0) originalTotalBundlePrice else existing.item.originalTotalBundlePrice,
+                            discountAmount = if (discountAmount > 0) discountAmount else existing.item.discountAmount,
+                            bundleLevel = if (bundleLevel > 0) bundleLevel else existing.item.bundleLevel,
+                            shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", existing.item.shippingCost) else existing.item.shippingCost,
+                            feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", existing.item.feeRatePercent) else existing.item.feeRatePercent,
+                            expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", existing.item.expenseCost) else existing.item.expenseCost,
+                            useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", existing.item.useCustomSettings) else existing.item.useCustomSettings,
                             updatedAt = System.currentTimeMillis()
                         )
                         dao.updateItem(updated)
@@ -440,10 +449,10 @@ class PcServerClient(
                             status = status,
                             price = price,
                             soldPrice = soldPrice,
-                            shippingCost = obj.optInt("shippingCost", 210),
-                            feeRatePercent = obj.optInt("feeRatePercent", 5),
-                            expenseCost = obj.optInt("expenseCost", 55),
-                            useCustomSettings = obj.optBoolean("useCustomSettings", false),
+                            shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", 210) else 210,
+                            feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", 5) else 5,
+                            expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", 55) else 55,
+                            useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", false) else false,
                             mergedParentId = mergedParentId,
                             mergedChildCount = mergedChildCount,
                             mergedChildTitles = mergedChildTitles,
@@ -455,23 +464,88 @@ class PcServerClient(
                             updatedAt = System.currentTimeMillis()
                         )
                         dao.insertItem(newItem)
+                    }
 
-                        val photosArray = obj.optJSONArray("photos")
-                        if (photosArray != null && photosArray.length() > 0) {
+                    // 写真情報の同期・ローカルファイルパス自動補完（新規・既存ともに未紐付けや無効パスを修復）
+                    val photosArray = obj.optJSONArray("photos")
+                    if (photosArray != null && photosArray.length() > 0) {
+                        val currentPhotos = dao.getPhotosByItemId(id)
+                        val hasValidPhotos = currentPhotos.isNotEmpty() &&
+                            currentPhotos.size == photosArray.length() &&
+                            currentPhotos.all { it.displayFile != null }
+
+                        if (!hasValidPhotos) {
                             val newPhotoEntities = mutableListOf<com.example.myapplication.data.local.PhotoEntity>()
                             for (pIdx in 0 until photosArray.length()) {
                                 val pObj = photosArray.getJSONObject(pIdx)
-                                val md5 = pObj.optString("md5Hash", "")
+                                val md5 = pObj.optString("md5Hash", "").trim()
+                                val childId = pObj.optInt("childItemId", 0)
+                                var localFilePath = ""
+                                var localThumbPath: String? = null
+
+                                // 1. 全既存写真から MD5 ハッシュで実ファイルが存在するものを検索
+                                if (md5.isNotBlank()) {
+                                    val matched = allExistingPhotos.firstOrNull {
+                                        it.md5Hash.equals(md5, ignoreCase = true) &&
+                                        (java.io.File(it.filePath).exists() || (!it.thumbnailPath.isNullOrBlank() && java.io.File(it.thumbnailPath).exists()))
+                                    }
+                                    if (matched != null) {
+                                        val origFile = if (matched.filePath.isNotBlank()) java.io.File(matched.filePath) else null
+                                        val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) java.io.File(matched.thumbnailPath) else null
+                                        if (origFile != null && origFile.exists()) {
+                                            localFilePath = matched.filePath
+                                            localThumbPath = matched.thumbnailPath
+                                        } else if (thumbFile != null && thumbFile.exists()) {
+                                            localFilePath = matched.thumbnailPath ?: ""
+                                            localThumbPath = matched.thumbnailPath
+                                        } else {
+                                            localFilePath = matched.filePath
+                                            localThumbPath = matched.thumbnailPath
+                                        }
+                                    }
+                                }
+
+                                // 2. MD5 で見つからず、childItemId が指定されている場合は元子商品の写真から引き当て
+                                if (localFilePath.isBlank() && childId > 0) {
+                                    val childPhotos = dao.getPhotosByItemId(childId)
+                                    val matchedChildPhoto = childPhotos.firstOrNull { cp ->
+                                        (md5.isNotBlank() && cp.md5Hash.equals(md5, ignoreCase = true)) ||
+                                        java.io.File(cp.filePath).exists() ||
+                                        (!cp.thumbnailPath.isNullOrBlank() && java.io.File(cp.thumbnailPath).exists())
+                                    } ?: childPhotos.getOrNull(pIdx) ?: childPhotos.firstOrNull()
+
+                                    if (matchedChildPhoto != null) {
+                                        val cOrig = java.io.File(matchedChildPhoto.filePath)
+                                        val cThumb = if (!matchedChildPhoto.thumbnailPath.isNullOrBlank()) java.io.File(matchedChildPhoto.thumbnailPath) else null
+                                        if (cOrig.exists()) {
+                                            localFilePath = matchedChildPhoto.filePath
+                                            localThumbPath = matchedChildPhoto.thumbnailPath
+                                        } else if (cThumb != null && cThumb.exists()) {
+                                            localFilePath = matchedChildPhoto.thumbnailPath ?: ""
+                                            localThumbPath = matchedChildPhoto.thumbnailPath
+                                        } else {
+                                            localFilePath = matchedChildPhoto.filePath
+                                            localThumbPath = matchedChildPhoto.thumbnailPath
+                                        }
+                                    }
+                                }
+
                                 newPhotoEntities.add(
                                     com.example.myapplication.data.local.PhotoEntity(
                                         itemId = id,
-                                        filePath = "",
+                                        filePath = localFilePath,
+                                        thumbnailPath = localThumbPath,
+                                        isOriginalDeleted = localFilePath.isBlank() && !localThumbPath.isNullOrBlank(),
+                                        isPcSynced = true,
                                         md5Hash = md5,
+                                        syncStatus = "SYNCED",
                                         displayOrder = pIdx
                                     )
                                 )
                             }
+
                             if (newPhotoEntities.isNotEmpty()) {
+                                dao.deletePhotosByItemId(id)
                                 dao.insertPhotos(newPhotoEntities)
                             }
                         }

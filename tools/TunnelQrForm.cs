@@ -273,7 +273,7 @@ public class TunnelQrForm : Form
         }
 
         this.currentTunnelUrl = tunnelUrl;
-        if (!string.IsNullOrEmpty(tunnelUrl))
+        if (!string.IsNullOrEmpty(tunnelUrl) && tunnelUrl.StartsWith("https://") && tunnelUrl.Contains("trycloudflare.com"))
         {
             txtTunnelUrl.Text = tunnelUrl;
             if (!lblStatus.Text.Contains("接続中"))
@@ -282,7 +282,7 @@ public class TunnelQrForm : Form
                 lblStatus.ForeColor = Color.Blue;
             }
         }
-        else
+        else if (string.IsNullOrEmpty(tunnelUrl))
         {
             txtTunnelUrl.Text = "(トンネル接続失敗 - ローカル接続のみ)";
             if (!lblStatus.Text.Contains("接続中"))
@@ -308,14 +308,44 @@ public class TunnelQrForm : Form
 
     private void UpdateDisplay()
     {
-        string activeUrl = string.IsNullOrEmpty(currentTunnelUrl) ? currentLocalUrl : currentTunnelUrl;
-        string qrText = string.Format("furima:{0}|{1}|{2}", activeUrl, currentToken, currentStoreId);
+        if (string.IsNullOrEmpty(currentTunnelUrl) || !currentTunnelUrl.StartsWith("https://"))
+        {
+            if (picQrCode.Image != null) { picQrCode.Image.Dispose(); picQrCode.Image = null; }
+
+            // 待機中または失敗時のビジュアルプレースホルダー描画（白紙や不正QRの誤表示を防止）
+            Bitmap bmp = new Bitmap(240, 240);
+            using (Graphics g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.FromArgb(248, 250, 252));
+                using (Pen p = new Pen(Color.FromArgb(226, 232, 240), 2))
+                {
+                    g.DrawRectangle(p, 1, 1, 238, 238);
+                }
+                string msg = string.IsNullOrEmpty(currentTunnelUrl)
+                    ? "トンネルURL発行中...\n\n準備完了まで\nお待ちください"
+                    : "トンネル接続不可\n\nローカル接続を\nご利用ください";
+                using (Font font = new Font("Meiryo UI", 9.5F, FontStyle.Regular))
+                using (Brush brush = new SolidBrush(Color.FromArgb(100, 116, 139)))
+                {
+                    StringFormat sf = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                    g.DrawString(msg, font, brush, new RectangleF(10, 10, 220, 220), sf);
+                }
+            }
+            picQrCode.Image = bmp;
+            lblInfo.Text = string.IsNullOrEmpty(currentTunnelUrl)
+                ? "Cloudflare トンネルURLを発行中...\n準備ができるとQRコードが自動表示されます。"
+                : "トンネル接続が利用できません。スマホ側でローカルURLを入力してください。";
+            return;
+        }
+
+        string qrText = string.Format("furima:{0}|{1}|{2}", currentTunnelUrl, currentToken, currentStoreId);
 
         try
         {
             Bitmap qrBmp = SimpleQrEncoder.GenerateQrBitmap(qrText, 240, 240);
             if (picQrCode.Image != null) picQrCode.Image.Dispose();
             picQrCode.Image = qrBmp;
+            lblInfo.Text = "スマホアプリ「PC連携」で上記QRコードを読み取ってください。";
         }
         catch (Exception ex)
         {

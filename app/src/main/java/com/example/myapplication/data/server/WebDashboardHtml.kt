@@ -25,7 +25,7 @@ object WebDashboardHtml {
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v2.5 (Build 21)</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v2.6 (Build 22)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -453,9 +453,10 @@ object WebDashboardHtml {
         }
 
         function updateStats() {
-            const listed = allItems.filter(i => i.status === 'LISTED');
-            const unshared = allItems.filter(i => !i.isShared);
-            const sold = allItems.filter(i => i.status === 'SOLD');
+            const active = allItems.filter(i => !i.isDeleted && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
+            const listed = active.filter(i => i.status === 'LISTED');
+            const unshared = active.filter(i => !i.isShared);
+            const sold = active.filter(i => i.status === 'SOLD');
             const totalSales = sold.reduce((sum, i) => sum + (i.soldPrice > 0 ? i.soldPrice : i.price), 0);
             const totalProfit = sold.reduce((sum, i) => sum + i.profit, 0);
 
@@ -464,7 +465,7 @@ object WebDashboardHtml {
             document.getElementById('stat-total-sales').innerText = '¥' + totalSales.toLocaleString();
             document.getElementById('stat-total-profit').innerText = '¥' + totalProfit.toLocaleString();
 
-            document.getElementById('count-all').innerText = allItems.length;
+            document.getElementById('count-all').innerText = active.length;
             document.getElementById('count-listed').innerText = listed.length;
             document.getElementById('count-unshared').innerText = unshared.length;
             document.getElementById('count-sold').innerText = sold.length;
@@ -499,6 +500,8 @@ object WebDashboardHtml {
                 const search = document.getElementById('search-input').value.toLowerCase().trim();
 
                 const filtered = allItems.filter(item => {
+                    if (item.isDeleted) return false;
+                    if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
                     let matchFilter = true;
                     if (currentFilter === 'LISTED') matchFilter = (item.status === 'LISTED');
                     if (currentFilter === 'UNSHARED') matchFilter = (!item.isShared);

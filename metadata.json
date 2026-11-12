@@ -1,6 +1,6 @@
 {
   "name": "フリマ出品・売上管理",
-  "description": "フリマ出品商品の写真整理・PC転送と、売上・利益の計算管理を行うアプリ",
+  "description": "フリマ出品・売上管理とPC母艦サーバー双方向同期アプリ",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

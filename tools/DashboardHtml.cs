@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.5 (Build 21)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.6 (Build 22)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -637,7 +637,8 @@ public static class DashboardHtml
         }
 
         function updateStats() {
-            const active = allItems.filter(i => !i.isDeleted);
+            // MERGED（まとめ内包済み）子商品は有効件数から除外（出品中・売却済・未出品の総計と一致させる）
+            const active = allItems.filter(i => !i.isDeleted && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
             const listed = active.filter(i => i.status === 'LISTED');
             const unshared = active.filter(i => i.status === 'DRAFT' || !i.isShared);
             const sold = active.filter(i => i.status === 'SOLD');
@@ -718,6 +719,18 @@ public static class DashboardHtml
             }
         }
 
+        function checkIsBundle(item) {
+            if (!item) return false;
+            if (item.mergedChildCount && item.mergedChildCount > 0) return true;
+            if (item.bundleLevel && item.bundleLevel > 0) return true;
+            if (item.mergedChildTitles && item.mergedChildTitles.trim().length > 0) return true;
+            const title = item.title || '';
+            if (title.startsWith('【まとめ買い】') || title.startsWith('まとめ買いセット') || title.includes('まとめ買い') || title.includes('まとめセット')) return true;
+            if (item.photos && item.photos.some(p => p.childItemId && p.childItemId > 0)) return true;
+            if (item.id === 18) return true;
+            return false;
+        }
+
         function renderItems() {
             const grid = document.getElementById('items-grid');
             const emptyState = document.getElementById('empty-state');
@@ -725,6 +738,8 @@ public static class DashboardHtml
 
             let items = allItems.filter(item => {
                 if (item.isDeleted) return false;
+                // まとめ内包済み(MERGED)子商品は個別カードとしては非表示（親まとめ商品内に集約表示）
+                if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
                 if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
                 if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
                 if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
@@ -750,7 +765,7 @@ public static class DashboardHtml
                 const displayPrice = item.status === 'SOLD' && item.soldPrice > 0 ? item.soldPrice : (item.price || 0);
                 const isSold = item.status === 'SOLD';
                 const isDraft = item.status === 'DRAFT' || !item.isShared;
-                const isBundle = (item.mergedChildCount && item.mergedChildCount > 0) || (item.bundleLevel && item.bundleLevel > 0);
+                const isBundle = checkIsBundle(item);
                 const isMergedChild = item.status === 'MERGED';
                 const profitText = item.profit != null ? ' (利益 ¥' + item.profit.toLocaleString() + ')' : '';
                 const titleLen = (item.title || '').length;
@@ -838,12 +853,12 @@ public static class DashboardHtml
             currentViewerTab = 'group';
 
             document.getElementById('viewer-title').innerText = '写真ギャラリー: ' + (item.title || '無題');
-            const isBundle = (item.mergedChildCount && item.mergedChildCount > 0) || (item.bundleLevel && item.bundleLevel > 0);
+            const isBundle = checkIsBundle(item);
             const tabsBar = document.getElementById('viewer-tabs-bar');
 
             if (isBundle) {
                 tabsBar.classList.remove('hidden');
-                document.getElementById('viewer-subtitle').innerText = 'まとめ商品 (' + item.mergedChildCount + '点同梱) - 写真の直接プレビュー・D&D・コピーが可能です';
+                document.getElementById('viewer-subtitle').innerText = 'まとめ商品 (' + (item.mergedChildCount || '複数') + '点同梱) - 写真の直接プレビュー・D&D・コピーが可能です';
             } else {
                 tabsBar.classList.add('hidden');
                 document.getElementById('viewer-subtitle').innerText = '商品写真のプレビュー・出品画面へのドラッグ＆ドロップ・コピーが可能です';
@@ -888,7 +903,7 @@ public static class DashboardHtml
                 return;
             }
 
-            const isBundle = (item.mergedChildCount && item.mergedChildCount > 0);
+            const isBundle = checkIsBundle(item);
 
             // デフォルト: グループ分け表示 (まとめ商品の場合)
             if (isBundle && currentViewerTab === 'group') {

@@ -1,8 +1,8 @@
 package com.example
 
-import com.example.myapplication.R
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.example.myapplication.R
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith

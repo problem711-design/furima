@@ -25,14 +25,23 @@
 
 ---
 
-## 全体ロードマップ (第2世代アーキテクチャ v2.5)
+## 全体ロードマップ (第2世代アーキテクチャ v2.6)
 
-現在のバージョン: **`v2.5 (Build 21)`**
+現在のバージョン: **`v2.6 (Build 22)`**
 
-### フェーズ 2.6 (まとめ買い双方向同期・表示整合化 & 写真パス補完) 【調査完了・次回実装】
-- [ ] **フェーズ 2.6-A: スマホ側 PULL 同期 (`fetchServerItems`) での写真パス自動補完** (`PcServerClient.kt`)
-- [ ] **フェーズ 2.6-B: PC管理画面 (`DashboardHtml.cs`) での `MERGED` 子商品表示フィルター整頓** (`DashboardHtml.cs`)
-- [ ] **フェーズ 2.6-C: まとめ買い親商品の安全識別ガード & #18 解体復元** (`DashboardHtml.cs`, `FurimaServerNative.cs`)
+### フェーズ 2.6 (まとめ買い双方向同期・表示整合化・写真パス補完・費用完全同期) 【全フェーズ完了】
+- [x] **フェーズ 2.6-A: スマホ側 PULL 同期 (`fetchServerItems`) での写真パス自動補完** (`PcServerClient.kt`) 【完了】
+  - PC作成まとめ親商品の写真MD5をもとにスマホ側元子商品の実写真パス（`filePath` / `thumbnailPath`）を引き当てて保存。「No Photo」化とPC側上書き破綻を根本解消。
+- [x] **フェーズ 2.6-B: 個別費用設定（送料・手数料・経費・個別設定フラグ）の双方向同期保持** (`SyncDtos.kt`, `PcServerClient.kt`, `FurimaServerNative.cs`) 【完了】
+  - `shippingCost`, `feeRatePercent`, `expenseCost`, `useCustomSettings` を双方向DTOに復元し、PC側でデフォルト値（210円等）にリセットされる不具合を防止。
+- [x] **フェーズ 2.6-C: PC管理画面 (`DashboardHtml.cs`) での `MERGED` 子商品表示フィルター整頓** (`DashboardHtml.cs`) 【完了】
+  - 「すべて」タブおよびカード一覧で `status === 'MERGED'` の子商品をデフォルト除外（まとめ内包商品として非表示）とし、スマホ側の有効点数（8件）と完全一致させる。
+- [x] **フェーズ 2.6-D: まとめ買い親商品の安全識別ガード & #18 解体復元** (`DashboardHtml.cs`, `FurimaServerNative.cs`) 【完了】
+  - `checkIsBundle` 判定によりタイトル名や写真 `childItemId`、特定ID（#18）から柔軟かつ確実にまとめ商品を識別し、過去データ（#18）でもまとめバッジと「解除（バラす）」ボタンを確実に表示・解体復元可能にする。
+- [x] **フェーズ 2.6-E: トンネルURL待機ガード & ハートビートタイムアウト緩和** (`TunnelQrForm.cs`, `FurimaServerNative.cs`) 【完了】
+  - トンネルURL発行待機中はQR描画を保留し専用プレースホルダーを描画。ハートビート判定を25秒に緩和。
+- [x] **フェーズ 2.6-F: バージョン統一 (Build 22) & ビルド検証 & Gitコミット** 【完了】
+  - バージョン表記を `v2.6 (Build 22)` に統一し、単体テスト・コンパイル検証を実施。
 
 ### フェーズ 2.0-SYNC-REPAIR (通信・同期疎通の根幹修復) 【全ステップ完了】
 - [x] **ステップ 1: スマホアプリ側通信クライアント (`PcServerClient.kt`) の強化** 【完了】
@@ -312,6 +321,64 @@
 
 ---
 
+### フェーズ 2.6 (まとめ買い同期・表示不整合の根本解消 & PC管理画面安定化)
+
+#### [x] **フェーズ 2.6-A: スマホ側 PULL 同期 (`fetchServerItems`) での写真パス自動補完 & No Photo化根絶** 【完了】
+- **目的**: 
+  - `PcServerClient.kt` の `fetchServerItems` (PULL同期) において、全既存写真から MD5 ハッシュ照合および実ファイル存在検証（`exists()`）を実施し、親商品写真にローカルファイルパス（`filePath` / `thumbnailPath`）を自動引き当てて Room DB に保存。
+  - サムネイルのみ存在する写真への自動フォールバック、および `childItemId` を利用した元子商品写真からの補完フォールバックを実装。
+- **編集対象ファイル (完了)**:
+  1. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+
+#### [x] **フェーズ 2.6-B: 個別費用設定の双方向同期保持 & PC編集時利益再計算の適正化** 【完了】
+- **目的**: 
+  - `FurimaServerNative.cs` の `HandleUpdateItem` において、個別設定値（`shippingCost`, `feeRatePercent`, `expenseCost`, `useCustomSettings`）を既存アイテムから安全に維持・継承し、リクエストで値が指定された場合はそれを優先更新。
+  - PC側での更新時、固定値（210円・5%・55円）で利益が誤上書きされていた問題を解消し、商品の実設定値に基づいた正確な純利益（`profit`）を再計算して保存・同期。
+  - `PcServerClient.kt` の `fetchServerItems` において、`shippingCost`, `feeRatePercent`, `expenseCost`, `useCustomSettings` を null-safe に判定・反映。
+- **編集対象ファイル (完了)**:
+  1. `tools/FurimaServerNative.cs`
+  2. `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
+
+#### [x] **フェーズ 2.6-C: PC管理画面での MERGED 子商品フィルター整頓 & 表示点数完全一致化** 【完了】
+- **目的**: 
+  - PC管理画面 (`DashboardHtml.cs`) の `updateStats` および `renderItems` において、`status === 'MERGED'` に加えて `mergedParentId > 0` を持つまとめ内包子商品を一覧カードおよび有効件数（`active.length`）から確実に除外。
+  - スマホ緊急用管理画面 (`WebDashboardHtml.kt`) においても同様に `MERGED` / `mergedParentId > 0` 子商品を有効件数から除外。
+  - 有効点数がスマホアプリ側（8件）と完全一致。
+- **編集対象ファイル (完了)**:
+  1. `tools/DashboardHtml.cs`
+  2. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
+
+#### [x] **フェーズ 2.6-D: まとめ買い親商品の安全識別 & #18 解体復元フォールバック** 【完了】
+- **目的**: 
+  - `DashboardHtml.cs` に `checkIsBundle(item)` 安全判定ヘルパーを新設。`mergedChildCount > 0` に依存せず、タイトル接頭辞（`【まとめ買い】` / `まとめ買いセット`）や写真内の `childItemId`、特定ID（#18）から柔軟かつ確実にまとめ商品を識別。
+  - 写真ギャラリービューアー（`openPhotoViewer`, `renderViewerPhotos`）および一覧カードでのまとめバッジ・解除ボタン表示を完全復元。
+  - `FurimaServerNative.cs` の `HandleUnmergeItem` において、`mergedChildCount` が 0 に上書きされた過去データでも、写真の `childItemId` および `MERGED` ステータスから安全に元子商品（#1, #2, #3, #5 等）を `LISTED` に復元し、親商品を論理削除する救済フォールバックを実装。
+- **編集対象ファイル (完了)**:
+  1. `tools/DashboardHtml.cs`
+  2. `tools/FurimaServerNative.cs`
+
+#### [x] **フェーズ 2.6-E: トンネルURL待機ガード & ハートビートタイムアウト緩和** 【完了】
+- **目的**: 
+  - `tools/TunnelQrForm.cs` において、トンネルURLが初期化待機中の段階で誤って `localhost` をQR描画してしまう問題を防止（URL確定までローディング描画待機）。
+  - `tools/FurimaServerNative.cs` において、ハートビートタイムアウト判定を10秒から25秒に緩和し、モバイルネットワーク・Wi-Fi切り替え時の瞬断による誤切断判定を低減。
+- **編集対象ファイル (完了)**:
+  1. `tools/TunnelQrForm.cs`
+  2. `tools/FurimaServerNative.cs`
+
+#### [x] **フェーズ 2.6-F: バージョン統一 (Build 22) & ビルド検証 & コミット** 【完了】
+- **目的**: 
+  - `app/build.gradle.kts` (versionCode 22, versionName 2.6)、`tools/DashboardHtml.cs` (Build 22)、`WebDashboardHtml.kt` (Build 22) を統一更新。
+  - アプリビルド検証（`compile_applet` & `testDebugUnitTest`）および Git 全同期コミット。
+- **編集対象ファイル (完了)**:
+  1. `app/build.gradle.kts`
+  2. `tools/DashboardHtml.cs`
+  3. `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`
+  4. `PROGRESS.md`
+  5. `PLAN_PHASE_2_2.md`
+  6. `metadata.json`
+
+---
+
 ## 注意事項 (開発・編集ルール)
 1. 返答・編集内容・コマンド・ログの要約のどこにも、アルファベット1文字の直後にコロンが付く書き方（ドライブ文字や短縮オプション等）を書かないこと。パスはプロジェクト相対パスで記述する。
 2. `tools/build-exe.bat` は手動修正済みのため編集しないこと。
@@ -320,6 +387,50 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-12] フェーズ 2.6-F 完了 (バージョン統一 v2.6 Build 22 & 全テスト・ビルド検証完了)
+- **改修内容 (`app/build.gradle.kts`, `DashboardHtml.cs`, `WebDashboardHtml.kt`, `PLAN_PHASE_2_2.md`, `metadata.json`)**:
+  - アプリ側 `versionCode = 22`, `versionName = "2.6"` に更新。
+  - PC管理画面 (`DashboardHtml.cs`) およびスマホ緊急Web画面 (`WebDashboardHtml.kt`) のバージョン表記を `v2.6 (Build 22)` に統一。
+  - `metadata.json` のアプリ名を `res/values/strings.xml` と同期して「フリマ出品・売上管理」に設定。
+  - `compile_applet` および `gradle :app:testDebugUnitTest` による全テスト・ビルド通過を確認。
+  - フェーズ 2.6 の全目標（A〜F）が完了。
+
+### [2026-11-12] フェーズ 2.6-E 完了 (トンネルURL待機ガード & ハートビートタイムアウト緩和)
+- **改修内容 (`TunnelQrForm.cs`, `FurimaServerNative.cs`)**:
+  - `TunnelQrForm.cs` において、トンネルURLが未発行・取得中（`trycloudflare.com` 未確定）の間に誤ったURLや空白・localhostでQRコードを描画してしまう事故を防止するURLバリデーションガードを実装。
+  - URL発行待機中・失敗時には、案内テキスト付きの専用プレースホルダーBitmapを描画し、スマホからの誤スキャンを防止。
+  - `FurimaServerNative.cs` のハートビート判定タイムアウトを25秒に設定し、モバイル通信時のパケット遅延やWi-Fi一時切断によるUIステータスのバタつきを防止。
+  - テストおよびコンパイル検証（`compile_applet` & `testDebugUnitTest`）の完全通過を確認。
+
+### [2026-11-12] フェーズ 2.6-D 完了 (まとめ買い親商品の安全識別 & #18 解体復元フォールバック)
+- **改修内容 (`DashboardHtml.cs`, `FurimaServerNative.cs`)**:
+  - `DashboardHtml.cs` に `checkIsBundle(item)` ヘルパー関数を実装し、一覧カード表示・解除ボタン・写真ギャラリービューアー（`openPhotoViewer`, `renderViewerPhotos`）で統一利用。
+  - `mergedChildCount` が上書き消失した場合でも、タイトル名（`【まとめ買い】` / `まとめ買いセット`）や写真内の `childItemId`、過去不完全データの特定ID（#18）から確実にまとめ商品を認識可能に。
+  - `FurimaServerNative.cs` の `HandleUnmergeItem` に救済フォールバックを追加。親商品の写真に記録された `childItemId` および `status == 'MERGED'` から元子商品を特定し、安全に `LISTED`（`mergedParentId = null`）へと復元。
+  - テストおよびコンパイル検証（`compile_applet` & `testDebugUnitTest`）の完全通過を確認。
+
+### [2026-11-12] フェーズ 2.6-C 完了 (PC管理画面での MERGED 子商品フィルター整頓 & 表示点数完全一致化)
+- **改修内容 (`DashboardHtml.cs`, `WebDashboardHtml.kt`)**:
+  - PC管理画面 (`DashboardHtml.cs`) の `updateStats` および `renderItems` において、`status === 'MERGED'` に加えて `mergedParentId > 0` を持つまとめ内包子商品を一覧カードおよび有効件数（`active.length`）から確実に除外。
+  - スマホ緊急用管理画面 (`WebDashboardHtml.kt`) においても同様に `MERGED` / `mergedParentId > 0` 子商品を有効件数から除外。
+  - これにより、「すべて」タブおよび有効点数がスマホアプリ側（8件）と完全一致し、子商品が親商品と同列に並んで総数が狂う不整合を解消。
+  - テストおよびコンパイル検証（`compile_applet` & `testDebugUnitTest`）の完全通過を確認。
+
+### [2026-11-12] フェーズ 2.6-B 完了 (個別費用設定の双方向同期保持 & PC編集時利益再計算の適正化)
+- **改修内容 (`FurimaServerNative.cs`, `PcServerClient.kt`)**:
+  - `FurimaServerNative.cs` の `HandleUpdateItem` において、個別設定値（`shippingCost`, `feeRatePercent`, `expenseCost`, `useCustomSettings`）を既存アイテムから安全に維持・継承し、リクエストで値が指定された場合はそれを優先更新するよう改修。
+  - PC側での更新時、固定値（210円・5%・55円）で利益が誤上書きされていた問題を解消し、商品の実設定値に基づいた正確な純利益（`profit`）を再計算して保存・同期するよう修正。
+  - `PcServerClient.kt` の `fetchServerItems` において、`shippingCost`, `feeRatePercent`, `expenseCost`, `useCustomSettings` を null-safe に判定・反映し、スマホ ⇄ PC 間でのリセットや不整合を防止。
+  - テストおよびコンパイル検証（`compile_applet` & `testDebugUnitTest`）の完全通過を確認。
+
+### [2026-11-12] フェーズ 2.6-A 完了 (スマホ側 PULL 同期での写真パス自動補完 & No Photo化根絶)
+- **改修内容 (`PcServerClient.kt`)**:
+  - `fetchServerItems` (PULL同期) において、全既存写真から MD5 ハッシュ照合および実ファイル存在検証（`exists()`）を実施し、親商品写真にローカルファイルパス（`filePath` / `thumbnailPath`）を自動引き当てて Room DB に保存するよう改修。
+  - サムネイルのみ存在する写真への自動フォールバック、および `childItemId` を利用した元子商品写真からの補完フォールバックを実装。
+  - 新規商品挿入時だけでなく、既存商品 (`existing != null`) の写真未紐付け・無効パスに対しても自動修復・再紐付けを実行するように強化。
+  - これにより、PC側で作成したまとめ買い商品がスマホ側で「No Photo（写真なし）」になる問題と、その後の自動PUSH同期による不完全データの逆流上書き破綻を根本解消。
+  - `libs.versions.toml` への ktor 依存整備、Robolectric テストおよびコンパイル検証（`compile_applet` & `testDebugUnitTest`）の完全通過を確認。
 
 ### [2026-11-11] まとめ買い同期表示不具合の完全調査完了 & 次フェーズ (フェーズ 2.6) 修正ロードマップ
 - **現象・報告された不具合**:

@@ -25,7 +25,11 @@ data class SyncItemDto(
     @param:Json(name = "bundleLevel") val bundleLevel: Int? = null,
     @param:Json(name = "mergedChildTitles") val mergedChildTitles: String? = null,
     @param:Json(name = "originalTotalBundlePrice") val originalTotalBundlePrice: Int? = null,
-    @param:Json(name = "discountAmount") val discountAmount: Int? = null
+    @param:Json(name = "discountAmount") val discountAmount: Int? = null,
+    @param:Json(name = "shippingCost") val shippingCost: Int = 210,
+    @param:Json(name = "feeRatePercent") val feeRatePercent: Int = 5,
+    @param:Json(name = "expenseCost") val expenseCost: Int = 55,
+    @param:Json(name = "useCustomSettings") val useCustomSettings: Boolean = false
 )
 
 @JsonClass(generateAdapter = true)
