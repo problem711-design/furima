@@ -561,6 +561,31 @@ class FurimaServerNative
                             activeIds.Add(item.Value<int>("id"));
                         }
 
+                        // スマホ側でまとめ解除されてアクティブID一覧から消えたまとめ親商品は isDeleted = true に設定
+                        foreach (var i in itemsDb)
+                        {
+                            if (i == null || !i.ContainsKey("id")) continue;
+                            int itemId = ParseIntSafe(i["id"]);
+                            if (!activeIds.Contains(itemId) && i.ContainsKey("mergedChildCount") && ParseIntSafe(i["mergedChildCount"], 0) > 0)
+                            {
+                                bool isDel = i.ContainsKey("isDeleted") && (bool)i["isDeleted"];
+                                if (!isDel)
+                                {
+                                    bool childrenUnmerged = itemsArr.Any(p => {
+                                        JObject pObj = p as JObject;
+                                        if (pObj == null) return false;
+                                        int mPid = pObj.ContainsKey("mergedParentId") && pObj["mergedParentId"] != null && pObj["mergedParentId"].Type != JTokenType.Null ? pObj.Value<int>("mergedParentId") : 0;
+                                        return mPid == 0;
+                                    });
+                                    if (childrenUnmerged)
+                                    {
+                                        i["isDeleted"] = true;
+                                        i["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                                    }
+                                }
+                            }
+                        }
+
                         // スマホ側に存在しない古い商品を itemsDb から一括除去 (完全同期)
                         // ※ ただし、まとめ内包中の子商品 (mergedParentId != null) や、PC側で作成されたまとめ親商品は誤削除から保護
                         itemsDb.RemoveAll(i => {
@@ -1322,6 +1347,13 @@ class FurimaServerNative
 
                     int profit = totalSoldPrice - newShippingCost - (totalSoldPrice * newFeeRatePercent / 100) - newExpenseCost;
 
+                    int totalChildCount = 0;
+                    foreach (var child in childItems)
+                    {
+                        int cCount = child.ContainsKey("mergedChildCount") ? ParseIntSafe(child["mergedChildCount"], 0) : 0;
+                        totalChildCount += (cCount > 0) ? cCount : 1;
+                    }
+
                     var parentDict = new Dictionary<string, object>
                     {
                         { "id", newParentId },
@@ -1336,7 +1368,7 @@ class FurimaServerNative
                         { "feeRatePercent", newFeeRatePercent },
                         { "expenseCost", newExpenseCost },
                         { "useCustomSettings", true },
-                        { "mergedChildCount", childItemIds.Count },
+                        { "mergedChildCount", totalChildCount },
                         { "mergedChildTitles", string.Join(", ", childTitlesList.ToArray()) },
                         { "originalTotalBundlePrice", originalTotal },
                         { "discountAmount", Math.Max(0, originalTotal - totalSoldPrice) },

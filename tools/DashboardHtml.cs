@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.6 (Build 22)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.7 (Build 23)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -693,6 +693,10 @@ public static class DashboardHtml
         }
 
         function toggleSelect(id) {
+            const item = allItems.find(i => i.id === id);
+            if (item && (item.status === 'SOLD' || item.status === 'MERGED' || item.isDeleted)) {
+                return;
+            }
             if (selectedItemIds.has(id)) {
                 selectedItemIds.delete(id);
             } else {
@@ -712,7 +716,9 @@ public static class DashboardHtml
             const bar = document.getElementById('merge-floating-bar');
             const countElem = document.getElementById('selected-count');
             if (selectedItemIds.size > 0) {
-                countElem.innerText = selectedItemIds.size;
+                const selectedItems = allItems.filter(i => selectedItemIds.has(i.id));
+                const totalSubItems = selectedItems.reduce((s, i) => s + ((i.mergedChildCount && i.mergedChildCount > 0) ? i.mergedChildCount : 1), 0);
+                countElem.innerText = totalSubItems;
                 bar.classList.remove('hidden');
             } else {
                 bar.classList.add('hidden');
@@ -775,7 +781,7 @@ public static class DashboardHtml
                     <!-- サムネイル外の選択チェックボックスバー -->
                     <div class='px-2.5 py-1 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px]'>
                         <label class='flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 hover:text-indigo-600' onclick='event.stopPropagation()'>
-                            <input type='checkbox' class='w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500' onchange='toggleSelect(${item.id})' ${isChecked ? 'checked' : ''}>
+                            <input type='checkbox' class='w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 ${isSold || isMergedChild ? 'opacity-40 cursor-not-allowed' : ''}' onchange='toggleSelect(${item.id})' ${isChecked ? 'checked' : ''} ${isSold || isMergedChild ? 'disabled' : ''}>
                             <span class='font-mono text-slate-500'>#${item.id}</span>
                         </label>
                         <div class='flex items-center gap-1'>
@@ -1027,10 +1033,10 @@ public static class DashboardHtml
             }
 
             const selectedItems = allItems.filter(i => selectedItemIds.has(i.id));
-            const count = selectedItems.length;
-            const originalTotal = selectedItems.sumOf ? selectedItems.sumOf(i => i.price) : selectedItems.reduce((s, i) => s + (i.price || 0), 0);
+            const totalSubItems = selectedItems.reduce((s, i) => s + ((i.mergedChildCount && i.mergedChildCount > 0) ? i.mergedChildCount : 1), 0);
+            const originalTotal = selectedItems.reduce((s, i) => s + (i.price || 0), 0);
 
-            document.getElementById('merge-title').value = 'まとめ買いセット (' + count + '点)';
+            document.getElementById('merge-title').value = 'まとめ買いセット (' + totalSubItems + '点)';
             checkTitleLength('merge');
 
             document.getElementById('merge-price').value = originalTotal;
@@ -1039,7 +1045,7 @@ public static class DashboardHtml
             document.getElementById('merge-expense').value = 55;
 
             const breakdown = selectedItems.map(i => '- ' + i.title + ' (¥' + (i.price || 0).toLocaleString() + ')').join('\n');
-            document.getElementById('merge-description').value = '【まとめ買い対象商品 (' + count + '点)】\n' + breakdown + '\n\n--- 商品説明 ---\nそれぞれの商品の状態は個別写真をご確認ください。個別でのご購入よりお安く設定しております。';
+            document.getElementById('merge-description').value = '【まとめ買い対象商品 (' + totalSubItems + '点)】\n' + breakdown + '\n\n--- 商品説明 ---\nそれぞれの商品の状態は個別写真をご確認ください。個別でのご購入よりお安く設定しております。';
 
             updateMergeCalculations();
             document.getElementById('merge-modal').classList.remove('hidden');

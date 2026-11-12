@@ -1,6 +1,7 @@
 package com.example.myapplication.ui.screens
 
 import android.widget.Toast
+import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -513,6 +514,8 @@ fun ItemListScreen(
 
                     // 複数選択時の下部「まとめ買い」アクションバー
                     if (isSelectionMode && selectedItemIds.size >= 2) {
+                        val selectedItemsList = visibleItems.filter { selectedItemIds.contains(it.item.id) }
+                        val selectedSubItemCount = selectedItemsList.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
                         Surface(
                             shadowElevation = 8.dp,
                             color = MaterialTheme.colorScheme.primaryContainer,
@@ -529,7 +532,7 @@ fun ItemListScreen(
                             ) {
                                 Column {
                                     Text(
-                                        text = "${selectedItemIds.size}点の商品を選択中",
+                                        text = "${selectedSubItemCount}点の商品を選択中",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -586,12 +589,14 @@ fun CompactItemCard(
     val profit = (basePrice - fee - effectiveShipping - effectiveExpense).coerceAtLeast(0)
 
     val isBundle = item.mergedChildCount > 0 || item.bundleLevel > 0
+    val isSelectable = item.status == "LISTED" || item.status == "DRAFT"
 
     val displayImageFile = firstPhoto?.displayFile
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (isSelectionMode && !isSelectable) Modifier.alpha(0.5f) else Modifier)
             .combinedClickable(
                 onClick = onClick,
                 onLongClick = onLongClick
