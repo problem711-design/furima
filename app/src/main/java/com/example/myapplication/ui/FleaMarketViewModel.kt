@@ -312,6 +312,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         if (current.contains(id)) {
             current.remove(id)
         } else {
+            val itemWithPhotos = itemsWithPhotos.value.firstOrNull { it.item.id == id }
+            if (itemWithPhotos != null && (itemWithPhotos.item.status == "SOLD" || itemWithPhotos.item.status == "MERGED")) {
+                return
+            }
             current.add(id)
         }
         _selectedItemIds.value = current
@@ -405,6 +409,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     fun unmergeItem(parentId: Int, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             repository.unmergeItem(parentId)
+            pcServerClient.unmergeOnPcServer(parentId)
             triggerAutoSync()
             onSuccess()
         }

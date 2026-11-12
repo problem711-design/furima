@@ -558,4 +558,25 @@ class PcServerClient(
             false
         }
     }
+
+    /**
+     * PC サーバーへまとめ買い解除（POST /api/items/{parentId}/unmerge）を通知
+     */
+    suspend fun unmergeOnPcServer(parentId: Int): Boolean = withContext(Dispatchers.IO) {
+        val cleanUrl = getSavedServerUrl().trim().removeSuffix("/")
+        if (cleanUrl.isBlank()) return@withContext false
+        val token = getSavedAuthToken()
+        val url = "$cleanUrl/api/items/$parentId/unmerge"
+        val reqBuilder = Request.Builder().url(url).post(ByteArray(0).toRequestBody(null))
+        if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+        try {
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                response.isSuccessful
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "unmergeOnPcServer 例外: ${e.message}", e)
+            false
+        }
+    }
 }
+

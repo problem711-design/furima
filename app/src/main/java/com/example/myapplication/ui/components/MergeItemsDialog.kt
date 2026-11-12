@@ -61,9 +61,10 @@ fun MergeItemsDialog(
     val itemsList = remember { mutableStateListOf<ItemWithPhotos>().apply { addAll(selectedItems) } }
 
     val totalOriginalPrice = itemsList.sumOf { it.item.price }
+    val totalChildCount = itemsList.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
     val defaultTitle = "【まとめ買い】" + itemsList.joinToString("＋") { it.item.title }
     val defaultDesc = buildString {
-        appendLine("まとめ買いご依頼品です。")
+        appendLine("まとめ買いご依頼品 (${totalChildCount}点) です。")
         appendLine("-------------------------")
         for (item in itemsList) {
             appendLine("・${item.item.title} (通常価格: ¥${item.item.price})")
@@ -95,7 +96,7 @@ fun MergeItemsDialog(
         },
         title = {
             Text(
-                text = "選択した出品をまとめる (${itemsList.size}点)",
+                text = "選択した出品をまとめる (${totalChildCount}点)",
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp
             )

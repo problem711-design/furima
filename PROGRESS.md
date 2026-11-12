@@ -27,7 +27,17 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.6)
 
-現在のバージョン: **`v2.6 (Build 22)`**
+現在のバージョン: **`v2.7 (Build 23)`**
+
+### フェーズ 2.7 (まとめ買い解除のゾンビ親商品根絶・売却済/まとめ済商品の選択ガード・まとめ点数合算表示改善) 【全フェーズ完了】
+- [x] **フェーズ 2.7-A: スマホ・PC両面でのまとめ買い解除（バラす）時のゾンビ親商品発生根絶** (`FleaMarketRepository.kt`, `FleaMarketViewModel.kt`, `PcServerClient.kt`, `FurimaServerNative.cs`) 【完了】
+  - スマホ側から `POST /api/items/{parentId}/unmerge` を通知する `unmergeOnPcServer` を実装し、PCサーバー側の `HandleSyncItems` でもアクティブIDから消えた親商品の子商品解除状態を検知して `isDeleted = true` を確実付与。ゾンビ親商品の復活を根本解消。
+- [x] **フェーズ 2.7-B: 売却済み (`SOLD`) およびまとめ内包済み (`MERGED`) 商品のまとめ選択ガード** (`FleaMarketViewModel.kt`, `ItemListScreen.kt`, `DashboardHtml.cs`) 【完了】
+  - スマホアプリおよびPC管理画面のまとめ選択モードにおいて、ステータスが `SOLD` または `MERGED` の商品はチェックボックスを選択不可（グレーアウト・無効化）にし、誤選択を防止。
+- [x] **フェーズ 2.7-C: まとめ商品作成時の内包累計子商品数（〇点）算出ロジックの適正化** (`FleaMarketRepository.kt`, `MergeItemsDialog.kt`, `ItemListScreen.kt`, `FurimaServerNative.cs`, `DashboardHtml.cs`) 【完了】
+  - 選択カードの枚数ではなく、選択された各アイテムの `mergedChildCount`（内包子商品数、単品は1）を合算して「〇点」およびダイアログタイトルを算出・表示するよう刷新。
+- [x] **フェーズ 2.7-D: バージョン統一 (Build 23) & 単体テスト・ビルド検証** 【完了】
+  - `app/build.gradle.kts` (versionCode 23, versionName 2.7)、`DashboardHtml.cs` (Build 23)、`WebDashboardHtml.kt` (Build 23) を同時統一更新。単体テスト (`testDebugUnitTest`) およびコンパイル検証の完全通過を確認。
 
 ### フェーズ 2.6 (まとめ買い双方向同期・表示整合化・写真パス補完・費用完全同期) 【全フェーズ完了】
 - [x] **フェーズ 2.6-A: スマホ側 PULL 同期 (`fetchServerItems`) での写真パス自動補完** (`PcServerClient.kt`) 【完了】

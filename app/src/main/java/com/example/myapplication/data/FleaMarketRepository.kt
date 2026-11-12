@@ -196,6 +196,7 @@ class FleaMarketRepository(private val context: Context) {
         val originalTotal = childItems.sumOf { it.item.price }
         val discount = (originalTotal - totalSoldPrice).coerceAtLeast(0)
         val maxChildLevel = childItems.maxOfOrNull { it.item.bundleLevel } ?: 0
+        val totalChildCount = childItems.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
 
         // 1. 新しいまとめ商品の作成 (デフォルトで LISTED: 出品中)
         val parentItem = ItemEntity(
@@ -208,7 +209,7 @@ class FleaMarketRepository(private val context: Context) {
             feeRatePercent = newFeeRatePercent,
             expenseCost = newExpenseCost,
             useCustomSettings = true,
-            mergedChildCount = childItemIds.size,
+            mergedChildCount = totalChildCount,
             mergedChildTitles = childTitles,
             originalTotalBundlePrice = originalTotal,
             discountAmount = discount,
