@@ -29,10 +29,10 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.7〜)
 
-現在のバージョン: **`v2.7 (Build 23)`**
+現在のバージョン: **`v2.8 (Build 24)`**
 
 ### 今後の予定フェーズ (詳細は `PLAN_PHASE_2_8_TO_2_11.md` を参照)
-- [ ] **フェーズ 2.8 (予定 v2.8 / Build 24)**: 同期競合防止（PULL先行化・解除判定厳格化）・QRコードISO準拠完全修復・緑バナー接続確認後ブラウザ起動・Yahoo!フリマ通常タブ表示（案A）
+- [x] **フェーズ 2.8 (完了 v2.8 / Build 24)**: 同期競合防止（Mutex排他・`syncedToPhone` 保護・解除判定厳格化）・QRコードISO準拠完全修復（V1〜12）・緑ステータス確定後ブラウザ起動・Yahoo!フリマ通常タブ表示（案A）
 - [ ] **フェーズ 2.9 (予定 v2.9 / Build 25)**: `createdAt`/`updatedAt`/`soldAt` 双方向同期・PC管理画面5段階優先度ソート・スマホCSVバグ修正&PC側CSVダウンロード追加
 - [ ] **フェーズ 2.10 (予定 v2.10 / Build 26)**: バックボタン安全化（編集破棄確認・タブ戻り・終了確認）・サムネ容量可視化・「PCに送信」のLocalSend専用化・「ギャラリーに保存」刷新＆認証付き高画質取得/自己修復基盤
 - [ ] **フェーズ 2.11 (予定 v2.11 / Build 27)**: 基本設定/プリセットPC同期・0円許容&写真削除API・PC新規/編集モーダルのスマホ同等化
@@ -405,6 +405,14 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-13] フェーズ 2.8-A〜D 完了 バージョン 2.8 (Build 24)
+- **改修内容 (`PcServerClient.kt`, `FleaMarketViewModel.kt`, `FurimaServerNative.cs`, `TunnelQrForm.cs`, `DashboardHtml.cs`, `app/build.gradle.kts`, `WebDashboardHtml.kt`)**:
+  - **2.8-A (同期競合防止)**: `FleaMarketViewModel` に `syncMutex` を導入し定期PULL・デバウンス自動同期・手動同期を排他制御。PCサーバー側は未同期のPC作成・編集・まとめアイテム (`syncedToPhone == false`) を `HandleSyncItems` による上書き・誤削除から保護し、スマホから `X-Client-Type` ヘッダ付きで `GET /api/items` 完了後に `syncedToPhone = true` へ遷移。親商品の自動論理削除条件も対象親の具体的な子商品すべてが解除状態の場合のみに厳格化。
+  - **2.8-B (QRコード完全修復)**: `TunnelQrForm.cs` の `SimpleQrEncoder` を ISO/IEC 18004 Level-L (Version 1〜12, 最大367バイト) 準拠の純C#エンコーダへ刷新。生成多項式とRS剰余除算を修正し、マルチブロック分割・インターリーブ・Version 7以上の18bit Version Info・タイミング線交差アライメント・全8マスク最小ペナルティ選択を実装。
+  - **2.8-C (ブラウザ選択表示タイミング改善)**: `OnHeartbeatReceived()` を新設し、単発ハートビートで即座にダイアログを開かず「● スマホアプリ接続中」（緑表示）確定後にタイマー遅延（800〜1200ms）で1回だけ `BrowserSelectDialog` を開くよう整理。併せてダイアログのキャンセルボタンが標準ブラウザを開いてしまう不具合を分離修正。
+  - **2.8-D (Yahoo!フリマ開き方改善・案A)**: `openYahooSplit()` のサイズ/ポップアップ指定を外し、フル機能の通常ブラウザタブとして開くように変更し、Windows スナップ操作の案内トーストを表示。
+  - バージョン表記を `v2.8 (Build 24)` に統一し、`compile_applet` および `gradle :app:testDebugUnitTest` の全通過を確認。
 
 ### [2026-11-12] フェーズ 2.6-F 完了 (バージョン統一 v2.6 Build 22 & 全テスト・ビルド検証完了)
 - **改修内容 (`app/build.gradle.kts`, `DashboardHtml.cs`, `WebDashboardHtml.kt`, `PLAN_PHASE_2_2.md`, `metadata.json`)**:

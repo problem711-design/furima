@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.7 (Build 23)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.8 (Build 24)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -42,8 +42,8 @@ public static class DashboardHtml
                 <i class='fa-solid fa-boxes-stacked text-lg text-indigo-200'></i>
                 <h1 class='font-black text-sm tracking-tight whitespace-nowrap'>フリマ商品PC管理</h1>
                 <span class='bg-indigo-800/90 text-indigo-100 text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold border border-indigo-500'>母艦サーバー</span>
-                <button onclick='openYahooSplit()' class='bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-2.5 py-1 rounded-md shadow-sm transition flex items-center gap-1.5 ml-2 border border-rose-400/50' title='本画面を左半分、Yahoo!フリマ出品画面を右半分に配置'>
-                    <i class='fa-solid fa-table-columns text-[10px]'></i> Yahoo!フリマ左右分割出品
+                <button onclick='openYahooSplit()' class='bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-2.5 py-1 rounded-md shadow-sm transition flex items-center gap-1.5 ml-2 border border-rose-400/50' title='Yahoo!フリマ出品画面を通常タブで開きます（タブを切り離して Win + ← / → で左右に並べて利用できます）'>
+                    <i class='fa-solid fa-up-right-from-square text-[10px]'></i> Yahoo!フリマ出品画面を開く
                 </button>
             </div>
 
@@ -560,19 +560,8 @@ public static class DashboardHtml
         }
 
         function openYahooSplit() {
-            try {
-                window.moveTo(0, 0);
-                window.resizeTo(Math.floor(window.screen.availWidth / 2), window.screen.availHeight);
-            } catch (e) {}
-
-            const halfW = Math.floor(window.screen.availWidth / 2);
-            const fullH = window.screen.availHeight;
-            window.open(
-                'https://paypayfleamarket.yahoo.co.jp/sell',
-                'yahoo_furima_seller',
-                'left=' + halfW + ',top=0,width=' + halfW + ',height=' + fullH + ',menubar=no,status=no,toolbar=no'
-            );
-            showToast('Yahoo!フリマ出品画面を右半分に配置しました');
+            window.open('https://paypayfleamarket.yahoo.co.jp/sell', '_blank');
+            showToast('Yahoo!フリマを通常タブで開きました（左右分割する場合はタブを別ウィンドウに出して Win + → で配置できます）');
         }
 
         async function openFolder(id) {

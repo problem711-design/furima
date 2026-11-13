@@ -29,6 +29,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.Calendar
 
@@ -564,6 +566,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     private var heartbeatJob: Job? = null
     private var autoSyncJob: Job? = null
+    private val syncMutex = Mutex()
 
     init {
         startHeartbeatLoop()
@@ -581,9 +584,14 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     _isPcServerConnected.value = connected
                     // 定期自動同期: 接続中は約12秒ごと (3ループに1回) にPC側の変更や削除を自動取得
                     if (connected && loopCount % 3 == 0) {
-                        try {
-                            pcServerClient.fetchServerItems(url, token)
-                        } catch (_: Exception) {}
+                        if (syncMutex.tryLock()) {
+                            try {
+                                pcServerClient.fetchServerItems(url, token)
+                            } catch (_: Exception) {
+                            } finally {
+                                syncMutex.unlock()
+                            }
+                        }
                     }
                 } else {
                     _isPcServerConnected.value = false
@@ -595,7 +603,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
-     * ローカルデータ変更時にバックグラウンドでPC母艦へ自動差分Push（500msデバウンス）
+     * ローカルデータ変更時にバックグラウンドでPC母艦へ自動差分Push（500msデバウンス・Mutex排他）
      */
     fun triggerAutoSync() {
         val url = _pcServerUrl.value
@@ -605,12 +613,14 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         autoSyncJob?.cancel()
         autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
             delay(500)
-            try {
-                val result = pcServerClient.syncDeltaToPcServer(url, token)
-                if (result.isSuccess) {
-                    pcServerClient.fetchServerItems(url, token)
-                }
-            } catch (_: Exception) {}
+            syncMutex.withLock {
+                try {
+                    val result = pcServerClient.syncDeltaToPcServer(url, token)
+                    if (result.isSuccess) {
+                        pcServerClient.fetchServerItems(url, token)
+                    }
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -662,9 +672,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val url = _pcServerUrl.value
             val token = _pcAuthToken.value
-            val result = pcServerClient.syncDeltaToPcServer(url, token)
-            if (result.isSuccess) {
-                pcServerClient.fetchServerItems(url, token)
+            val result = syncMutex.withLock {
+                val pushRes = pcServerClient.syncDeltaToPcServer(url, token)
+                if (pushRes.isSuccess) {
+                    pcServerClient.fetchServerItems(url, token)
+                }
+                pushRes
             }
             _isPcServerConnected.value = result.isSuccess
             onResult(result)

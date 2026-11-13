@@ -415,10 +415,29 @@ class FurimaServerNative
             }
             else if (rawPath == "/api/items" && req.HttpMethod == "GET")
             {
+                bool isPhoneClient = string.Equals(req.Headers["X-Client-Type"], "phone", StringComparison.OrdinalIgnoreCase);
+                string jsonResponse;
                 lock (lockObj)
                 {
-                    SendJson(res, itemsDb);
+                    jsonResponse = JsonConvert.SerializeObject(itemsDb);
+                    if (isPhoneClient)
+                    {
+                        foreach (var item in itemsDb)
+                        {
+                            if (item != null) item["syncedToPhone"] = true;
+                        }
+                    }
                 }
+                if (isPhoneClient)
+                {
+                    lastHeartbeat = DateTime.Now;
+                    if (qrForm != null) qrForm.OnAppConnected();
+                }
+                byte[] bytes = Encoding.UTF8.GetBytes(jsonResponse);
+                res.ContentType = "application/json; charset=utf-8";
+                res.ContentLength64 = bytes.Length;
+                res.OutputStream.Write(bytes, 0, bytes.Length);
+                res.OutputStream.Close();
             }
             else if (rawPath == "/api/items" && req.HttpMethod == "POST")
             {
@@ -450,7 +469,7 @@ class FurimaServerNative
             else if (rawPath == "/api/server/heartbeat")
             {
                 lastHeartbeat = DateTime.Now;
-                if (qrForm != null) qrForm.OnAppConnected();
+                if (qrForm != null) qrForm.OnHeartbeatReceived();
                 SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "timestamp", DateTime.Now.Ticks } });
             }
             else if (rawPath == "/api/sync/hashes")
@@ -555,29 +574,87 @@ class FurimaServerNative
                 {
                     lock (lockObj)
                     {
+                        Dictionary<int, JObject> phoneItemById = new Dictionary<int, JObject>();
                         HashSet<int> activeIds = new HashSet<int>();
                         foreach (JObject item in itemsArr)
                         {
-                            activeIds.Add(item.Value<int>("id"));
+                            int pid = item.Value<int>("id");
+                            activeIds.Add(pid);
+                            phoneItemById[pid] = item;
                         }
 
-                        // スマホ側でまとめ解除されてアクティブID一覧から消えたまとめ親商品は isDeleted = true に設定
+                        // スマホ未PULLのPC側変更・新規作成・新規まとめ商品を保護するための集合
+                        HashSet<int> protectedPendingIds = new HashSet<int>();
+                        foreach (var i in itemsDb)
+                        {
+                            if (i == null || !i.ContainsKey("id")) continue;
+                            bool syncedToPhone = !i.ContainsKey("syncedToPhone") || i["syncedToPhone"] == null || Convert.ToBoolean(i["syncedToPhone"]);
+                            if (!syncedToPhone)
+                            {
+                                protectedPendingIds.Add(ParseIntSafe(i["id"]));
+                            }
+                        }
+
+                        // スマホ側でまとめ解除されてアクティブID一覧から消えたまとめ親商品は、その親自身の個別子商品がすべて unmerged (mergedParentId == null) に戻っている場合のみ isDeleted = true に設定
                         foreach (var i in itemsDb)
                         {
                             if (i == null || !i.ContainsKey("id")) continue;
                             int itemId = ParseIntSafe(i["id"]);
+                            if (protectedPendingIds.Contains(itemId)) continue;
+
                             if (!activeIds.Contains(itemId) && i.ContainsKey("mergedChildCount") && ParseIntSafe(i["mergedChildCount"], 0) > 0)
                             {
-                                bool isDel = i.ContainsKey("isDeleted") && (bool)i["isDeleted"];
+                                bool isDel = i.ContainsKey("isDeleted") && i["isDeleted"] != null && (bool)i["isDeleted"];
                                 if (!isDel)
                                 {
-                                    bool childrenUnmerged = itemsArr.Any(p => {
-                                        JObject pObj = p as JObject;
-                                        if (pObj == null) return false;
-                                        int mPid = pObj.ContainsKey("mergedParentId") && pObj["mergedParentId"] != null && pObj["mergedParentId"].Type != JTokenType.Null ? pObj.Value<int>("mergedParentId") : 0;
-                                        return mPid == 0;
-                                    });
-                                    if (childrenUnmerged)
+                                    // サーバー上でこの親に紐づく具体的な子商品ID群を抽出
+                                    List<int> knownChildIds = new List<int>();
+                                    foreach (var candidate in itemsDb)
+                                    {
+                                        if (candidate != null && candidate.ContainsKey("mergedParentId") && candidate["mergedParentId"] != null)
+                                        {
+                                            if (ParseIntSafe(candidate["mergedParentId"], 0) == itemId)
+                                            {
+                                                knownChildIds.Add(ParseIntSafe(candidate["id"]));
+                                            }
+                                        }
+                                    }
+                                    if (knownChildIds.Count == 0 && i.ContainsKey("photos") && i["photos"] != null)
+                                    {
+                                        var pEnum = i["photos"] as System.Collections.IEnumerable;
+                                        if (pEnum != null)
+                                        {
+                                            foreach (var pObj in pEnum)
+                                            {
+                                                var pDict = pObj as Dictionary<string, object>;
+                                                if (pDict != null && pDict.ContainsKey("childItemId"))
+                                                {
+                                                    int cid = ParseIntSafe(pDict["childItemId"], 0);
+                                                    if (cid > 0 && !knownChildIds.Contains(cid)) knownChildIds.Add(cid);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    bool specificChildrenUnmerged = knownChildIds.Count > 0;
+                                    foreach (int cid in knownChildIds)
+                                    {
+                                        JObject phoneChild;
+                                        if (!phoneItemById.TryGetValue(cid, out phoneChild))
+                                        {
+                                            specificChildrenUnmerged = false;
+                                            break;
+                                        }
+                                        int mPid = phoneChild.ContainsKey("mergedParentId") && phoneChild["mergedParentId"] != null && phoneChild["mergedParentId"].Type != JTokenType.Null
+                                            ? ParseIntSafe(phoneChild["mergedParentId"], 0) : 0;
+                                        if (mPid != 0)
+                                        {
+                                            specificChildrenUnmerged = false;
+                                            break;
+                                        }
+                                    }
+
+                                    if (specificChildrenUnmerged)
                                     {
                                         i["isDeleted"] = true;
                                         i["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -587,19 +664,25 @@ class FurimaServerNative
                         }
 
                         // スマホ側に存在しない古い商品を itemsDb から一括除去 (完全同期)
-                        // ※ ただし、まとめ内包中の子商品 (mergedParentId != null) や、PC側で作成されたまとめ親商品は誤削除から保護
+                        // ※ ただし、PC側で作成・変更されスマホ未PULLの商品、まとめ内包中の子商品、およびまとめ親商品は誤削除から保護
                         itemsDb.RemoveAll(i => {
                             if (i == null || !i.ContainsKey("id")) return false;
                             int itemId = ParseIntSafe(i["id"]);
                             if (activeIds.Contains(itemId)) return false;
+                            if (protectedPendingIds.Contains(itemId)) return false;
                             if (i.ContainsKey("mergedParentId") && ParseIntSafe(i["mergedParentId"], 0) > 0) return false;
-                            if (i.ContainsKey("mergedChildCount") && ParseIntSafe(i["mergedChildCount"], 0) > 0 && !(bool)(i.ContainsKey("isDeleted") && (bool)i["isDeleted"])) return false;
+                            if (i.ContainsKey("mergedChildCount") && ParseIntSafe(i["mergedChildCount"], 0) > 0 && !(bool)(i.ContainsKey("isDeleted") && i["isDeleted"] != null && (bool)i["isDeleted"])) return false;
                             return true;
                         });
 
                         foreach (JObject item in itemsArr)
                         {
                             int id = item.Value<int>("id");
+                            if (protectedPendingIds.Contains(id))
+                            {
+                                // スマホ側がまだPCの最新変更(まとめ/編集/解除)をPULLしていないため、古いスマホデータでの上書きをスキップ
+                                continue;
+                            }
                             string title = item.Value<string>("title") ?? "商品";
                             string description = item.Value<string>("description") ?? "";
                             int price = item.Value<int>("price");
@@ -957,6 +1040,7 @@ class FurimaServerNative
                     item["useCustomSettings"] = useCustom;
                     item["profit"] = profit;
                     item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    item["syncedToPhone"] = false;
 
                     try
                     {
@@ -1077,6 +1161,7 @@ class FurimaServerNative
                 {
                     item["isDeleted"] = true;
                     item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    item["syncedToPhone"] = false;
                 }
             }
 
@@ -1156,6 +1241,7 @@ class FurimaServerNative
                         { "useCustomSettings", useCustomSettings },
                         { "isShared", true },
                         { "isDeleted", false },
+                        { "syncedToPhone", false },
                         { "createdAt", now },
                         { "updatedAt", now },
                         { "photos", new List<Dictionary<string, object>>() }
@@ -1343,6 +1429,7 @@ class FurimaServerNative
                         child["statusLabel"] = "まとめ売却済";
                         child["mergedParentId"] = newParentId;
                         child["updatedAt"] = now;
+                        child["syncedToPhone"] = false;
                     }
 
                     int profit = totalSoldPrice - newShippingCost - (totalSoldPrice * newFeeRatePercent / 100) - newExpenseCost;
@@ -1377,6 +1464,7 @@ class FurimaServerNative
                         { "updatedAt", now },
                         { "isShared", true },
                         { "isDeleted", false },
+                        { "syncedToPhone", false },
                         { "photos", parentPhotos }
                     };
 
@@ -1462,6 +1550,7 @@ class FurimaServerNative
                             item["statusLabel"] = "出品中";
                             item["mergedParentId"] = null;
                             item["updatedAt"] = now;
+                            item["syncedToPhone"] = false;
                             restoredCount++;
                         }
                     }
@@ -1493,6 +1582,7 @@ class FurimaServerNative
                                 cItem["statusLabel"] = "出品中";
                                 cItem["mergedParentId"] = null;
                                 cItem["updatedAt"] = now;
+                                cItem["syncedToPhone"] = false;
                                 restoredCount++;
                             }
                         }
@@ -1509,6 +1599,7 @@ class FurimaServerNative
                             item["statusLabel"] = "出品中";
                             item["mergedParentId"] = null;
                             item["updatedAt"] = now;
+                            item["syncedToPhone"] = false;
                             restoredCount++;
                         }
                     }
@@ -1517,6 +1608,7 @@ class FurimaServerNative
                 // 親商品は論理削除（スマホへの削除伝播とゾンビ復活防止のため）
                 parentItem["isDeleted"] = true;
                 parentItem["updatedAt"] = now;
+                parentItem["syncedToPhone"] = false;
             }
 
             SaveItemsDbToDisk();
@@ -1622,6 +1714,7 @@ class FurimaServerNative
                     });
                     item["photos"] = photosList;
                     item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    item["syncedToPhone"] = false;
                 }
             }
 

@@ -375,7 +375,10 @@ class PcServerClient(
             val cleanUrl = baseUrl.trimEnd('/')
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
             val url = "$cleanUrl/api/items"
-            val reqBuilder = Request.Builder().url(url).get()
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .addHeader("X-Client-Type", "phone")
+                .get()
             if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
 
             client.newCall(reqBuilder.build()).execute().use { response ->

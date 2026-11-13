@@ -23,6 +23,9 @@ public class TunnelQrForm : Form
     private ContextMenuStrip trayMenu;
     private bool isExiting = false;
     private bool hasPromptedBrowser = false;
+    private bool isPhoneConnected = false;
+    private int heartbeatCount = 0;
+    private System.Windows.Forms.Timer browserPromptTimer;
 
     private string currentStoreId;
     private string currentSyncDir;
@@ -63,7 +66,7 @@ public class TunnelQrForm : Form
         lblStatus = new Label();
         lblStatus.Text = "● サーバー稼働中 (接続待機中)";
         lblStatus.Font = new Font("Meiryo UI", 11F, FontStyle.Bold);
-        lblStatus.ForeColor = Color.DarkGreen;
+        lblStatus.ForeColor = Color.FromArgb(180, 83, 9);
         lblStatus.AutoSize = true;
         mainLayout.Controls.Add(lblStatus, 0, 0);
         mainLayout.SetColumnSpan(lblStatus, 2);
@@ -199,6 +202,12 @@ public class TunnelQrForm : Form
     public void ExitApp()
     {
         isExiting = true;
+        if (browserPromptTimer != null)
+        {
+            browserPromptTimer.Stop();
+            browserPromptTimer.Dispose();
+            browserPromptTimer = null;
+        }
         if (notifyIcon != null)
         {
             notifyIcon.Visible = false;
@@ -208,7 +217,31 @@ public class TunnelQrForm : Form
     }
 
     /// <summary>
-    /// スマホアプリからの接続検知時に呼び出される処理
+    /// スマホアプリからのハートビート受信時に呼び出される処理
+    /// 単発pingでは即ダイアログを出さず、緑ステータス確定後に遅延表示する
+    /// </summary>
+    public void OnHeartbeatReceived()
+    {
+        if (this.InvokeRequired)
+        {
+            this.BeginInvoke(new Action(OnHeartbeatReceived));
+            return;
+        }
+
+        isPhoneConnected = true;
+        heartbeatCount++;
+        lblStatus.Text = "● スマホアプリ接続中";
+        lblStatus.ForeColor = Color.DarkGreen;
+
+        if (!hasPromptedBrowser && heartbeatCount >= 2)
+        {
+            ScheduleBrowserPrompt(1000);
+        }
+    }
+
+    /// <summary>
+    /// スマホアプリからの有効な同期・接続確認時に呼び出される処理
+    /// 緑ステータス反映を待ってからブラウザ選択ダイアログを開く
     /// </summary>
     public void OnAppConnected()
     {
@@ -218,17 +251,36 @@ public class TunnelQrForm : Form
             return;
         }
 
+        isPhoneConnected = true;
         lblStatus.Text = "● スマホアプリ接続中";
         lblStatus.ForeColor = Color.DarkGreen;
 
-        if (hasPromptedBrowser) return;
-        hasPromptedBrowser = true;
+        if (!hasPromptedBrowser)
+        {
+            ScheduleBrowserPrompt(800);
+        }
+    }
 
-        // ウィンドウを前面に復元
-        RestoreFromTray();
+    private void ScheduleBrowserPrompt(int delayMs)
+    {
+        if (hasPromptedBrowser || browserPromptTimer != null) return;
 
-        // ブラウザ選択ダイアログを表示し、選択後に自動トレイ格納
-        ShowBrowserSelectionDialog();
+        browserPromptTimer = new System.Windows.Forms.Timer();
+        browserPromptTimer.Interval = delayMs;
+        browserPromptTimer.Tick += (s, e) =>
+        {
+            if (browserPromptTimer != null)
+            {
+                browserPromptTimer.Stop();
+                browserPromptTimer.Dispose();
+                browserPromptTimer = null;
+            }
+            if (hasPromptedBrowser || !isPhoneConnected) return;
+            hasPromptedBrowser = true;
+            RestoreFromTray();
+            ShowBrowserSelectionDialog();
+        };
+        browserPromptTimer.Start();
     }
 
     public void ShowBrowserSelectionDialog()
@@ -365,7 +417,7 @@ public class BrowserSelectDialog : Form
     {
         this.SelectedBrowser = "default";
         this.Text = "スマホ接続検知 - 管理画面ブラウザ選択";
-        this.Size = new Size(420, 260);
+        this.Size = new Size(420, 300);
         this.StartPosition = FormStartPosition.CenterParent;
         this.FormBorderStyle = FormBorderStyle.FixedDialog;
         this.MaximizeBox = false;
@@ -375,7 +427,7 @@ public class BrowserSelectDialog : Form
         TableLayoutPanel layout = new TableLayoutPanel();
         layout.Dock = DockStyle.Fill;
         layout.Padding = new Padding(20);
-        layout.RowCount = 4;
+        layout.RowCount = 5;
         layout.ColumnCount = 1;
 
         Label lblMsg = new Label();
@@ -404,23 +456,88 @@ public class BrowserSelectDialog : Form
         layout.Controls.Add(btnChrome);
 
         Button btnDefault = new Button();
-        btnDefault.Text = "💻 標準ブラウザで開く / キャンセル";
+        btnDefault.Text = "💻 標準ブラウザで開く";
         btnDefault.Font = new Font("Meiryo UI", 9F);
-        btnDefault.Height = 32;
+        btnDefault.Height = 34;
         btnDefault.Dock = DockStyle.Fill;
         btnDefault.Click += (s, e) => { SelectedBrowser = "default"; this.DialogResult = DialogResult.OK; };
         layout.Controls.Add(btnDefault);
 
+        Button btnCancel = new Button();
+        btnCancel.Text = "キャンセル（後で手動で開く）";
+        btnCancel.Font = new Font("Meiryo UI", 9F);
+        btnCancel.Height = 32;
+        btnCancel.Dock = DockStyle.Fill;
+        btnCancel.Click += (s, e) => { this.DialogResult = DialogResult.Cancel; };
+        layout.Controls.Add(btnCancel);
+
+        this.CancelButton = btnCancel;
         this.Controls.Add(layout);
     }
 }
 
 /// <summary>
-/// 外部DLL依存なしでISO/IEC 18004規格準拠の正則QRコードBitmapを生成する軽量純C#エンコーダ
-/// (8bit Byte Mode, Reed-Solomon Error Correction, Format Info 15-bit BCH, Mask Pattern 0)
+/// 外部DLL依存なしでISO/IEC 18004規格準拠の正則QRコードBitmapを生成する純C#エンコーダ
+/// (Level L, Version 1〜12, 8bit Byte Mode, マルチブロックRS ECC & インターリーブ, Version Info, 8マスク最適選択)
 /// </summary>
 public static class SimpleQrEncoder
 {
+    private class VersionSpec
+    {
+        public int Version;
+        public int TotalDataBytes;
+        public int EccPerBlock;
+        public int Group1Blocks;
+        public int Group1DataBytes;
+        public int Group2Blocks;
+        public int Group2DataBytes;
+        public int RemainderBits;
+        public int[] AlignPositions;
+
+        public int MaxInputBytes
+        {
+            get
+            {
+                int headerBits = (Version <= 9) ? 12 : 20;
+                return (TotalDataBytes * 8 - headerBits) / 8;
+            }
+        }
+    }
+
+    private static readonly VersionSpec[] LevelLSpecs = new VersionSpec[]
+    {
+        new VersionSpec { Version = 1,  TotalDataBytes = 19,  EccPerBlock = 7,  Group1Blocks = 1, Group1DataBytes = 19,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 0, AlignPositions = new int[0] },
+        new VersionSpec { Version = 2,  TotalDataBytes = 34,  EccPerBlock = 10, Group1Blocks = 1, Group1DataBytes = 34,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 7, AlignPositions = new int[] { 6, 18 } },
+        new VersionSpec { Version = 3,  TotalDataBytes = 55,  EccPerBlock = 15, Group1Blocks = 1, Group1DataBytes = 55,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 7, AlignPositions = new int[] { 6, 22 } },
+        new VersionSpec { Version = 4,  TotalDataBytes = 80,  EccPerBlock = 20, Group1Blocks = 1, Group1DataBytes = 80,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 7, AlignPositions = new int[] { 6, 26 } },
+        new VersionSpec { Version = 5,  TotalDataBytes = 108, EccPerBlock = 26, Group1Blocks = 1, Group1DataBytes = 108, Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 7, AlignPositions = new int[] { 6, 30 } },
+        new VersionSpec { Version = 6,  TotalDataBytes = 136, EccPerBlock = 18, Group1Blocks = 2, Group1DataBytes = 68,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 7, AlignPositions = new int[] { 6, 34 } },
+        new VersionSpec { Version = 7,  TotalDataBytes = 156, EccPerBlock = 20, Group1Blocks = 2, Group1DataBytes = 78,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 0, AlignPositions = new int[] { 6, 22, 38 } },
+        new VersionSpec { Version = 8,  TotalDataBytes = 194, EccPerBlock = 24, Group1Blocks = 2, Group1DataBytes = 97,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 0, AlignPositions = new int[] { 6, 24, 42 } },
+        new VersionSpec { Version = 9,  TotalDataBytes = 232, EccPerBlock = 30, Group1Blocks = 2, Group1DataBytes = 116, Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 0, AlignPositions = new int[] { 6, 26, 46 } },
+        new VersionSpec { Version = 10, TotalDataBytes = 274, EccPerBlock = 18, Group1Blocks = 2, Group1DataBytes = 68,  Group2Blocks = 2, Group2DataBytes = 69, RemainderBits = 0, AlignPositions = new int[] { 6, 28, 50 } },
+        new VersionSpec { Version = 11, TotalDataBytes = 324, EccPerBlock = 20, Group1Blocks = 4, Group1DataBytes = 81,  Group2Blocks = 0, Group2DataBytes = 0,  RemainderBits = 0, AlignPositions = new int[] { 6, 30, 54 } },
+        new VersionSpec { Version = 12, TotalDataBytes = 370, EccPerBlock = 24, Group1Blocks = 2, Group1DataBytes = 92,  Group2Blocks = 2, Group2DataBytes = 93, RemainderBits = 0, AlignPositions = new int[] { 6, 32, 58 } }
+    };
+
+    private static readonly byte[] GfExp = new byte[512];
+    private static readonly byte[] GfLog = new byte[256];
+
+    static SimpleQrEncoder()
+    {
+        int x = 1;
+        for (int i = 0; i < 255; i++)
+        {
+            GfExp[i] = (byte)x;
+            GfExp[i + 255] = (byte)x;
+            GfLog[x] = (byte)i;
+            x <<= 1;
+            if (x >= 256) x ^= 0x11D;
+        }
+        GfExp[510] = GfExp[0];
+        GfExp[511] = GfExp[1];
+    }
+
     public static Bitmap GenerateQrBitmap(string content, int targetWidth, int targetHeight)
     {
         bool[,] matrix = EncodeToMatrix(content);
@@ -457,182 +574,275 @@ public static class SimpleQrEncoder
         return bmp;
     }
 
-    private static bool[,] EncodeToMatrix(string content)
+    public static bool[,] EncodeToMatrix(string content)
     {
-        byte[] rawBytes = Encoding.UTF8.GetBytes(content);
-
-        // ISO/IEC 18004 Level L (7% ECC) Single-block configurations
-        // Version 4-L: 80 data, 20 ECC (capacity 78 bytes)
-        // Version 5-L: 108 data, 26 ECC (capacity 106 bytes)
-        int version = 4;
-        int dataCapacity = 80;
-        int eccCount = 20;
-
-        if (rawBytes.Length > 78)
+        byte[] rawBytes = Encoding.UTF8.GetBytes(content ?? "");
+        VersionSpec spec = null;
+        foreach (var candidate in LevelLSpecs)
         {
-            version = 5;
-            dataCapacity = 108;
-            eccCount = 26;
+            if (rawBytes.Length <= candidate.MaxInputBytes)
+            {
+                spec = candidate;
+                break;
+            }
+        }
+        if (spec == null)
+        {
+            throw new ArgumentException("QRコードのデータ長が上限を超えています (" + rawBytes.Length + " bytes)");
         }
 
+        int version = spec.Version;
         int size = 17 + version * 4;
-        bool[,] matrix = new bool[size, size];
+        bool[,] baseMatrix = new bool[size, size];
         bool[,] reserved = new bool[size, size];
 
-        // 1. Finder patterns (3 corners)
-        PlaceFinderPattern(matrix, reserved, 0, 0);
-        PlaceFinderPattern(matrix, reserved, size - 7, 0);
-        PlaceFinderPattern(matrix, reserved, 0, size - 7);
+        // 1. ファインダパターン (3隅) + セパレータ
+        PlaceFinderPattern(baseMatrix, reserved, 0, 0);
+        PlaceFinderPattern(baseMatrix, reserved, size - 7, 0);
+        PlaceFinderPattern(baseMatrix, reserved, 0, size - 7);
 
-        // 2. Timing patterns
+        // 2. タイミングパターン
         for (int i = 8; i < size - 8; i++)
         {
-            if (!reserved[6, i]) { matrix[6, i] = (i % 2 == 0); reserved[6, i] = true; }
-            if (!reserved[i, 6]) { matrix[i, 6] = (i % 2 == 0); reserved[i, 6] = true; }
+            if (!reserved[6, i]) { baseMatrix[6, i] = (i % 2 == 0); reserved[6, i] = true; }
+            if (!reserved[i, 6]) { baseMatrix[i, 6] = (i % 2 == 0); reserved[i, 6] = true; }
         }
 
-        // 3. Alignment patterns
-        int[] alignPos = GetAlignmentPositions(version);
-        foreach (int r in alignPos)
+        // 3. アライメントパターン (ファインダ隅3箇所のみ除外し、タイミング線上は正しく配置する)
+        int[] alignPos = spec.AlignPositions;
+        if (alignPos.Length >= 2)
         {
-            foreach (int c in alignPos)
+            int first = alignPos[0];
+            int last = alignPos[alignPos.Length - 1];
+            foreach (int r in alignPos)
             {
-                if (!reserved[r, c])
+                foreach (int c in alignPos)
                 {
-                    PlaceAlignmentPattern(matrix, reserved, r - 2, c - 2);
+                    if ((r == first && c == first) || (r == first && c == last) || (r == last && c == first))
+                    {
+                        continue;
+                    }
+                    PlaceAlignmentPattern(baseMatrix, reserved, r - 2, c - 2);
                 }
             }
         }
 
-        // 4. Reserve Format Information
-        ReserveFormatInfo(matrix, reserved, size);
+        // 4. フォーマット情報領域とダークモジュールの予約
+        ReserveFormatInfo(baseMatrix, reserved, size);
 
-        // 5. Build payload (8-bit byte mode + count + payload + term + pad + RS ECC)
-        byte[] codewords = BuildCodewords(rawBytes, dataCapacity, eccCount);
-
-        // 6. Convert Codewords to Bits
-        List<bool> bits = new List<bool>();
-        foreach (byte b in codewords)
+        // 5. バージョン情報配置 (Version 7以上)
+        if (version >= 7)
         {
-            for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
+            PlaceVersionInfo(baseMatrix, reserved, version, size);
         }
 
-        // 7. Place Data Bits & Apply Mask Pattern 0: (row + col) % 2 == 0
-        PlaceDataBits(matrix, reserved, bits, size);
+        // 6. データ構築 + ブロック分割RS ECC + インターリーブ + 余剰ビット
+        List<bool> bits = BuildFinalBitStream(rawBytes, spec);
 
-        // 8. Place Format Information (Level L, Mask 0: 111011111000100)
-        PlaceFormatInfo(matrix, size);
+        // 7. マスクパターン 0〜7 をすべて試行し、ペナルティ最小のマスクを採用
+        int bestPenalty = int.MaxValue;
+        bool[,] bestMatrix = null;
 
-        return matrix;
+        for (int maskPattern = 0; maskPattern < 8; maskPattern++)
+        {
+            bool[,] candidateMatrix = (bool[,])baseMatrix.Clone();
+            PlaceDataBitsWithMask(candidateMatrix, reserved, bits, size, maskPattern);
+            PlaceFormatInfo(candidateMatrix, size, maskPattern);
+
+            int penalty = EvaluateMaskPenalty(candidateMatrix, size);
+            if (penalty < bestPenalty)
+            {
+                bestPenalty = penalty;
+                bestMatrix = candidateMatrix;
+            }
+        }
+
+        return bestMatrix;
     }
 
-    private static byte[] BuildCodewords(byte[] data, int maxDataLen, int eccLen)
+    private static List<bool> BuildFinalBitStream(byte[] rawBytes, VersionSpec spec)
     {
-        List<bool> bits = new List<bool>();
+        List<bool> dataBits = new List<bool>(spec.TotalDataBytes * 8);
 
-        // Mode: 8bit Byte Mode (0100)
-        bits.Add(false); bits.Add(true); bits.Add(false); bits.Add(false);
+        // モード指示子 (8bitバイトモード = 0100)
+        dataBits.Add(false); dataBits.Add(true); dataBits.Add(false); dataBits.Add(false);
 
-        // Character count indicator (8-bit for version 1-9 byte mode)
-        int len = data.Length;
-        for (int i = 7; i >= 0; i--) bits.Add(((len >> i) & 1) == 1);
-
-        // Data payload
-        foreach (byte b in data)
+        // 文字数指示子 (Version 1〜9 は 8bit、Version 10〜26 は 16bit)
+        int countBitLen = (spec.Version <= 9) ? 8 : 16;
+        int len = rawBytes.Length;
+        for (int i = countBitLen - 1; i >= 0; i--)
         {
-            for (int i = 7; i >= 0; i--) bits.Add(((b >> i) & 1) == 1);
+            dataBits.Add(((len >> i) & 1) == 1);
         }
 
-        // Terminator (up to 4 zero bits)
-        for (int i = 0; i < 4 && bits.Count < maxDataLen * 8; i++) bits.Add(false);
+        // ペイロード
+        foreach (byte b in rawBytes)
+        {
+            for (int i = 7; i >= 0; i--)
+            {
+                dataBits.Add(((b >> i) & 1) == 1);
+            }
+        }
 
-        // Byte align
-        while (bits.Count % 8 != 0) bits.Add(false);
+        int totalDataBits = spec.TotalDataBytes * 8;
+        // 終端パターン (最大4ビットの0)
+        for (int i = 0; i < 4 && dataBits.Count < totalDataBits; i++)
+        {
+            dataBits.Add(false);
+        }
 
-        // Padding bytes (0xEC, 0x11)
+        // 8ビット境界パディング
+        while (dataBits.Count % 8 != 0 && dataBits.Count < totalDataBits)
+        {
+            dataBits.Add(false);
+        }
+
+        // 埋め草コード語 (0xEC, 0x11)
         byte[] padBytes = new byte[] { 0xEC, 0x11 };
         int padIdx = 0;
-        while (bits.Count / 8 < maxDataLen)
+        while (dataBits.Count < totalDataBits)
         {
             byte pad = padBytes[padIdx % 2];
-            for (int i = 7; i >= 0; i--) bits.Add(((pad >> i) & 1) == 1);
+            for (int i = 7; i >= 0; i--)
+            {
+                dataBits.Add(((pad >> i) & 1) == 1);
+            }
             padIdx++;
         }
 
-        byte[] dataCodewords = new byte[maxDataLen];
-        for (int i = 0; i < maxDataLen; i++)
+        byte[] dataCodewords = new byte[spec.TotalDataBytes];
+        for (int i = 0; i < spec.TotalDataBytes; i++)
         {
             byte b = 0;
             for (int bit = 0; bit < 8; bit++)
             {
-                if (bits[i * 8 + bit]) b |= (byte)(1 << (7 - bit));
+                if (dataBits[i * 8 + bit]) b |= (byte)(1 << (7 - bit));
             }
             dataCodewords[i] = b;
         }
 
-        byte[] eccCodewords = CalculateReedSolomonECC(dataCodewords, eccLen);
+        // ブロック分割とリード・ソロモンECC算出
+        int totalBlocks = spec.Group1Blocks + spec.Group2Blocks;
+        byte[][] dataBlocks = new byte[totalBlocks][];
+        byte[][] eccBlocks = new byte[totalBlocks][];
 
-        byte[] fullResult = new byte[maxDataLen + eccLen];
-        Array.Copy(dataCodewords, 0, fullResult, 0, maxDataLen);
-        Array.Copy(eccCodewords, 0, fullResult, maxDataLen, eccLen);
-        return fullResult;
+        int offset = 0;
+        int maxDataBlockLen = 0;
+        for (int b = 0; b < totalBlocks; b++)
+        {
+            int blockLen = (b < spec.Group1Blocks) ? spec.Group1DataBytes : spec.Group2DataBytes;
+            if (blockLen > maxDataBlockLen) maxDataBlockLen = blockLen;
+            byte[] blockData = new byte[blockLen];
+            Array.Copy(dataCodewords, offset, blockData, 0, blockLen);
+            offset += blockLen;
+
+            dataBlocks[b] = blockData;
+            eccBlocks[b] = CalculateReedSolomonECC(blockData, spec.EccPerBlock);
+        }
+
+        // インターリーブ配置 (データ -> ECC)
+        List<byte> interleaved = new List<byte>(spec.TotalDataBytes + totalBlocks * spec.EccPerBlock);
+        for (int col = 0; col < maxDataBlockLen; col++)
+        {
+            for (int b = 0; b < totalBlocks; b++)
+            {
+                if (col < dataBlocks[b].Length)
+                {
+                    interleaved.Add(dataBlocks[b][col]);
+                }
+            }
+        }
+        for (int col = 0; col < spec.EccPerBlock; col++)
+        {
+            for (int b = 0; b < totalBlocks; b++)
+            {
+                interleaved.Add(eccBlocks[b][col]);
+            }
+        }
+
+        List<bool> resultBits = new List<bool>(interleaved.Count * 8 + spec.RemainderBits);
+        foreach (byte cw in interleaved)
+        {
+            for (int i = 7; i >= 0; i--)
+            {
+                resultBits.Add(((cw >> i) & 1) == 1);
+            }
+        }
+        for (int i = 0; i < spec.RemainderBits; i++)
+        {
+            resultBits.Add(false);
+        }
+
+        return resultBits;
     }
 
     private static byte[] CalculateReedSolomonECC(byte[] data, int eccLen)
     {
-        byte[] expTable = new byte[256];
-        byte[] logTable = new byte[256];
-        int x = 1;
-        for (int i = 0; i < 255; i++)
-        {
-            expTable[i] = (byte)x;
-            logTable[x] = (byte)i;
-            x <<= 1;
-            if (x >= 256) x ^= 0x11D;
-        }
-
-        byte[] genPoly = new byte[eccLen + 1];
-        genPoly[0] = 1;
+        // 生成多項式 (降順: genPoly[0] = 1 * x^eccLen)
+        byte[] genPoly = new byte[] { 1 };
         for (int i = 0; i < eccLen; i++)
         {
-            byte root = expTable[i];
-            for (int j = eccLen; j >= 1; j--)
+            byte[] next = new byte[i + 2];
+            for (int j = 0; j < genPoly.Length; j++)
             {
-                byte prev = genPoly[j];
-                byte mult = genPoly[j - 1] == 0 ? (byte)0 : expTable[(logTable[genPoly[j - 1]] + logTable[root]) % 255];
-                genPoly[j] = (byte)(prev ^ mult);
+                next[j] ^= genPoly[j];
+                if (genPoly[j] != 0)
+                {
+                    next[j + 1] ^= GfExp[GfLog[genPoly[j]] + i];
+                }
             }
-            genPoly[0] = genPoly[0] == 0 ? (byte)0 : expTable[(logTable[genPoly[0]] + logTable[root]) % 255];
+            genPoly = next;
         }
 
-        byte[] res = new byte[eccLen];
-        foreach (byte b in data)
+        byte[] rem = new byte[eccLen];
+        foreach (byte d in data)
         {
-            byte factor = (byte)(b ^ res[0]);
-            Array.Copy(res, 1, res, 0, eccLen - 1);
-            res[eccLen - 1] = 0;
+            byte factor = (byte)(d ^ rem[0]);
+            for (int k = 0; k < eccLen - 1; k++)
+            {
+                rem[k] = rem[k + 1];
+            }
+            rem[eccLen - 1] = 0;
             if (factor != 0)
             {
-                for (int i = 0; i < eccLen; i++)
+                int logFactor = GfLog[factor];
+                for (int k = 0; k < eccLen; k++)
                 {
-                    if (genPoly[i] != 0)
+                    byte gp = genPoly[k + 1];
+                    if (gp != 0)
                     {
-                        res[i] ^= expTable[(logTable[factor] + logTable[genPoly[i]]) % 255];
+                        rem[k] ^= GfExp[logFactor + GfLog[gp]];
                     }
                 }
             }
         }
-        return res;
+        return rem;
     }
 
-    private static void PlaceDataBits(bool[,] matrix, bool[,] reserved, List<bool> bits, int size)
+    private static bool IsMaskBit(int maskPattern, int r, int c)
+    {
+        switch (maskPattern)
+        {
+            case 0: return ((r + c) % 2) == 0;
+            case 1: return (r % 2) == 0;
+            case 2: return (c % 3) == 0;
+            case 3: return ((r + c) % 3) == 0;
+            case 4: return (((r / 2) + (c / 3)) % 2) == 0;
+            case 5: return (((r * c) % 2) + ((r * c) % 3)) == 0;
+            case 6: return ((((r * c) % 2) + ((r * c) % 3)) % 2) == 0;
+            case 7: return ((((r + c) % 2) + ((r * c) % 3)) % 2) == 0;
+            default: return false;
+        }
+    }
+
+    private static void PlaceDataBitsWithMask(bool[,] matrix, bool[,] reserved, List<bool> bits, int size, int maskPattern)
     {
         int bitIdx = 0;
         int direction = -1; // up
         int col = size - 1;
         while (col > 0)
         {
-            if (col == 6) col--; // Skip timing column
+            if (col == 6) col--; // Skip vertical timing column
             int rowStart = (direction == -1) ? size - 1 : 0;
             int rowEnd = (direction == -1) ? -1 : size;
             for (int row = rowStart; row != rowEnd; row += direction)
@@ -642,8 +852,7 @@ public static class SimpleQrEncoder
                     if (!reserved[row, c])
                     {
                         bool bitVal = (bitIdx < bits.Count) ? bits[bitIdx++] : false;
-                        bool mask = ((row + c) % 2 == 0);
-                        matrix[row, c] = bitVal ^ mask;
+                        matrix[row, c] = bitVal ^ IsMaskBit(maskPattern, row, c);
                     }
                 }
             }
@@ -663,44 +872,155 @@ public static class SimpleQrEncoder
             reserved[8, i] = true;
             reserved[i, 8] = true;
         }
-        reserved[size - 8, 8] = true; // Dark module
-        matrix[size - 8, 8] = true;
+        reserved[size - 8, 8] = true;
+        matrix[size - 8, 8] = true; // Dark module
     }
 
-    private static void PlaceFormatInfo(bool[,] matrix, int size)
+    private static void PlaceFormatInfo(bool[,] matrix, int size, int maskPattern)
     {
-        // Format Info for Level L, Mask 0 = 111011111000100
-        bool[] fmtBits = new bool[] { true, true, true, false, true, true, true, true, true, false, false, false, true, false, false };
+        // EC Level L (01) + 3bit Mask Pattern -> 5bit data, BCH(15,5) with 0x537, XOR 0x5412
+        int data5 = (0x01 << 3) | (maskPattern & 0x07);
+        int rem = data5 << 10;
+        for (int i = 14; i >= 10; i--)
+        {
+            if (((rem >> i) & 1) != 0)
+            {
+                rem ^= (0x537 << (i - 10));
+            }
+        }
+        int formatWord = ((data5 << 10) | rem) ^ 0x5412;
 
-        // Top-Left Finder Format Info
-        int idx = 0;
+        // Top-Left Finder Format Info (MSB bit 14 to LSB bit 0)
+        int bitPos = 14;
         for (int col = 0; col <= 8; col++)
         {
-            if (col != 6) matrix[8, col] = fmtBits[idx++];
+            if (col != 6)
+            {
+                matrix[8, col] = ((formatWord >> bitPos) & 1) == 1;
+                bitPos--;
+            }
         }
         for (int row = 7; row >= 0; row--)
         {
-            if (row != 6) matrix[row, 8] = fmtBits[idx++];
+            if (row != 6)
+            {
+                matrix[row, 8] = ((formatWord >> bitPos) & 1) == 1;
+                bitPos--;
+            }
         }
 
-        // Bottom-Left & Top-Right Split Format Info
-        idx = 0;
+        // Bottom-Left & Top-Right Split Format Info (MSB bit 14 to LSB bit 0)
+        bitPos = 14;
         for (int row = size - 1; row >= size - 7; row--)
         {
-            matrix[row, 8] = fmtBits[idx++];
+            matrix[row, 8] = ((formatWord >> bitPos) & 1) == 1;
+            bitPos--;
         }
         for (int col = size - 8; col < size; col++)
         {
-            matrix[8, col] = fmtBits[idx++];
+            matrix[8, col] = ((formatWord >> bitPos) & 1) == 1;
+            bitPos--;
         }
     }
 
-    private static int[] GetAlignmentPositions(int version)
+    private static void PlaceVersionInfo(bool[,] matrix, bool[,] reserved, int version, int size)
     {
-        if (version <= 1) return new int[0];
-        if (version == 4) return new int[] { 6, 26 };
-        if (version == 5) return new int[] { 6, 30 };
-        return new int[] { 6, 30 };
+        // 6bit version, Golay BCH(18,6) with generator 0x1F25
+        int rem = version << 12;
+        for (int i = 17; i >= 12; i--)
+        {
+            if (((rem >> i) & 1) != 0)
+            {
+                rem ^= (0x1F25 << (i - 12));
+            }
+        }
+        int versionWord = (version << 12) | rem;
+
+        for (int i = 0; i < 18; i++)
+        {
+            bool bit = ((versionWord >> i) & 1) == 1;
+            int a = size - 11 + (i % 3);
+            int b = i / 3;
+
+            matrix[a, b] = bit;
+            reserved[a, b] = true;
+
+            matrix[b, a] = bit;
+            reserved[b, a] = true;
+        }
+    }
+
+    private static int EvaluateMaskPenalty(bool[,] m, int size)
+    {
+        int penalty = 0;
+
+        // N1 行・列ごとの連続同色モジュール (5以上 -> 3 + (run - 5))
+        for (int r = 0; r < size; r++)
+        {
+            int runRow = 1;
+            int runCol = 1;
+            for (int c = 1; c < size; c++)
+            {
+                if (m[r, c] == m[r, c - 1]) runRow++;
+                else { if (runRow >= 5) penalty += 3 + (runRow - 5); runRow = 1; }
+
+                if (m[c, r] == m[c - 1, r]) runCol++;
+                else { if (runCol >= 5) penalty += 3 + (runCol - 5); runCol = 1; }
+            }
+            if (runRow >= 5) penalty += 3 + (runRow - 5);
+            if (runCol >= 5) penalty += 3 + (runCol - 5);
+        }
+
+        // N2 2x2 同色ブロック (+3)
+        for (int r = 0; r < size - 1; r++)
+        {
+            for (int c = 0; c < size - 1; c++)
+            {
+                bool v = m[r, c];
+                if (v == m[r, c + 1] && v == m[r + 1, c] && v == m[r + 1, c + 1])
+                {
+                    penalty += 3;
+                }
+            }
+        }
+
+        // N3 ファインダ様 1-1-3-1-1 比率パターン (+40)
+        for (int r = 0; r < size; r++)
+        {
+            for (int c = 0; c <= size - 11; c++)
+            {
+                // Row check 10111010000 or 00001011101
+                if ((m[r, c] && !m[r, c + 1] && m[r, c + 2] && m[r, c + 3] && m[r, c + 4] && !m[r, c + 5] && m[r, c + 6] && !m[r, c + 7] && !m[r, c + 8] && !m[r, c + 9] && !m[r, c + 10]) ||
+                    (!m[r, c] && !m[r, c + 1] && !m[r, c + 2] && !m[r, c + 3] && m[r, c + 4] && !m[r, c + 5] && m[r, c + 6] && m[r, c + 7] && m[r, c + 8] && !m[r, c + 9] && m[r, c + 10]))
+                {
+                    penalty += 40;
+                }
+                // Col check
+                if ((m[c, r] && !m[c + 1, r] && m[c + 2, r] && m[c + 3, r] && m[c + 4, r] && !m[c + 5, r] && m[c + 6, r] && !m[c + 7, r] && !m[c + 8, r] && !m[c + 9, r] && !m[c + 10, r]) ||
+                    (!m[c, r] && !m[c + 1, r] && !m[c + 2, r] && !m[c + 3, r] && m[c + 4, r] && !m[c + 5, r] && m[c + 6, r] && m[c + 7, r] && m[c + 8, r] && !m[c + 9, r] && m[c + 10, r]))
+                {
+                    penalty += 40;
+                }
+            }
+        }
+
+        // N4 黒モジュール割合の50%からの乖離
+        int darkCount = 0;
+        for (int r = 0; r < size; r++)
+        {
+            for (int c = 0; c < size; c++)
+            {
+                if (m[r, c]) darkCount++;
+            }
+        }
+        int totalModules = size * size;
+        int prev5 = (darkCount * 100 / totalModules) / 5 * 5;
+        int next5 = prev5 + 5;
+        int k1 = Math.Abs(prev5 - 50) / 5;
+        int k2 = Math.Abs(next5 - 50) / 5;
+        penalty += Math.Min(k1, k2) * 10;
+
+        return penalty;
     }
 
     private static void PlaceFinderPattern(bool[,] matrix, bool[,] reserved, int top, int left)
@@ -738,12 +1058,9 @@ public static class SimpleQrEncoder
                 int col = left + c;
                 if (row >= 0 && row < matrix.GetLength(0) && col >= 0 && col < matrix.GetLength(1))
                 {
-                    if (!reserved[row, col])
-                    {
-                        reserved[row, col] = true;
-                        bool isBlack = (r == 0 || r == 4 || c == 0 || c == 4 || (r == 2 && c == 2));
-                        matrix[row, col] = isBlack;
-                    }
+                    reserved[row, col] = true;
+                    bool isBlack = (r == 0 || r == 4 || c == 0 || c == 4 || (r == 2 && c == 2));
+                    matrix[row, col] = isBlack;
                 }
             }
         }
