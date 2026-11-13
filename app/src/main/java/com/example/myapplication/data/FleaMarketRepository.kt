@@ -286,7 +286,24 @@ class FleaMarketRepository(private val context: Context) {
     fun getPhotoStorageManager(): PhotoStorageManager = photoStorageManager
     fun getDao(): ItemDao = dao
 
+    private fun isEmulator(): Boolean {
+        return (android.os.Build.FINGERPRINT.startsWith("generic")
+                || android.os.Build.FINGERPRINT.startsWith("unknown")
+                || android.os.Build.MODEL.contains("google_sdk")
+                || android.os.Build.MODEL.contains("Emulator")
+                || android.os.Build.MODEL.contains("Android SDK built for x86")
+                || android.os.Build.MANUFACTURER.contains("Genymotion")
+                || (android.os.Build.BRAND.startsWith("generic") && android.os.Build.DEVICE.startsWith("generic"))
+                || android.os.Build.PRODUCT.contains("sdk")
+                || android.os.Build.PRODUCT.contains("google_sdk")
+                || android.os.Build.PRODUCT.contains("sdk_gphone")
+                || android.os.Build.HARDWARE.contains("goldfish")
+                || android.os.Build.HARDWARE.contains("ranchu")
+                || android.os.Build.HARDWARE.contains("vbox86"))
+    }
+
     suspend fun seedInitialTestDataIfNeeded() {
+        if (!isEmulator()) return
         val count = dao.getActiveItemsWithPhotosDirect().size
         if (count == 0) {
             val testItems = listOf(
