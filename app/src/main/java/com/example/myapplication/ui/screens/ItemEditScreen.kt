@@ -1,6 +1,7 @@
 package com.example.myapplication.ui.screens
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -298,6 +299,8 @@ fun ItemEditScreen(
                         cameraPhotoUri = pair.first
                         tempCameraPath = pair.second
                         cameraLauncher.launch(pair.first)
+                    } else {
+                        Toast.makeText(context, "カメラ起動用のURI作成に失敗しました (FileProviderの設定をご確認ください)", Toast.LENGTH_LONG).show()
                     }
                 },
                 modifier = Modifier
