@@ -25,7 +25,7 @@ object WebDashboardHtml {
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v2.11 (Build 27)</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v0.9β (Build 1)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
