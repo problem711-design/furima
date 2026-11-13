@@ -27,7 +27,7 @@ object CsvExporter {
         sb.append('\uFEFF')
 
         // Header
-        sb.append("ID,商品名,ステータス,出品価格(円),実売却価格(円),手数料率(%),販売手数料(円),送料(円),梱包経費(円),想定/確定利益(円),写真枚数,同期ステータス,出品日,最終更新日,売却日,写真ハッシュ一覧,まとめ同梱内訳\n")
+        sb.append("ID,商品名,商品説明,ステータス,出品価格(円),実売却価格(円),手数料率(%),販売手数料(円),送料(円),梱包経費(円),想定/確定利益(円),写真枚数,同期ステータス,出品日,最終更新日,売却日,写真ハッシュ一覧,まとめ同梱内訳\n")
 
         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN)
 
@@ -42,12 +42,12 @@ object CsvExporter {
                 else -> "出品中"
             }
 
-            val syncStatusText = if (photos.isNotEmpty() && photos.all { it.syncStatus == "SYNCED" || it.isOriginalDeleted }) {
-                if (photos.any { it.isOriginalDeleted }) "サムネイル化済" else "PC同期済"
-            } else if (photos.any { it.syncStatus == "SYNCED" }) {
-                "一部同期"
-            } else {
-                "未送信"
+            val syncedCount = photos.count { it.isPcSynced || it.syncStatus == "SYNCED" || it.isOriginalDeleted }
+            val syncStatusText = when {
+                photos.isNotEmpty() && syncedCount == photos.size ->
+                    if (photos.any { it.isOriginalDeleted }) "サムネイル化済" else "PC同期済"
+                syncedCount > 0 -> "一部同期"
+                else -> "未送信"
             }
 
             val feePercent = item.getEffectiveFeeRatePercent(defaultSettings)
@@ -58,13 +58,14 @@ object CsvExporter {
             val profit = item.getCalculatedProfit(defaultSettings)
 
             val safeTitle = "\"" + item.title.replace("\"", "\"\"") + "\""
+            val safeDescription = "\"" + item.description.replace("\"", "\"\"") + "\""
             val createdStr = dateFormat.format(Date(item.createdAt))
             val updatedStr = dateFormat.format(Date(item.updatedAt))
             val soldStr = item.soldAt?.let { dateFormat.format(Date(it)) } ?: ""
             val hashesStr = "\"" + photos.mapNotNull { it.md5Hash.takeIf { h -> h.isNotBlank() } }.joinToString(";") + "\""
             val mergedStr = "\"" + item.mergedChildTitles.replace("\"", "\"\"") + "\""
 
-            sb.append("${item.id},$safeTitle,$statusText,${item.price},${item.soldPrice},$feePercent,$fee,$shipping,$expense,$profit,${photos.size},$syncStatusText,$createdStr,$updatedStr,$soldStr,$hashesStr,$mergedStr\n")
+            sb.append("${item.id},$safeTitle,$safeDescription,$statusText,${item.price},${item.soldPrice},$feePercent,$fee,$shipping,$expense,$profit,${photos.size},$syncStatusText,$createdStr,$updatedStr,$soldStr,$hashesStr,$mergedStr\n")
         }
 
         return sb.toString()

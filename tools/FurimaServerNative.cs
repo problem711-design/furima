@@ -735,19 +735,44 @@ class FurimaServerNative
                                 }
                             }
 
+                            var existingItem = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"]) == id);
+                            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                            long phoneCreatedAt = ParseLongSafe(item["createdAt"], 0);
+                            long existingCreatedAt = existingItem != null && existingItem.ContainsKey("createdAt") ? ParseLongSafe(existingItem["createdAt"], 0) : 0;
+                            long resolvedCreatedAt = phoneCreatedAt > 0
+                                ? (existingCreatedAt > 0 ? Math.Min(phoneCreatedAt, existingCreatedAt) : phoneCreatedAt)
+                                : (existingCreatedAt > 0 ? existingCreatedAt : nowMs);
+
+                            long phoneUpdatedAt = ParseLongSafe(item["updatedAt"], 0);
+                            long existingUpdatedAt = existingItem != null && existingItem.ContainsKey("updatedAt") ? ParseLongSafe(existingItem["updatedAt"], 0) : 0;
+                            long resolvedUpdatedAt = Math.Max(phoneUpdatedAt, existingUpdatedAt);
+                            if (resolvedUpdatedAt <= 0) resolvedUpdatedAt = resolvedCreatedAt;
+
+                            string itemStatus = item.Value<string>("status") ?? "LISTED";
+                            long phoneSoldAt = ParseLongSafe(item["soldAt"], 0);
+                            long existingSoldAt = existingItem != null && existingItem.ContainsKey("soldAt") ? ParseLongSafe(existingItem["soldAt"], 0) : 0;
+                            object resolvedSoldAt = null;
+                            if (itemStatus == "SOLD")
+                            {
+                                long sAt = phoneSoldAt > 0 ? phoneSoldAt : existingSoldAt;
+                                if (sAt > 0) resolvedSoldAt = sAt;
+                            }
+
                             var newItemDict = new Dictionary<string, object>
                             {
                                 { "id", id },
                                 { "title", title },
                                 { "description", description },
-                                { "status", item.Value<string>("status") ?? "LISTED" },
+                                { "status", itemStatus },
                                 { "price", price },
                                 { "soldPrice", item.Value<int>("soldPrice") },
                                 { "profit", profit },
                                 { "statusLabel", statusLabel },
                                 { "isShared", true },
                                 { "isDeleted", false },
-                                { "updatedAt", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() },
+                                { "createdAt", resolvedCreatedAt },
+                                { "updatedAt", resolvedUpdatedAt },
+                                { "soldAt", resolvedSoldAt },
                                 { "photos", savedPhotosList },
                                 { "mergedParentId", item["mergedParentId"] },
                                 { "mergedChildCount", item["mergedChildCount"] },
@@ -1028,6 +1053,9 @@ class FurimaServerNative
                     int calcPrice = (status == "SOLD" && soldPrice > 0) ? soldPrice : price;
                     int profit = calcPrice - (calcPrice * feeRate / 100) - shipping - expense;
 
+                    long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    long existingSoldAt = item.ContainsKey("soldAt") ? ParseLongSafe(item["soldAt"], 0) : 0;
+
                     item["title"] = title;
                     item["price"] = price;
                     item["soldPrice"] = soldPrice;
@@ -1039,7 +1067,12 @@ class FurimaServerNative
                     item["expenseCost"] = expense;
                     item["useCustomSettings"] = useCustom;
                     item["profit"] = profit;
-                    item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    if (!item.ContainsKey("createdAt") || ParseLongSafe(item["createdAt"], 0) <= 0)
+                    {
+                        item["createdAt"] = nowMs;
+                    }
+                    item["updatedAt"] = nowMs;
+                    item["soldAt"] = status == "SOLD" ? (object)(existingSoldAt > 0 ? existingSoldAt : nowMs) : null;
                     item["syncedToPhone"] = false;
 
                     try
@@ -1244,6 +1277,7 @@ class FurimaServerNative
                         { "syncedToPhone", false },
                         { "createdAt", now },
                         { "updatedAt", now },
+                        { "soldAt", status == "SOLD" ? (object)now : null },
                         { "photos", new List<Dictionary<string, object>>() }
                     };
 
@@ -1269,6 +1303,14 @@ class FurimaServerNative
         var jv = val as Newtonsoft.Json.Linq.JValue;
         if (jv != null && jv.Type == Newtonsoft.Json.Linq.JTokenType.Null) return defaultVal;
         try { return Convert.ToInt32(val); } catch { return defaultVal; }
+    }
+
+    private static long ParseLongSafe(object val, long defaultVal = 0)
+    {
+        if (val == null) return defaultVal;
+        var jv = val as Newtonsoft.Json.Linq.JValue;
+        if (jv != null && jv.Type == Newtonsoft.Json.Linq.JTokenType.Null) return defaultVal;
+        try { return Convert.ToInt64(val); } catch { return defaultVal; }
     }
 
     private static void ExtractPhotosSafe(object photosObj, int parentId, int childId, string childTitle, ref int photoOrder, List<Dictionary<string, object>> parentPhotos)
@@ -1462,6 +1504,7 @@ class FurimaServerNative
                         { "bundleLevel", maxChildLevel + 1 },
                         { "createdAt", now },
                         { "updatedAt", now },
+                        { "soldAt", asStatus == "SOLD" ? (object)now : null },
                         { "isShared", true },
                         { "isDeleted", false },
                         { "syncedToPhone", false },

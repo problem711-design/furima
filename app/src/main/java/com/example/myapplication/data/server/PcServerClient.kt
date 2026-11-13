@@ -216,7 +216,10 @@ class PcServerClient(
                         shippingCost = item.shippingCost,
                         feeRatePercent = item.feeRatePercent,
                         expenseCost = item.expenseCost,
-                        useCustomSettings = item.useCustomSettings
+                        useCustomSettings = item.useCustomSettings,
+                        createdAt = item.createdAt,
+                        updatedAt = item.updatedAt,
+                        soldAt = item.soldAt
                     )
                 )
             }
@@ -424,7 +427,22 @@ class PcServerClient(
                     val discountAmount = obj.optInt("discountAmount", 0)
                     val bundleLevel = obj.optInt("bundleLevel", 0)
 
+                    val serverCreatedAt = if (obj.has("createdAt") && !obj.isNull("createdAt")) obj.optLong("createdAt", 0L).takeIf { it > 0L } else null
+                    val serverUpdatedAt = if (obj.has("updatedAt") && !obj.isNull("updatedAt")) obj.optLong("updatedAt", 0L).takeIf { it > 0L } else null
+                    val serverSoldAt = if (obj.has("soldAt") && !obj.isNull("soldAt")) obj.optLong("soldAt", 0L).takeIf { it > 0L } else null
+
                     if (existing != null) {
+                        val resolvedCreatedAt = when {
+                            serverCreatedAt != null && existing.item.createdAt > 0L -> minOf(serverCreatedAt, existing.item.createdAt)
+                            serverCreatedAt != null -> serverCreatedAt
+                            else -> existing.item.createdAt
+                        }
+                        val resolvedUpdatedAt = serverUpdatedAt ?: existing.item.updatedAt
+                        val resolvedSoldAt = if (status == "SOLD") {
+                            serverSoldAt ?: existing.item.soldAt
+                        } else {
+                            null
+                        }
                         val updated = existing.item.copy(
                             title = title,
                             description = description,
@@ -441,10 +459,16 @@ class PcServerClient(
                             feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", existing.item.feeRatePercent) else existing.item.feeRatePercent,
                             expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", existing.item.expenseCost) else existing.item.expenseCost,
                             useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", existing.item.useCustomSettings) else existing.item.useCustomSettings,
-                            updatedAt = System.currentTimeMillis()
+                            createdAt = resolvedCreatedAt,
+                            updatedAt = resolvedUpdatedAt,
+                            soldAt = resolvedSoldAt
                         )
                         dao.updateItem(updated)
                     } else {
+                        val now = System.currentTimeMillis()
+                        val resolvedCreatedAt = serverCreatedAt ?: now
+                        val resolvedUpdatedAt = serverUpdatedAt ?: resolvedCreatedAt
+                        val resolvedSoldAt = if (status == "SOLD") serverSoldAt else null
                         val newItem = com.example.myapplication.data.local.ItemEntity(
                             id = id,
                             title = title,
@@ -463,8 +487,9 @@ class PcServerClient(
                             discountAmount = discountAmount,
                             bundleLevel = bundleLevel,
                             isShared = true,
-                            createdAt = System.currentTimeMillis(),
-                            updatedAt = System.currentTimeMillis()
+                            createdAt = resolvedCreatedAt,
+                            updatedAt = resolvedUpdatedAt,
+                            soldAt = resolvedSoldAt
                         )
                         dao.insertItem(newItem)
                     }

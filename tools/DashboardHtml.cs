@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.8 (Build 24)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.9 (Build 25)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -156,6 +156,9 @@ public static class DashboardHtml
                     </h2>
                     <button onclick='openAddModal()' class='w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-plus text-xs'></i> 新規出品追加 (PC)
+                    </button>
+                    <button onclick='downloadPcCsv()' class='w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-file-csv text-xs'></i> 売上・全商品CSVダウンロード
                     </button>
                     <button onclick='fetchItems()' class='w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-rotate-right text-xs'></i> データ手動更新
@@ -629,7 +632,7 @@ public static class DashboardHtml
             // MERGED（まとめ内包済み）子商品は有効件数から除外（出品中・売却済・未出品の総計と一致させる）
             const active = allItems.filter(i => !i.isDeleted && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
             const listed = active.filter(i => i.status === 'LISTED');
-            const unshared = active.filter(i => i.status === 'DRAFT' || !i.isShared);
+            const unshared = active.filter(i => i.status === 'DRAFT');
             const sold = active.filter(i => i.status === 'SOLD');
 
             const totalSales = sold.reduce((sum, i) => sum + (i.soldPrice > 0 ? i.soldPrice : (i.price || 0)), 0);
@@ -736,7 +739,7 @@ public static class DashboardHtml
                 // まとめ内包済み(MERGED)子商品は個別カードとしては非表示（親まとめ商品内に集約表示）
                 if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
                 if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
+                if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT') return false;
                 if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
 
                 if (query) {
@@ -745,6 +748,25 @@ public static class DashboardHtml
                     return title.includes(query) || desc.includes(query);
                 }
                 return true;
+            });
+
+            // 5段階優先度＋登録/変更の新しい順ソート
+            const getItemSortPriority = (item) => {
+                const isB = checkIsBundle(item);
+                if (isB && item.status === 'LISTED') return 1;
+                if (isB && item.status === 'DRAFT') return 2;
+                if (!isB && item.status === 'LISTED') return 3;
+                if (!isB && item.status === 'DRAFT') return 4;
+                return 5;
+            };
+            items.sort((a, b) => {
+                const pa = getItemSortPriority(a);
+                const pb = getItemSortPriority(b);
+                if (pa !== pb) return pa - pb;
+                const ta = Math.max(a.updatedAt || 0, a.createdAt || 0);
+                const tb = Math.max(b.updatedAt || 0, b.createdAt || 0);
+                if (tb !== ta) return tb - ta;
+                return (b.id || 0) - (a.id || 0);
             });
 
             if (items.length === 0) {
@@ -759,7 +781,7 @@ public static class DashboardHtml
                 const mainPhoto = photos.length > 0 ? (photos[0].md5Hash ? '/api/photos/' + photos[0].md5Hash : photos[0].photoUrl) : '';
                 const displayPrice = item.status === 'SOLD' && item.soldPrice > 0 ? item.soldPrice : (item.price || 0);
                 const isSold = item.status === 'SOLD';
-                const isDraft = item.status === 'DRAFT' || !item.isShared;
+                const isDraft = item.status === 'DRAFT';
                 const isBundle = checkIsBundle(item);
                 const isMergedChild = item.status === 'MERGED';
                 const profitText = item.profit != null ? ' (利益 ¥' + item.profit.toLocaleString() + ')' : '';
@@ -774,6 +796,7 @@ public static class DashboardHtml
                             <span class='font-mono text-slate-500'>#${item.id}</span>
                         </label>
                         <div class='flex items-center gap-1'>
+                            ${!item.isShared ? `<span class='bg-slate-200 text-slate-700 text-[9px] px-1.5 py-0.2 rounded-full font-bold'>未同期</span>` : ''}
                             ${isBundle ? `<span class='bg-purple-100 text-purple-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-1'><i class='fa-solid fa-gift'></i> まとめ (${item.mergedChildCount || 2}点)</span>` : ''}
                             ${isMergedChild ? `<span class='bg-purple-50 text-purple-600 text-[10px] px-1.5 py-0.2 rounded-full font-bold'>まとめ内包済</span>` : ''}
                         </div>
@@ -1415,6 +1438,91 @@ public static class DashboardHtml
                 executeBtn.disabled = false;
                 executeBtn.innerHTML = '<i class=\'fa-solid fa-trash-can\'></i> クリーンアップを実行';
             }
+        }
+
+        function csvEscape(val) {
+            const s = (val === null || val === undefined) ? '' : String(val);
+            return '""' + s.replace(/""/g, '""""') + '""';
+        }
+
+        function formatCsvDate(ms) {
+            if (!ms || ms <= 0) return '';
+            const d = new Date(ms);
+            const pad = (n) => String(n).padStart(2, '0');
+            return d.getFullYear() + '/' + pad(d.getMonth() + 1) + '/' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+        }
+
+        function downloadPcCsv() {
+            const exportItems = allItems.filter(i => !i.isDeleted).slice().sort((a, b) => (a.id || 0) - (b.id || 0));
+            if (exportItems.length === 0) {
+                showToast('エクスポート対象の商品がありません');
+                return;
+            }
+
+            const lines = [];
+            lines.push('ID,商品名,商品説明,ステータス,出品価格(円),実売却価格(円),手数料率(%),販売手数料(円),送料(円),梱包経費(円),想定/確定利益(円),写真枚数,同期ステータス,出品日,最終更新日,売却日,写真ハッシュ一覧,まとめ同梱内訳');
+
+            exportItems.forEach(item => {
+                const photos = item.photos || [];
+                const statusText = item.status === 'SOLD'
+                    ? '売却済'
+                    : (item.status === 'MERGED'
+                        ? ('まとめ内包済' + (item.mergedParentId ? ' (親#' + item.mergedParentId + ')' : ''))
+                        : (item.status === 'DRAFT' ? '下書き' : '出品中'));
+
+                const price = item.price || 0;
+                const soldPrice = item.soldPrice || 0;
+                const feePercent = item.feeRatePercent != null ? item.feeRatePercent : 5;
+                const shipping = item.shippingCost != null ? item.shippingCost : 210;
+                const expense = item.expenseCost != null ? item.expenseCost : 55;
+                const basePrice = (item.status === 'SOLD' && soldPrice > 0) ? soldPrice : price;
+                const fee = Math.floor((basePrice * feePercent) / 100);
+                const profit = item.profit != null ? item.profit : Math.max(0, basePrice - fee - shipping - expense);
+                const syncStatusText = item.isShared ? 'PC同期済' : '未送信';
+
+                const createdStr = formatCsvDate(item.createdAt);
+                const updatedStr = formatCsvDate(item.updatedAt);
+                const soldStr = item.status === 'SOLD' ? formatCsvDate(item.soldAt) : '';
+                const hashesStr = photos.map(p => p.md5Hash || '').filter(h => h).join(';');
+                const mergedStr = item.mergedChildTitles || '';
+
+                lines.push([
+                    item.id,
+                    csvEscape(item.title || ''),
+                    csvEscape(item.description || ''),
+                    statusText,
+                    price,
+                    soldPrice,
+                    feePercent,
+                    fee,
+                    shipping,
+                    expense,
+                    profit,
+                    photos.length,
+                    syncStatusText,
+                    createdStr,
+                    updatedStr,
+                    soldStr,
+                    csvEscape(hashesStr),
+                    csvEscape(mergedStr)
+                ].join(','));
+            });
+
+            const csvContent = '\uFEFF' + lines.join('\r\n') + '\r\n';
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const now = new Date();
+            const pad = (n) => String(n).padStart(2, '0');
+            const fname = 'flea_market_pc_' + now.getFullYear() + pad(now.getMonth() + 1) + pad(now.getDate()) + '_' + pad(now.getHours()) + pad(now.getMinutes()) + '.csv';
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fname;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 1000);
+            showToast('CSVをダウンロードしました (' + exportItems.length + '件)');
         }
     </script>
 </body>

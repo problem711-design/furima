@@ -29,11 +29,11 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.7〜)
 
-現在のバージョン: **`v2.8 (Build 24)`**
+現在のバージョン: **`v2.9 (Build 25)`**
 
 ### 今後の予定フェーズ (詳細は `PLAN_PHASE_2_8_TO_2_11.md` を参照)
 - [x] **フェーズ 2.8 (完了 v2.8 / Build 24)**: 同期競合防止（Mutex排他・`syncedToPhone` 保護・解除判定厳格化）・QRコードISO準拠完全修復（V1〜12）・緑ステータス確定後ブラウザ起動・Yahoo!フリマ通常タブ表示（案A）
-- [ ] **フェーズ 2.9 (予定 v2.9 / Build 25)**: `createdAt`/`updatedAt`/`soldAt` 双方向同期・PC管理画面5段階優先度ソート・スマホCSVバグ修正&PC側CSVダウンロード追加
+- [x] **フェーズ 2.9 (完了 v2.9 / Build 25)**: `createdAt`/`updatedAt`/`soldAt` 双方向同期・PC管理画面5段階優先度ソート・スマホCSVバグ修正&PC側CSVダウンロード追加
 - [ ] **フェーズ 2.10 (予定 v2.10 / Build 26)**: バックボタン安全化（編集破棄確認・タブ戻り・終了確認）・サムネ容量可視化・「PCに送信」のLocalSend専用化・「ギャラリーに保存」刷新＆認証付き高画質取得/自己修復基盤
 - [ ] **フェーズ 2.11 (予定 v2.11 / Build 27)**: 基本設定/プリセットPC同期・0円許容&写真削除API・PC新規/編集モーダルのスマホ同等化
 
@@ -405,6 +405,13 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-13] フェーズ 2.9-A〜C 完了 バージョン 2.9 (Build 25)
+- **改修内容 (`SyncDtos.kt`, `PcServerClient.kt`, `FurimaServerNative.cs`, `DashboardHtml.cs`, `CsvExporter.kt`, `CsvExporterTest.kt`, `app/build.gradle.kts`, `WebDashboardHtml.kt`)**:
+  - **2.9-A (`createdAt` / `updatedAt` / `soldAt` 双方向同期)**: `SyncItemDto`・`PcServerClient`・`FurimaServerNative` に `createdAt`, `updatedAt`, `soldAt` を追加し、PULL/PUSH 毎の現在時刻上書きを廃止して元の日時・売却日時を正確に保持・同期。
+  - **2.9-B (PC管理画面 5段階優先度ソート & 未出品判定整頓)**: `renderItems()` を「出品中まとめ → 未出品まとめ → 通常出品中 → 通常下書き → 売却済」の5段階優先度＋更新/作成日時の降順（新しい順）へ変更。「未出品」タブ・バッジ判定を `status === 'DRAFT'` に統一し、未同期状態は別バッジで識別可能に。
+  - **2.9-C (スマホCSV修復 & PC側CSVエクスポート追加)**: `CsvExporter.kt` の同期ステータス判定に `isPcSynced` を含めて「PC同期済」判定を正常化し、「商品説明」列（改行含む安全な引用符エスケープ）を追加して `CsvExporterTest.kt` で検証。`DashboardHtml.cs` サイドバーに BOM付き UTF-8 CSV ダウンロード (`flea_market_pc_YYYYMMDD_HHMM.csv`) を追加。
+  - バージョン表記を `v2.9 (Build 25)` に統一し、`compile_applet`・`gradle :app:testDebugUnitTest`・JS構文チェックの全通過を確認。
 
 ### [2026-11-13] フェーズ 2.8-A〜D 完了 バージョン 2.8 (Build 24)
 - **改修内容 (`PcServerClient.kt`, `FleaMarketViewModel.kt`, `FurimaServerNative.cs`, `TunnelQrForm.cs`, `DashboardHtml.cs`, `app/build.gradle.kts`, `WebDashboardHtml.kt`)**:

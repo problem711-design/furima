@@ -29,7 +29,10 @@ data class SyncItemDto(
     @param:Json(name = "shippingCost") val shippingCost: Int = 210,
     @param:Json(name = "feeRatePercent") val feeRatePercent: Int = 5,
     @param:Json(name = "expenseCost") val expenseCost: Int = 55,
-    @param:Json(name = "useCustomSettings") val useCustomSettings: Boolean = false
+    @param:Json(name = "useCustomSettings") val useCustomSettings: Boolean = false,
+    @param:Json(name = "createdAt") val createdAt: Long? = null,
+    @param:Json(name = "updatedAt") val updatedAt: Long? = null,
+    @param:Json(name = "soldAt") val soldAt: Long? = null
 )
 
 @JsonClass(generateAdapter = true)
