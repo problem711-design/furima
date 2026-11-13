@@ -46,6 +46,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -58,14 +59,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myapplication.BuildConfig
+import com.example.myapplication.data.PhotoStorageManager
+import com.example.myapplication.data.ThumbnailCompressionEstimate
+import com.example.myapplication.data.ThumbnailStorageStats
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.FeePreset
 import com.example.myapplication.ui.FleaMarketViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -74,6 +82,8 @@ fun SettingsStorageScreen(
 ) {
     val context = LocalContext.current
     val currentSettings by viewModel.defaultSettings.collectAsState()
+    val itemsWithPhotos by viewModel.itemsWithPhotos.collectAsState()
+    val storageManager = remember(context) { PhotoStorageManager(context) }
 
     var activePresetId by remember(currentSettings) { mutableStateOf(currentSettings.activePresetId) }
     val presetsList = remember(currentSettings) {
@@ -88,12 +98,35 @@ fun SettingsStorageScreen(
     var thumbDim by remember(currentSettings) { mutableIntStateOf(currentSettings.thumbnailMaxDimension) }
     var cleanupDays by remember(currentSettings) { mutableIntStateOf(currentSettings.autoCleanupSoldDays) }
 
+    var storageStats by remember { mutableStateOf(ThumbnailStorageStats()) }
+    var compressionEstimate by remember { mutableStateOf(ThumbnailCompressionEstimate()) }
+
     var showAddPresetDialog by remember { mutableStateOf(false) }
     var presetToDelete by remember { mutableStateOf<FeePreset?>(null) }
 
     // アプリバージョン情報の取得 (BuildConfig優先)
     val versionName = remember { BuildConfig.VERSION_NAME }
     val versionCode = remember { BuildConfig.VERSION_CODE }
+
+    LaunchedEffect(itemsWithPhotos) {
+        val allPhotos = itemsWithPhotos.flatMap { it.photos }
+        storageStats = withContext(Dispatchers.IO) {
+            storageManager.measureLocalStorageStats(allPhotos)
+        }
+    }
+
+    LaunchedEffect(thumbQuality, thumbDim, itemsWithPhotos) {
+        val candidatePaths = itemsWithPhotos.flatMap { it.photos }
+            .filter { !it.isOriginalDeleted && it.filePath.isNotBlank() }
+            .map { it.filePath }
+        compressionEstimate = withContext(Dispatchers.IO) {
+            storageManager.estimateCompressedThumbnail(
+                maxDim = thumbDim,
+                quality = thumbQuality.toInt(),
+                candidatePaths = candidatePaths
+            )
+        }
+    }
 
     if (showAddPresetDialog) {
         var newName by remember { mutableStateOf("") }
@@ -423,6 +456,46 @@ fun SettingsStorageScreen(
                         FilterChip(selected = (thumbDim == 480), onClick = { thumbDim = 480 }, label = { Text("中 (480px・推奨)", fontSize = 11.sp) })
                         FilterChip(selected = (thumbDim == 640), onClick = { thumbDim = 640 }, label = { Text("大 (640px)", fontSize = 11.sp) })
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surface
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "💾 容量シミュレーション & 端末内使用量",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "現在の端末内サムネイル: ${storageStats.thumbnailCount}枚 (${formatStorageBytes(storageStats.thumbnailTotalBytes)}) / 原本: ${storageStats.originalCount}枚 (${formatStorageBytes(storageStats.originalTotalBytes)})",
+                                fontSize = 11.sp,
+                                modifier = Modifier.testTag("thumbnail_storage_usage_text")
+                            )
+                            val estKb = String.format(Locale.JAPAN, "%.1f", compressionEstimate.estimatedBytes / 1024.0)
+                            val baseKb = String.format(Locale.JAPAN, "%.1f", compressionEstimate.baselineBytes / 1024.0)
+                            val sourceLabel = if (compressionEstimate.usedExistingPhoto) "端末内写真試算" else "標準テスト画像試算"
+                            Text(
+                                text = "現在設定での1枚あたり目安サイズ (${sourceLabel}): 約 ${estKb} KB（高画質 ${baseKb} KB 比 ${compressionEstimate.reductionPercent}%削減）",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.testTag("thumbnail_estimated_size_text")
+                            )
+                            Text(
+                                text = "※設定変更は「設定を保存する」後に新しく登録・撮影する写真から適用されます",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                            )
+                        }
+                    }
                 }
             }
 
@@ -482,5 +555,13 @@ fun SettingsStorageScreen(
                 }
             }
         }
+    }
+}
+
+private fun formatStorageBytes(bytes: Long): String {
+    return when {
+        bytes >= 1024L * 1024L -> String.format(Locale.JAPAN, "%.2f MB", bytes / (1024.0 * 1024.0))
+        bytes >= 1024L -> String.format(Locale.JAPAN, "%.1f KB", bytes / 1024.0)
+        else -> "$bytes B"
     }
 }

@@ -29,13 +29,26 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.7〜)
 
-現在のバージョン: **`v2.9 (Build 25)`**
+現在のバージョン: **`v2.10 (Build 26)`**
 
 ### 今後の予定フェーズ (詳細は `PLAN_PHASE_2_8_TO_2_11.md` を参照)
 - [x] **フェーズ 2.8 (完了 v2.8 / Build 24)**: 同期競合防止（Mutex排他・`syncedToPhone` 保護・解除判定厳格化）・QRコードISO準拠完全修復（V1〜12）・緑ステータス確定後ブラウザ起動・Yahoo!フリマ通常タブ表示（案A）
 - [x] **フェーズ 2.9 (完了 v2.9 / Build 25)**: `createdAt`/`updatedAt`/`soldAt` 双方向同期・PC管理画面5段階優先度ソート・スマホCSVバグ修正&PC側CSVダウンロード追加
-- [ ] **フェーズ 2.10 (予定 v2.10 / Build 26)**: バックボタン安全化（編集破棄確認・タブ戻り・終了確認）・サムネ容量可視化・「PCに送信」のLocalSend専用化・「ギャラリーに保存」刷新＆認証付き高画質取得/自己修復基盤
+- [x] **フェーズ 2.10 (完了 v2.10 / Build 26)**: バックボタン安全化（編集破棄確認・タブ戻り・終了確認）・サムネ容量可視化・「PCに送信」のLocalSend専用化・「ギャラリーに保存」刷新＆認証付き高画質取得/自己修復基盤
 - [ ] **フェーズ 2.11 (予定 v2.11 / Build 27)**: 基本設定/プリセットPC同期・0円許容&写真削除API・PC新規/編集モーダルのスマホ同等化
+
+### フェーズ 2.10 (バックボタン安全化・サムネ容量可視化・LocalSend分離・ギャラリー保存刷新&自己修復基盤) 【全フェーズ完了 (Build 26)】
+- [x] **フェーズ 2.10-A: バックボタン安全化** (`ItemEditScreen.kt`, `MainActivity.kt`) 【完了】
+  - 出品作成/編集画面で初期ロード完了スナップショットとの差分を検知し、変更あり時の `BackHandler` および上部「←」押下で「破棄して戻る / 編集を続ける」確認ダイアログを表示（破棄時は未保存の一時カメラファイルも削除）。
+  - メインタブ画面でも `BackHandler` を実装し、他タブ滞在時は出品一覧タブへ戻り、選択モード時は選択解除、通常の一覧タブでは終了確認ダイアログを表示するよう改善。
+- [x] **フェーズ 2.10-B: サムネイル保存設定の検証 & 容量可視化** (`PhotoStorageManager.kt`, `FleaMarketRepository.kt`, `SettingsStorageScreen.kt`) 【完了】
+  - 端末内サムネイル・原本の実使用容量計測と、品質/解像度設定に応じたインメモリJPEG圧縮試算（1枚あたり目安KB・削減率）を実装し、設定画面にリアルタイム表示を追加。初期テストデータ生成時も `createThumbnail()` を通すよう統一。
+- [x] **フェーズ 2.10-C: 「PCに送信」の LocalSend/QuickShare 専用化** (`FleaMarketViewModel.kt`, `ItemDetailScreen.kt`) 【完了】
+  - `shareItemWithZip()` から `repository.markItemShared()` 呼び出しを削除し、原本削除対象やサーバー同期状態が誤更新されないよう分離。写真パス参照も `displayFile` 優先に改め、ボタン表記を「他アプリでZIP共有 (LocalSend / QuickShare等)」へ変更。
+- [x] **フェーズ 2.10-D: 「ギャラリーに保存」刷新 & 認証付き原本取得・サムネイル自己修復基盤** (`PcServerClient.kt`, `PhotoStorageManager.kt`, `ItemDao.kt`, `FleaMarketViewModel.kt`, `ItemDetailScreen.kt`) 【完了】
+  - `downloadPhotoByHash()`（Bearer認証＋MD5検証）と、`displayFile` 欠損・破損検知時に `/api/photos/{md5Hash}` からサムネイルを自動再生成する自己修復機能を実装。
+  - 商品詳細の「ギャラリーに保存」を複数写真選択ダイアログ化し、PCオンライン時は「PCから高画質を取得して保存 / 端末内のみで保存」を選択可能に（直接 `MediaStore` 書き出しで端末内アプリ領域を圧迫しない構成）。
+  - バージョン表記を **`v2.10 (Build 26)`** へ統一し、単体テスト (`PhotoStorageManagerTest` 含む) を検証済み。
 
 ### フェーズ 2.7 (まとめ買い解除のゾンビ親商品根絶・売却済/まとめ済商品の選択ガード・まとめ点数合算表示改善) 【全フェーズ完了】
 - [x] **フェーズ 2.7-A: スマホ・PC両面でのまとめ買い解除（バラす）時のゾンビ親商品発生根絶** (`FleaMarketRepository.kt`, `FleaMarketViewModel.kt`, `PcServerClient.kt`, `FurimaServerNative.cs`) 【完了】

@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.9 (Build 25)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.10 (Build 26)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->

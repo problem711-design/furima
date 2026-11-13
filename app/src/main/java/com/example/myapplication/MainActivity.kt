@@ -1,7 +1,9 @@
 package com.example.myapplication
 
+import android.app.Activity
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,6 +13,8 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.Computer
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -18,12 +22,17 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -120,7 +129,45 @@ fun MainTabsContainer(
     onNavigateToAdd: () -> Unit,
     onNavigateToEdit: (Int) -> Unit
 ) {
+    val context = LocalContext.current
+    val isSelectionMode by viewModel.isSelectionMode.collectAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = true) {
+        when {
+            selectedTab != 0 -> selectedTab = 0
+            isSelectionMode -> viewModel.clearSelection()
+            else -> showExitConfirmDialog = true
+        }
+    }
+
+    if (showExitConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirmDialog = false },
+            title = { Text("アプリを終了しますか？") },
+            text = { Text("フリマ出品・売上管理を終了しますか？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitConfirmDialog = false
+                        (context as? Activity)?.finish()
+                    },
+                    modifier = Modifier.testTag("confirm_exit_app_button")
+                ) {
+                    Text("終了する")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showExitConfirmDialog = false },
+                    modifier = Modifier.testTag("cancel_exit_app_button")
+                ) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
 
     Scaffold(
         bottomBar = {

@@ -86,4 +86,7 @@ interface ItemDao {
 
     @Query("UPDATE photos SET md5Hash = :md5 WHERE id = :photoId")
     suspend fun updatePhotoMd5Hash(photoId: Int, md5: String)
+
+    @Query("UPDATE photos SET thumbnailPath = :thumbPath, isOriginalDeleted = :isOriginalDeleted, filePath = :newFilePath WHERE id = :photoId")
+    suspend fun updatePhotoRepairedThumbnail(photoId: Int, thumbPath: String, isOriginalDeleted: Boolean, newFilePath: String)
 }

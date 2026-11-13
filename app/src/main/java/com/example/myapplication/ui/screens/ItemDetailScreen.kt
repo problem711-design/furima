@@ -1,6 +1,9 @@
 package com.example.myapplication.ui.screens
 
+import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -80,15 +84,27 @@ fun ItemDetailScreen(
 ) {
     val context = LocalContext.current
     val defaultSettings by viewModel.defaultSettings.collectAsState()
+    val isPcServerConnected by viewModel.isPcServerConnected.collectAsState()
 
     var itemWithPhotos by remember { mutableStateOf<ItemWithPhotos?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showGallerySelectDialog by remember { mutableStateOf(false) }
+    var showPcOriginalConfirmDialog by remember { mutableStateOf(false) }
+    var selectedPhotoIdsForGallery by remember(itemId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var isExportingGallery by remember { mutableStateOf(false) }
 
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
     val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN)
 
-    LaunchedEffect(itemId) {
-        itemWithPhotos = viewModel.getItemById(itemId)
+    LaunchedEffect(itemId, isPcServerConnected) {
+        val loaded = viewModel.getItemById(itemId)
+        itemWithPhotos = loaded
+        if (loaded != null && isPcServerConnected) {
+            val repaired = viewModel.repairItemPhotosIfNeeded(itemId)
+            if (repaired) {
+                itemWithPhotos = viewModel.getItemById(itemId)
+            }
+        }
     }
 
     if (itemWithPhotos == null) {
@@ -130,6 +146,194 @@ fun ItemDetailScreen(
             dismissButton = {
                 TextButton(onClick = { showDeleteDialog = false }) {
                     Text("キャンセル")
+                }
+            }
+        )
+    }
+
+    val runGalleryExport: (Boolean) -> Unit = { fetchOriginalsFromPc ->
+        val selectedPhotos = photos.filter { it.id in selectedPhotoIdsForGallery }
+        if (selectedPhotos.isNotEmpty() && !isExportingGallery) {
+            isExportingGallery = true
+            viewModel.exportSelectedPhotosToGallery(
+                itemTitle = currentItem.title,
+                selectedPhotos = selectedPhotos,
+                fetchOriginalsFromPc = fetchOriginalsFromPc
+            ) { result ->
+                isExportingGallery = false
+                val msg = buildString {
+                    append("写真 ${result.savedCount}枚を「Pictures/FleaMarket」に保存しました")
+                    if (result.fetchedFromServerCount > 0) {
+                        append("\n（うちPCから高画質原本を ${result.fetchedFromServerCount}枚取得）")
+                    }
+                    if (result.usedThumbnailOnlyCount > 0) {
+                        append("\n（※原本なし ${result.usedThumbnailOnlyCount}枚は端末内サムネイルを保存）")
+                    }
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    if (showGallerySelectDialog) {
+        AlertDialog(
+            onDismissRequest = { showGallerySelectDialog = false },
+            title = { Text("ギャラリーに保存する写真を選択") },
+            text = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "選択中: ${selectedPhotoIdsForGallery.size} / ${photos.size}枚",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            TextButton(
+                                onClick = { selectedPhotoIdsForGallery = photos.map { it.id }.toSet() },
+                                modifier = Modifier.testTag("gallery_select_all_button")
+                            ) {
+                                Text("全選択", fontSize = 12.sp)
+                            }
+                            TextButton(
+                                onClick = { selectedPhotoIdsForGallery = emptySet() },
+                                modifier = Modifier.testTag("gallery_clear_all_button")
+                            ) {
+                                Text("解除", fontSize = 12.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(3),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(240.dp)
+                    ) {
+                        items(photos, key = { it.id }) { photo ->
+                            val isSelected = photo.id in selectedPhotoIdsForGallery
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .border(
+                                        width = if (isSelected) 3.dp else 1.dp,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.LightGray,
+                                        shape = RoundedCornerShape(8.dp)
+                                    )
+                                    .clickable {
+                                        selectedPhotoIdsForGallery = if (isSelected) {
+                                            selectedPhotoIdsForGallery - photo.id
+                                        } else {
+                                            selectedPhotoIdsForGallery + photo.id
+                                        }
+                                    }
+                                    .testTag("gallery_photo_choice_${photo.id}")
+                            ) {
+                                AsyncImage(
+                                    model = photo.displayFile,
+                                    contentDescription = "ギャラリー保存候補写真 ${photo.displayOrder + 1}",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(4.dp)
+                                        .size(22.dp)
+                                        .clip(CircleShape)
+                                        .background(
+                                            if (isSelected) MaterialTheme.colorScheme.primary
+                                            else Color.Black.copy(alpha = 0.45f)
+                                        ),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    if (isSelected) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = "選択済み",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = selectedPhotoIdsForGallery.isNotEmpty(),
+                    onClick = {
+                        showGallerySelectDialog = false
+                        val selectedList = photos.filter { it.id in selectedPhotoIdsForGallery }
+                        val needsServerFetch = selectedList.any {
+                            it.isOriginalDeleted || !File(it.filePath).exists() ||
+                                it.filePath.equals(it.thumbnailPath, ignoreCase = true)
+                        }
+                        if (isPcServerConnected && needsServerFetch) {
+                            showPcOriginalConfirmDialog = true
+                        } else if (isPcServerConnected) {
+                            showPcOriginalConfirmDialog = true
+                        } else {
+                            runGalleryExport(false)
+                        }
+                    },
+                    modifier = Modifier.testTag("gallery_select_confirm_button")
+                ) {
+                    Text(if (isPcServerConnected) "次へ (${selectedPhotoIdsForGallery.size}枚)" else "端末内から保存 (${selectedPhotoIdsForGallery.size}枚)")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGallerySelectDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
+    if (showPcOriginalConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showPcOriginalConfirmDialog = false },
+            title = { Text("PCから高画質原本を取得しますか？") },
+            text = {
+                Text(
+                    "PCサーバーに接続中です。選択した写真について、PC側に保存されているオリジナル高画質画像を取得してギャラリーへ保存しますか？\n（取得した画像はアプリ内ストレージを消費せず直接ギャラリーに書き出されます）"
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPcOriginalConfirmDialog = false
+                        runGalleryExport(true)
+                    },
+                    modifier = Modifier.testTag("fetch_pc_originals_button")
+                ) {
+                    Text("PCから高画質を取得して保存")
+                }
+            },
+            dismissButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            showPcOriginalConfirmDialog = false
+                            runGalleryExport(false)
+                        },
+                        modifier = Modifier.testTag("use_local_photos_button")
+                    ) {
+                        Text("端末内のみで保存")
+                    }
+                    TextButton(onClick = { showPcOriginalConfirmDialog = false }) {
+                        Text("キャンセル")
+                    }
                 }
             }
         )
@@ -218,7 +422,7 @@ fun ItemDetailScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // メインアクション：PCに送信 (無圧縮ZIP / 説明文同梱)
+            // メインアクション：他アプリでZIP共有 (LocalSend / QuickShare 等)
             Button(
                 onClick = {
                     viewModel.shareItemWithZip(context, itemWithPhotos!!)
@@ -233,7 +437,7 @@ fun ItemDetailScreen(
             ) {
                 Icon(imageVector = Icons.Default.FolderZip, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("PCに送信 (無圧縮ZIP・説明文同梱)", fontWeight = FontWeight.Bold)
+                Text("他アプリでZIP共有 (LocalSend / QuickShare等)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -244,31 +448,27 @@ fun ItemDetailScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 OutlinedButton(
+                    enabled = !isExportingGallery,
                     onClick = {
                         if (photos.isNotEmpty()) {
-                            viewModel.exportItemPhotosToGallery(
-                                context,
-                                currentItem.title,
-                                photos.map { it.filePath }
-                            ) { count ->
-                                android.widget.Toast.makeText(
-                                    context,
-                                    "写真 ${count}枚を端末の「Pictures/FleaMarket」に保存しました。メルカリ等の写真選択やギャラリーから使用できます",
-                                    android.widget.Toast.LENGTH_LONG
-                                ).show()
-                            }
+                            selectedPhotoIdsForGallery = photos.map { it.id }.toSet()
+                            showGallerySelectDialog = true
                         } else {
-                            android.widget.Toast.makeText(context, "保存対象の写真がありません", android.widget.Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "保存対象の写真がありません", Toast.LENGTH_SHORT).show()
                         }
                     },
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(48.dp)
                         .testTag("export_to_gallery_button")
                 ) {
                     Icon(imageVector = Icons.Default.PhotoLibrary, contentDescription = null)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("ギャラリーに保存", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (isExportingGallery) "保存中..." else "ギャラリーに保存",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
 
                 OutlinedButton(
@@ -277,7 +477,7 @@ fun ItemDetailScreen(
                     },
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
+                        .height(48.dp)
                         .testTag("copy_listing_text_button")
                 ) {
                     Icon(imageVector = Icons.Default.ContentCopy, contentDescription = null)

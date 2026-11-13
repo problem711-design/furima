@@ -15,6 +15,7 @@ import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemEntity
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.data.local.SalesSummary
 import com.example.myapplication.data.server.LocalWebServer
 import com.example.myapplication.data.server.NetworkUtils
@@ -48,6 +49,13 @@ enum class TimeRange(val label: String) {
     THIS_MONTH("今月"),
     ALL_TIME("全期間")
 }
+
+data class GalleryExportResult(
+    val savedCount: Int = 0,
+    val fetchedFromServerCount: Int = 0,
+    val fallbackLocalCount: Int = 0,
+    val usedThumbnailOnlyCount: Int = 0
+)
 
 class FleaMarketViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = FleaMarketRepository(application)
@@ -437,12 +445,16 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
-     * PC送信：無圧縮ZIP（商品名.zip）に写真と商品説明文.txtを同梱して共有し、isSharedフラグを更新
+     * 他アプリZIP共有：LocalSend / QuickShare 等での単発共有専用（isShared 同期フラグは変更しない）
      */
     fun shareItemWithZip(context: Context, itemWithPhotos: ItemWithPhotos) {
         viewModelScope.launch {
             val item = itemWithPhotos.item
-            val photos = itemWithPhotos.photos.map { it.filePath }
+            val photos = itemWithPhotos.photos.mapNotNull { it.displayFile?.absolutePath }
+            if (photos.isEmpty() && item.description.isBlank()) {
+                Toast.makeText(context, "共有できる写真または説明文がありません", Toast.LENGTH_SHORT).show()
+                return@launch
+            }
             val shareIntent = withContext(Dispatchers.IO) {
                 repository.getPhotoStorageManager().createStoredZipForSharing(
                     itemTitle = item.title,
@@ -451,13 +463,98 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }
             if (shareIntent != null) {
-                repository.markItemShared(item.id)
-                val chooser = Intent.createChooser(shareIntent, "PCに送信 (LocalSend等で共有)")
+                val chooser = Intent.createChooser(shareIntent, "他アプリでZIP共有 (LocalSend / QuickShare等)")
                 chooser.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(chooser)
             } else {
                 Toast.makeText(context, "ZIPファイルの生成に失敗しました", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    suspend fun repairItemPhotosIfNeeded(itemId: Int): Boolean {
+        if (!_isPcServerConnected.value) return false
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank()) return false
+        return pcServerClient.repairMissingOrCorruptThumbnailsForItem(itemId, url, token) > 0
+    }
+
+    fun exportSelectedPhotosToGallery(
+        itemTitle: String,
+        selectedPhotos: List<PhotoEntity>,
+        fetchOriginalsFromPc: Boolean,
+        onResult: (GalleryExportResult) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                val storageManager = repository.getPhotoStorageManager()
+                val url = _pcServerUrl.value
+                val token = _pcAuthToken.value
+                val isOnline = _isPcServerConnected.value && url.isNotBlank()
+
+                var saved = 0
+                var fetchedFromServer = 0
+                var fallbackLocal = 0
+                var thumbOnly = 0
+
+                selectedPhotos.forEachIndexed { index, photo ->
+                    val origFile = if (!photo.isOriginalDeleted && photo.filePath.isNotBlank()) {
+                        File(photo.filePath).takeIf {
+                            it.exists() && !it.absolutePath.equals(photo.thumbnailPath, ignoreCase = true)
+                        }
+                    } else null
+
+                    if (fetchOriginalsFromPc && isOnline) {
+                        if (origFile != null) {
+                            if (storageManager.syncFileToPublicGallery(itemTitle, origFile) != null) {
+                                saved++
+                            }
+                        } else if (photo.md5Hash.isNotBlank()) {
+                            val bytes = pcServerClient.downloadPhotoByHash(url, token, photo.md5Hash, verifyMd5 = true)
+                            if (bytes != null) {
+                                val fileName = "ORIG_${index + 1}_${photo.md5Hash.take(8)}.jpg"
+                                if (storageManager.saveBytesToPublicGallery(itemTitle, fileName, bytes) != null) {
+                                    saved++
+                                    fetchedFromServer++
+                                    return@forEachIndexed
+                                }
+                            }
+                            val fallbackFile = photo.displayFile
+                            if (fallbackFile != null && storageManager.syncFileToPublicGallery(itemTitle, fallbackFile) != null) {
+                                saved++
+                                fallbackLocal++
+                                thumbOnly++
+                            }
+                        } else {
+                            val fallbackFile = photo.displayFile
+                            if (fallbackFile != null && storageManager.syncFileToPublicGallery(itemTitle, fallbackFile) != null) {
+                                saved++
+                                fallbackLocal++
+                                if (photo.isOriginalDeleted || fallbackFile.absolutePath == photo.thumbnailPath) {
+                                    thumbOnly++
+                                }
+                            }
+                        }
+                    } else {
+                        val targetFile = origFile ?: photo.displayFile
+                        if (targetFile != null && storageManager.syncFileToPublicGallery(itemTitle, targetFile) != null) {
+                            saved++
+                            if (origFile == null) {
+                                thumbOnly++
+                            }
+                        }
+                    }
+                }
+
+                GalleryExportResult(
+                    savedCount = saved,
+                    fetchedFromServerCount = fetchedFromServer,
+                    fallbackLocalCount = fallbackLocal,
+                    usedThumbnailOnlyCount = thumbOnly
+                )
+            }
+            onResult(result)
         }
     }
 

@@ -336,11 +336,17 @@ class FleaMarketRepository(private val context: Context) {
                 }
 
                 val md5 = photoStorageManager.calculateMd5(photoFile)
+                val settings = defaultSettings.value
+                val thumbPath = photoStorageManager.createThumbnail(
+                    photoFile,
+                    settings.thumbnailMaxDimension,
+                    settings.thumbnailQuality
+                )
 
                 val photo = com.example.myapplication.data.local.PhotoEntity(
                     itemId = itemId,
                     filePath = photoFile.absolutePath,
-                    thumbnailPath = photoFile.absolutePath,
+                    thumbnailPath = thumbPath ?: photoFile.absolutePath,
                     md5Hash = md5,
                     displayOrder = 0,
                     syncStatus = "PENDING"

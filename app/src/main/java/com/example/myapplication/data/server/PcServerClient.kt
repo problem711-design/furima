@@ -1,8 +1,10 @@
 package com.example.myapplication.data.server
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.PhotoStorageManager
+import com.example.myapplication.data.local.PhotoEntity
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
@@ -578,6 +580,12 @@ class PcServerClient(
                             }
                         }
                     }
+
+                    // 欠損または破損サムネイルを検出した場合はサーバーから自動自己修復
+                    val syncedPhotos = dao.getPhotosByItemId(id)
+                    if (syncedPhotos.any { isPhotoThumbnailDamagedOrMissing(it) }) {
+                        repairMissingOrCorruptThumbnailsForItem(id, cleanUrl, token)
+                    }
                 }
                 true
             }
@@ -585,6 +593,112 @@ class PcServerClient(
             android.util.Log.e("PC_SYNC", "fetchServerItems 例外: ${e.message}", e)
             false
         }
+    }
+
+    /**
+     * PC サーバーから MD5 ハッシュ指定で原本写真バイナリを認証付き取得（GET /api/photos/{md5Hash}）
+     */
+    suspend fun downloadPhotoByHash(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken(),
+        md5Hash: String,
+        verifyMd5: Boolean = true
+    ): ByteArray? = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trim().trimEnd('/')
+            val cleanHash = md5Hash.trim().lowercase()
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || cleanHash.isBlank()) {
+                return@withContext null
+            }
+            val url = "$cleanUrl/api/photos/$cleanHash"
+            val reqBuilder = Request.Builder()
+                .url(url)
+                .addHeader("X-Client-Type", "phone")
+                .get()
+            if (token.isNotBlank()) {
+                reqBuilder.addHeader("Authorization", "Bearer $token")
+            }
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    android.util.Log.w("PC_SYNC", "写真取得失敗 ($cleanHash): HTTP ${response.code}")
+                    return@withContext null
+                }
+                val bytes = response.body?.bytes() ?: return@withContext null
+                if (bytes.isEmpty()) return@withContext null
+
+                if (verifyMd5) {
+                    val actualMd5 = photoStorageManager.calculateMd5(bytes).lowercase()
+                    if (actualMd5 != cleanHash) {
+                        android.util.Log.w("PC_SYNC", "写真MD5不一致のため破棄: expected=$cleanHash actual=$actualMd5")
+                        return@withContext null
+                    }
+                }
+                bytes
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "downloadPhotoByHash 例外: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun isPhotoThumbnailDamagedOrMissing(photo: PhotoEntity): Boolean {
+        val display = photo.displayFile ?: return photo.md5Hash.isNotBlank()
+        if (display.length() <= 0L) return photo.md5Hash.isNotBlank()
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(display.absolutePath, opts)
+        if (opts.outWidth <= 0 || opts.outHeight <= 0) return photo.md5Hash.isNotBlank()
+
+        // 原本ファイルが現存していてサムネイルと別ファイルである場合のみ原本MD5との整合性もチェック
+        if (!photo.isOriginalDeleted && photo.md5Hash.isNotBlank() && photo.filePath.isNotBlank()) {
+            val orig = File(photo.filePath)
+            if (orig.exists() && !orig.absolutePath.equals(photo.thumbnailPath, ignoreCase = true)) {
+                val origMd5 = photoStorageManager.calculateMd5(orig)
+                if (origMd5.isNotBlank() && !origMd5.equals(photo.md5Hash, ignoreCase = true)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    /**
+     * サムネイル欠損または破損ファイルを検知した際、PCサーバーの /api/photos/{md5Hash} から自己修復する
+     */
+    suspend fun repairMissingOrCorruptThumbnailsForItem(
+        itemId: Int,
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Int = withContext(Dispatchers.IO) {
+        val cleanUrl = baseUrl.trim().trimEnd('/')
+        if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext 0
+
+        val dao = repository.getDao()
+        val photos = dao.getPhotosByItemId(itemId)
+        val settings = repository.defaultSettings.value
+        var repairedCount = 0
+
+        for (photo in photos) {
+            if (photo.md5Hash.isBlank() || !isPhotoThumbnailDamagedOrMissing(photo)) continue
+            val bytes = downloadPhotoByHash(cleanUrl, token, photo.md5Hash, verifyMd5 = true) ?: continue
+            val newThumbPath = photoStorageManager.createThumbnailFromBytes(
+                bytes = bytes,
+                fileNameHint = "${photo.md5Hash.take(16)}.jpg",
+                maxDim = settings.thumbnailMaxDimension,
+                quality = settings.thumbnailQuality
+            ) ?: continue
+
+            val origExists = photo.filePath.isNotBlank() && File(photo.filePath).exists() &&
+                !photo.filePath.equals(photo.thumbnailPath, ignoreCase = true)
+            val newFilePath = if (origExists) photo.filePath else newThumbPath
+            dao.updatePhotoRepairedThumbnail(
+                photoId = photo.id,
+                thumbPath = newThumbPath,
+                isOriginalDeleted = !origExists,
+                newFilePath = newFilePath
+            )
+            repairedCount++
+        }
+        repairedCount
     }
 
     /**

@@ -1,6 +1,7 @@
 package com.example.myapplication.ui.screens
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoLibrary
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -44,6 +46,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -95,9 +98,23 @@ fun ItemEditScreen(
 
     val newImageUris = remember { mutableStateListOf<Uri>() }
     val existingFilePaths = remember { mutableStateListOf<String>() }
+    val createdTempCameraPaths = remember { mutableStateListOf<String>() }
 
     var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
     var tempCameraPath by remember { mutableStateOf<String?>(null) }
+
+    var initialTitle by remember(itemId) { mutableStateOf("") }
+    var initialDescription by remember(itemId) { mutableStateOf("") }
+    var initialPriceText by remember(itemId) { mutableStateOf("") }
+    var initialSoldPriceText by remember(itemId) { mutableStateOf("") }
+    var initialStatus by remember(itemId) { mutableStateOf("DRAFT") }
+    var initialUseCustomSettings by remember(itemId) { mutableStateOf(false) }
+    var initialFeeRatePercentText by remember(itemId) { mutableStateOf("") }
+    var initialShippingCostText by remember(itemId) { mutableStateOf("") }
+    var initialExpenseCostText by remember(itemId) { mutableStateOf("") }
+    var initialExistingFilePaths by remember(itemId) { mutableStateOf<List<String>>(emptyList()) }
+    var isInitialized by remember(itemId) { mutableStateOf(false) }
+    var showDiscardDialog by remember { mutableStateOf(false) }
 
     val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
@@ -108,9 +125,16 @@ fun ItemEditScreen(
     val cameraLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
     ) { success ->
-        if (success && tempCameraPath != null) {
-            existingFilePaths.add(tempCameraPath!!)
+        val path = tempCameraPath
+        if (success && path != null) {
+            existingFilePaths.add(path)
+            createdTempCameraPaths.add(path)
+        } else if (path != null) {
+            try {
+                File(path).delete()
+            } catch (_: Exception) {}
         }
+        tempCameraPath = null
     }
 
     LaunchedEffect(itemId) {
@@ -127,6 +151,7 @@ fun ItemEditScreen(
                 feeRatePercentText = item.feeRatePercent.toString()
                 shippingCostText = item.shippingCost.toString()
                 expenseCostText = item.expenseCost.toString()
+                existingFilePaths.clear()
                 existingFilePaths.addAll(itemWithPhotos.photos.map { it.filePath })
             }
         } else {
@@ -134,6 +159,78 @@ fun ItemEditScreen(
             shippingCostText = defaultSettings.defaultShippingCost.toString()
             expenseCostText = defaultSettings.defaultExpenseCost.toString()
         }
+        initialTitle = title
+        initialDescription = description
+        initialPriceText = priceText
+        initialSoldPriceText = soldPriceText
+        initialStatus = status
+        initialUseCustomSettings = useCustomSettings
+        initialFeeRatePercentText = feeRatePercentText
+        initialShippingCostText = shippingCostText
+        initialExpenseCostText = expenseCostText
+        initialExistingFilePaths = existingFilePaths.toList()
+        isInitialized = true
+    }
+
+    val hasUnsavedChanges = isInitialized && (
+        title != initialTitle ||
+            description != initialDescription ||
+            priceText != initialPriceText ||
+            soldPriceText != initialSoldPriceText ||
+            status != initialStatus ||
+            useCustomSettings != initialUseCustomSettings ||
+            feeRatePercentText != initialFeeRatePercentText ||
+            shippingCostText != initialShippingCostText ||
+            expenseCostText != initialExpenseCostText ||
+            existingFilePaths.toList() != initialExistingFilePaths ||
+            newImageUris.isNotEmpty()
+        )
+
+    val handleBackRequest: () -> Unit = {
+        if (hasUnsavedChanges) {
+            showDiscardDialog = true
+        } else {
+            onNavigateBack()
+        }
+    }
+
+    BackHandler(enabled = hasUnsavedChanges) {
+        showDiscardDialog = true
+    }
+
+    if (showDiscardDialog) {
+        AlertDialog(
+            onDismissRequest = { showDiscardDialog = false },
+            title = { Text("変更を保存せずに戻りますか？") },
+            text = { Text("入力した内容や追加した写真は保存されません。変更を破棄して前の画面に戻りますか？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        createdTempCameraPaths.forEach { path ->
+                            try {
+                                val f = File(path)
+                                if (f.exists()) f.delete()
+                            } catch (_: Exception) {}
+                        }
+                        createdTempCameraPaths.clear()
+                        showDiscardDialog = false
+                        onNavigateBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_discard_edit_button")
+                ) {
+                    Text("破棄して戻る")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showDiscardDialog = false },
+                    modifier = Modifier.testTag("cancel_discard_edit_button")
+                ) {
+                    Text("編集を続ける")
+                }
+            }
+        )
     }
 
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
@@ -167,7 +264,10 @@ fun ItemEditScreen(
             TopAppBar(
                 title = { Text(if (itemId == 0) "新規出品登録" else "出品情報編集") },
                 navigationIcon = {
-                    IconButton(onClick = onNavigateBack) {
+                    IconButton(
+                        onClick = handleBackRequest,
+                        modifier = Modifier.testTag("edit_back_button")
+                    ) {
                         Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "戻る")
                     }
                 }
