@@ -226,12 +226,29 @@ class PcServerClient(
                 )
             }
 
-            // 1. POST /api/sync/items
+            // 1. POST /api/sync/items (基本費用設定・プリセット一覧も同梱送信)
+            val currentSettings = repository.defaultSettings.value
+            val settingsDto = SyncSettingsDto(
+                defaultFeeRatePercent = currentSettings.defaultFeeRatePercent,
+                defaultShippingCost = currentSettings.defaultShippingCost,
+                defaultExpenseCost = currentSettings.defaultExpenseCost,
+                activePresetId = currentSettings.activePresetId,
+                presets = currentSettings.presets.map { p ->
+                    SyncFeePresetDto(
+                        id = p.id,
+                        name = p.name,
+                        feeRatePercent = p.feeRatePercent,
+                        shippingCost = p.shippingCost,
+                        expenseCost = p.expenseCost
+                    )
+                }
+            )
             val syncReq = SyncItemsRequest(
                 protocolVersion = 3,
                 storeId = savedStoreId,
                 items = dtoList,
-                activeFolderNames = activeFolderNames
+                activeFolderNames = activeFolderNames,
+                defaultSettings = settingsDto
             )
 
             val reqJsonStr = syncItemsRequestAdapter.toJson(syncReq)
@@ -496,15 +513,31 @@ class PcServerClient(
                         dao.insertItem(newItem)
                     }
 
-                    // 写真情報の同期・ローカルファイルパス自動補完（新規・既存ともに未紐付けや無効パスを修復）
+                    // 写真情報の同期（PCでの追加・削除・0枚化にも追従し、ローカルファイルパス自動補完）
                     val photosArray = obj.optJSONArray("photos")
-                    if (photosArray != null && photosArray.length() > 0) {
-                        val currentPhotos = dao.getPhotosByItemId(id)
-                        val hasValidPhotos = currentPhotos.isNotEmpty() &&
-                            currentPhotos.size == photosArray.length() &&
-                            currentPhotos.all { it.displayFile != null }
+                    val currentPhotos = dao.getPhotosByItemId(id)
+                    val hasUnpushedLocalPhoto = currentPhotos.any {
+                        !it.isPcSynced && !it.isOriginalDeleted && java.io.File(it.filePath).exists()
+                    }
+                    val serverHashes = mutableListOf<String>()
+                    if (photosArray != null) {
+                        for (pIdx in 0 until photosArray.length()) {
+                            serverHashes.add(photosArray.getJSONObject(pIdx).optString("md5Hash", "").trim().lowercase())
+                        }
+                    }
+                    val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }
+                    val hashListDiffers = serverHashes != localHashes
+                    val hasInvalidDisplay = currentPhotos.any { it.displayFile == null }
 
-                        if (!hasValidPhotos) {
+                    if (photosArray != null && photosArray.length() == 0) {
+                        if (currentPhotos.isNotEmpty() && !hasUnpushedLocalPhoto) {
+                            dao.deletePhotosByItemId(id)
+                        }
+                    } else if (photosArray != null && photosArray.length() > 0) {
+                        val shouldUpdatePhotos = (existing == null) ||
+                            (!hasUnpushedLocalPhoto && (hashListDiffers || hasInvalidDisplay))
+
+                        if (shouldUpdatePhotos) {
                             val newPhotoEntities = mutableListOf<com.example.myapplication.data.local.PhotoEntity>()
                             for (pIdx in 0 until photosArray.length()) {
                                 val pObj = photosArray.getJSONObject(pIdx)
@@ -513,9 +546,9 @@ class PcServerClient(
                                 var localFilePath = ""
                                 var localThumbPath: String? = null
 
-                                // 1. 全既存写真から MD5 ハッシュで実ファイルが存在するものを検索
+                                // 1. 同一商品既存写真 または 全既存写真から MD5 ハッシュで実ファイルが存在するものを検索
                                 if (md5.isNotBlank()) {
-                                    val matched = allExistingPhotos.firstOrNull {
+                                    val matched = (currentPhotos + allExistingPhotos).firstOrNull {
                                         it.md5Hash.equals(md5, ignoreCase = true) &&
                                         (java.io.File(it.filePath).exists() || (!it.thumbnailPath.isNullOrBlank() && java.io.File(it.thumbnailPath).exists()))
                                     }
@@ -581,7 +614,7 @@ class PcServerClient(
                         }
                     }
 
-                    // 欠損または破損サムネイルを検出した場合はサーバーから自動自己修復
+                    // 欠損または破損サムネイル（PC追加写真含む）を検出した場合はサーバーから自動自己修復
                     val syncedPhotos = dao.getPhotosByItemId(id)
                     if (syncedPhotos.any { isPhotoThumbnailDamagedOrMissing(it) }) {
                         repairMissingOrCorruptThumbnailsForItem(id, cleanUrl, token)

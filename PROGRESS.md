@@ -29,13 +29,24 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ v2.7〜)
 
-現在のバージョン: **`v2.10 (Build 26)`**
+現在のバージョン: **`v2.11 (Build 27)`**
 
 ### 今後の予定フェーズ (詳細は `PLAN_PHASE_2_8_TO_2_11.md` を参照)
 - [x] **フェーズ 2.8 (完了 v2.8 / Build 24)**: 同期競合防止（Mutex排他・`syncedToPhone` 保護・解除判定厳格化）・QRコードISO準拠完全修復（V1〜12）・緑ステータス確定後ブラウザ起動・Yahoo!フリマ通常タブ表示（案A）
 - [x] **フェーズ 2.9 (完了 v2.9 / Build 25)**: `createdAt`/`updatedAt`/`soldAt` 双方向同期・PC管理画面5段階優先度ソート・スマホCSVバグ修正&PC側CSVダウンロード追加
 - [x] **フェーズ 2.10 (完了 v2.10 / Build 26)**: バックボタン安全化（編集破棄確認・タブ戻り・終了確認）・サムネ容量可視化・「PCに送信」のLocalSend専用化・「ギャラリーに保存」刷新＆認証付き高画質取得/自己修復基盤
-- [ ] **フェーズ 2.11 (予定 v2.11 / Build 27)**: 基本設定/プリセットPC同期・0円許容&写真削除API・PC新規/編集モーダルのスマホ同等化
+- [x] **フェーズ 2.11 (完了 v2.11 / Build 27)**: 基本設定/プリセットPC同期・0円許容&写真削除API・PC新規/編集モーダルのスマホ同等化
+
+### フェーズ 2.11 (基本設定/プリセット同期・0円許容&写真削除API・PC新規/編集モーダルのスマホ同等化) 【全フェーズ完了 (Build 27)】
+- [x] **フェーズ 2.11-A — 基本費用設定・プリセット一覧のスマホ→PC同期** (`SyncDtos.kt`, `PcServerClient.kt`, `SyncStore.cs`, `FurimaServerNative.cs`) 【完了】
+  - `SyncItemsRequest` に `defaultSettings`（基本手数料率・送料・経費・選択中プリセットID・プリセット一覧）を追加して同期送信。
+  - `SyncStore.cs` の `store.json` へ `defaultSettings` を永続化し、`GET /api/settings` エンドポイントを新設して PC管理画面から参照可能に整備。
+- [x] **フェーズ 2.11-B — PC側0円許容・個別写真削除API・スマホ側写真追従** (`FurimaServerNative.cs`, `PcServerClient.kt`) 【完了】
+  - `HandleCreateItem` / `HandleUpdateItem` / `HandleMergeItems` で JSON フィールド未指定 (`null`) 時のみデフォルト値を補完するよう改め、送料0円・経費0円・手数料0% を正しく保存できるよう修正。
+  - `POST /api/items/{id}/photos/delete` を実装し、`HandleAddPhoto` の `photoUrl` 欠落を修正。スマホ側 `fetchServerItems()` もサーバー側の写真追加・削除（0枚含む）へ追従して自動同期・修復するよう強化。
+- [x] **フェーズ 2.11-C — PC新規出品・編集モーダルUIのスマホ同等化** (`DashboardHtml.cs`, `app/build.gradle.kts`, `WebDashboardHtml.kt`) 【完了】
+  - 新規追加モーダル・編集モーダルともに、写真ドラッグ＆ドロップ／ファイル選択・プレビュー（新規時は確定後一括アップロード、編集時は即時追加・削除）、ステータス選択チップ（下書き／出品中／売却済＋実売価格）、スマホ同期プリセットチップ・個別設定スイッチ・手数料/送料クイックチップ・リアルタイム利益シミュレーションを搭載。
+  - まとめモーダルおよび売上統計も `GET /api/settings` 値および 0円設定に完全対応し、`node --check`・`compile_applet`・単体テスト通過および **`v2.11 (Build 27)`** 統一を完了。
 
 ### フェーズ 2.10 (バックボタン安全化・サムネ容量可視化・LocalSend分離・ギャラリー保存刷新&自己修復基盤) 【全フェーズ完了 (Build 26)】
 - [x] **フェーズ 2.10-A: バックボタン安全化** (`ItemEditScreen.kt`, `MainActivity.kt`) 【完了】

@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.10 (Build 26)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v2.11 (Build 27)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -363,9 +363,9 @@ public static class DashboardHtml
         </div>
     </div>
 
-    <!-- 新規商品追加モーダル -->
+    <!-- 新規商品追加モーダル (スマホ同等UI) -->
     <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeAddModal()'>
-        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+        <div class='bg-white rounded-xl max-w-xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-emerald-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
                     <i class='fa-solid fa-plus text-lg'></i>
@@ -373,68 +373,130 @@ public static class DashboardHtml
                 </div>
                 <button onclick='closeAddModal()' class='text-emerald-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='p-5 space-y-3.5 text-xs max-h-[75vh] overflow-y-auto custom-scroll'>
+            <div class='p-5 space-y-4 text-xs max-h-[78vh] overflow-y-auto custom-scroll'>
+                <!-- ① 商品写真セクション -->
+                <div class='space-y-2'>
+                    <div class='flex items-center justify-between'>
+                        <label class='font-bold text-slate-700 flex items-center gap-1.5'>
+                            <i class='fa-solid fa-camera text-emerald-600'></i> 商品写真 (<span id='add-photo-count'>0</span>枚)
+                        </label>
+                        <span class='text-[10px] text-slate-400'>※ 登録確定時にアップロードされます</span>
+                    </div>
+                    <div id='add-photo-drop-zone' class='border-2 border-dashed border-emerald-200 hover:border-emerald-400 bg-emerald-50/30 rounded-xl p-3 text-center transition cursor-pointer'>
+                        <i class='fa-solid fa-cloud-arrow-up text-emerald-500 text-lg mb-0.5'></i>
+                        <p class='text-xs font-bold text-slate-700'>クリックして画像を選択、またはここにドラッグ＆ドロップ</p>
+                        <p class='text-[10px] text-slate-400'>JPG, PNG 等の複数選択に対応しています</p>
+                        <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
+                    </div>
+                    <div id='add-photo-preview-grid' class='flex flex-wrap gap-2'></div>
+                </div>
+
+                <!-- ② 商品基本情報 -->
                 <div>
                     <div class='flex justify-between items-center mb-1'>
-                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内)</label>
+                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
                         <span id='add-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
                     </div>
                     <input type='text' id='add-title' oninput='checkTitleLength(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット Mサイズ'>
                 </div>
-                <div class='grid grid-cols-2 gap-3'>
-                    <div>
-                        <label class='block font-bold text-slate-700 mb-1'>販売価格 (円)</label>
-                        <input type='number' id='add-price' oninput='calcAddProfit()' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
-                    </div>
-                    <div>
-                        <label class='block font-bold text-slate-700 mb-1'>初期ステータス</label>
-                        <select id='add-status' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 bg-white'>
-                            <option value='DRAFT' selected>未出品 (下書き)</option>
-                            <option value='LISTED'>出品中</option>
-                        </select>
-                    </div>
-                </div>
-
-                <!-- 費用・利益プレビュー設定 -->
-                <div class='bg-slate-50 p-3 rounded-lg border border-slate-200 space-y-2.5'>
-                    <div class='flex items-center justify-between'>
-                        <label class='flex items-center gap-1.5 cursor-pointer font-bold text-slate-700'>
-                            <input type='checkbox' id='add-use-custom' onchange='toggleAddCustomSettings()' class='w-3.5 h-3.5 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500'>
-                            <span>個別費用設定を使用する</span>
-                        </label>
-                        <span id='add-profit-preview' class='font-bold text-emerald-600 font-mono'>概算利益: ¥0 (0%)</span>
-                    </div>
-                    <div id='add-custom-settings-fields' class='grid grid-cols-3 gap-2 hidden pt-1'>
-                        <div>
-                            <label class='block text-[10px] font-bold text-slate-600 mb-0.5'>送料 (円)</label>
-                            <input type='number' id='add-shipping' value='210' oninput='calcAddProfit()' class='w-full p-1.5 border border-slate-300 rounded text-xs'>
-                        </div>
-                        <div>
-                            <label class='block text-[10px] font-bold text-slate-600 mb-0.5'>手数料 (%)</label>
-                            <input type='number' id='add-fee-rate' value='5' oninput='calcAddProfit()' class='w-full p-1.5 border border-slate-300 rounded text-xs'>
-                        </div>
-                        <div>
-                            <label class='block text-[10px] font-bold text-slate-600 mb-0.5'>経費 (円)</label>
-                            <input type='number' id='add-expense' value='55' oninput='calcAddProfit()' class='w-full p-1.5 border border-slate-300 rounded text-xs'>
-                        </div>
-                    </div>
-                </div>
 
                 <div>
                     <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
-                    <textarea id='add-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                    <textarea id='add-description' rows='3' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                </div>
+
+                <!-- ステータス選択チップ -->
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1.5'>ステータス</label>
+                    <input type='hidden' id='add-status' value='DRAFT'>
+                    <div class='flex flex-wrap gap-2'>
+                        <button type='button' id='add-status-chip-DRAFT' onclick='setModalStatus(""add"", ""DRAFT"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き (未出品)</button>
+                        <button type='button' id='add-status-chip-LISTED' onclick='setModalStatus(""add"", ""LISTED"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>出品中</button>
+                        <button type='button' id='add-status-chip-SOLD' onclick='setModalStatus(""add"", ""SOLD"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>売却済み</button>
+                    </div>
+                </div>
+
+                <div class='grid grid-cols-1 sm:grid-cols-2 gap-3'>
+                    <div>
+                        <label class='block font-bold text-slate-700 mb-1'>出品価格 (円)</label>
+                        <input type='number' min='0' id='add-price' oninput='calcModalProfit(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='5000'>
+                    </div>
+                    <div id='add-sold-price-group' class='hidden'>
+                        <label class='block font-bold text-slate-700 mb-1'>実際の売却価格 (円)</label>
+                        <input type='number' min='0' id='add-sold-price' oninput='calcModalProfit(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='空欄時は出品価格'>
+                    </div>
+                </div>
+
+                <!-- ③ 費用設定・プリセット & 利益シミュレーション -->
+                <div class='bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3'>
+                    <div class='flex items-center justify-between gap-2'>
+                        <div>
+                            <p class='font-bold text-slate-800'>個別費用設定 (カスタマイズ)</p>
+                            <p id='add-default-summary' class='text-[10px] text-slate-500 mt-0.5'>デフォルト設定適用中</p>
+                        </div>
+                        <label class='inline-flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 shrink-0'>
+                            <input type='checkbox' id='add-use-custom' onchange='toggleCustomSettings(""add"")' class='w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500'>
+                            <span class='text-[11px]'>有効にする</span>
+                        </label>
+                    </div>
+
+                    <!-- モール別プリセットチップ -->
+                    <div>
+                        <p class='text-[10px] font-bold text-slate-500 mb-1'>出品先プリセット (クリックで費用を一括反映)</p>
+                        <div id='add-preset-chips' class='flex flex-wrap gap-1.5'></div>
+                    </div>
+
+                    <div id='add-custom-settings-fields' class='space-y-3 hidden pt-1 border-t border-slate-200'>
+                        <!-- 手数料率 + クイックチップ -->
+                        <div>
+                            <label class='block text-[11px] font-bold text-slate-700 mb-1'>販売手数料率 (%)</label>
+                            <input type='number' min='0' id='add-fee-rate' value='5' oninput='onCostInput(""add"")' class='w-full p-1.5 border border-slate-300 rounded-lg text-xs bg-white'>
+                            <div class='flex flex-wrap gap-1.5 mt-1.5'>
+                                <button type='button' id='add-fee-chip-5' onclick='setQuickFee(""add"", 5)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>5% (PayPay等)</button>
+                                <button type='button' id='add-fee-chip-10' onclick='setQuickFee(""add"", 10)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>10% (メルカリ等)</button>
+                            </div>
+                        </div>
+
+                        <!-- 送料 + クイックチップ -->
+                        <div>
+                            <label class='block text-[11px] font-bold text-slate-700 mb-1'>送料 (円)</label>
+                            <input type='number' min='0' id='add-shipping' value='210' oninput='onCostInput(""add"")' class='w-full p-1.5 border border-slate-300 rounded-lg text-xs bg-white'>
+                            <div class='flex flex-wrap gap-1.5 mt-1.5'>
+                                <button type='button' id='add-ship-chip-0' onclick='setQuickShipping(""add"", 0)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>0円 (無料)</button>
+                                <button type='button' id='add-ship-chip-210' onclick='setQuickShipping(""add"", 210)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>210円 (ネコポス等)</button>
+                                <button type='button' id='add-ship-chip-450' onclick='setQuickShipping(""add"", 450)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>450円 (コンパクト)</button>
+                                <button type='button' id='add-ship-chip-750' onclick='setQuickShipping(""add"", 750)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>750円 (60サイズ)</button>
+                            </div>
+                        </div>
+
+                        <!-- 経費 -->
+                        <div>
+                            <label class='block text-[11px] font-bold text-slate-700 mb-1'>経費・梱包資材費 (円)</label>
+                            <div class='flex items-center gap-2'>
+                                <input type='number' min='0' id='add-expense' value='55' oninput='onCostInput(""add"")' class='flex-1 p-1.5 border border-slate-300 rounded-lg text-xs bg-white'>
+                                <button type='button' onclick='setQuickExpense(""add"", 0)' class='px-2.5 py-1.5 rounded-md text-[10px] font-bold border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition'>0円</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- リアルタイム利益シミュレーションカード -->
+                    <div class='bg-indigo-50 border border-indigo-200 rounded-lg p-2.5 space-y-1'>
+                        <p class='text-[11px] font-bold text-indigo-900'>🧮 利益シミュレーション</p>
+                        <p id='add-profit-formula' class='text-[10px] text-indigo-800 font-mono'>売価 ¥0 - 手数料(5%) ¥0 - 送料 ¥210 - 経費 ¥55</p>
+                        <p id='add-profit-value' class='text-sm font-black text-indigo-700'>純利益: ¥0 (0%)</p>
+                    </div>
                 </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
                 <button onclick='closeAddModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
-                <button onclick='createItem()' class='px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition'>出品を追加</button>
+                <button id='add-submit-btn' onclick='createItem()' class='px-4 py-2 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg shadow-sm transition'>出品を追加</button>
             </div>
         </div>
     </div>
 
-    <!-- 商品編集モーダル (Yahoo!フリマ対応) -->
+    <!-- 商品編集モーダル (Yahoo!フリマ・スマホ同等UI) -->
     <div id='edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeEditModal()'>
-        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+        <div class='bg-white rounded-xl max-w-xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
                     <i class='fa-solid fa-pen-to-square text-lg'></i>
@@ -442,46 +504,124 @@ public static class DashboardHtml
                 </div>
                 <button onclick='closeEditModal()' class='text-indigo-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='p-5 space-y-3.5 text-xs max-h-[75vh] overflow-y-auto custom-scroll'>
+            <div class='p-5 space-y-4 text-xs max-h-[78vh] overflow-y-auto custom-scroll'>
                 <input type='hidden' id='edit-id'>
+
+                <!-- ① 商品写真管理セクション -->
+                <div class='space-y-2'>
+                    <div class='flex items-center justify-between'>
+                        <label class='font-bold text-slate-700 flex items-center gap-1.5'>
+                            <i class='fa-solid fa-images text-indigo-600'></i> 商品写真 (<span id='edit-photo-count'>0</span>枚)
+                        </label>
+                        <button type='button' id='edit-open-folder-btn' class='text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 transition'>
+                            <i class='fa-regular fa-folder-open'></i> PCフォルダを開く
+                        </button>
+                    </div>
+                    <div id='edit-photo-drop-zone' class='border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/30 rounded-xl p-3 text-center transition cursor-pointer'>
+                        <i class='fa-solid fa-cloud-arrow-up text-indigo-500 text-lg mb-0.5'></i>
+                        <p class='text-xs font-bold text-slate-700'>クリックして写真を追加、またはここにドラッグ＆ドロップ</p>
+                        <p class='text-[10px] text-slate-400'>追加・削除は即座にPCフォルダとスマホ同期へ反映されます</p>
+                        <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
+                    </div>
+                    <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2'></div>
+                </div>
+
+                <!-- ② 商品基本情報 -->
                 <div>
                     <div class='flex justify-between items-center mb-1'>
-                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内)</label>
+                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
                         <span id='edit-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
                     </div>
                     <input type='text' id='edit-title' oninput='checkTitleLength(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
                 </div>
-                <div class='grid grid-cols-2 gap-3'>
-                    <div>
-                        <label class='block font-bold text-slate-700 mb-1'>出品価格 (円)</label>
-                        <input type='number' id='edit-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
-                    </div>
-                    <div>
-                        <label class='block font-bold text-slate-700 mb-1'>ステータス</label>
-                        <select id='edit-status' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 bg-white'>
-                            <option value='DRAFT'>未出品 (出品準備中)</option>
-                            <option value='LISTED'>出品中</option>
-                            <option value='SOLD'>売却済</option>
-                        </select>
-                    </div>
-                </div>
-                <div id='edit-sold-price-group' class='hidden'>
-                    <label class='block font-bold text-slate-700 mb-1'>実際の売却価格 (円)</label>
-                    <input type='number' id='edit-sold-price' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
-                </div>
+
                 <div>
                     <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
-                    <textarea id='edit-description' rows='5' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
+                    <textarea id='edit-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
                 </div>
-                <div class='pt-1'>
-                    <button type='button' id='edit-open-folder-btn' class='w-full bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition'>
-                        <i class='fa-regular fa-folder-open text-indigo-600'></i> 写真フォルダをPCエクスプローラーで開く
-                    </button>
+
+                <!-- ステータス選択チップ -->
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1.5'>ステータス</label>
+                    <input type='hidden' id='edit-status' value='LISTED'>
+                    <div class='flex flex-wrap gap-2'>
+                        <button type='button' id='edit-status-chip-DRAFT' onclick='setModalStatus(""edit"", ""DRAFT"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き (未出品)</button>
+                        <button type='button' id='edit-status-chip-LISTED' onclick='setModalStatus(""edit"", ""LISTED"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>出品中</button>
+                        <button type='button' id='edit-status-chip-SOLD' onclick='setModalStatus(""edit"", ""SOLD"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>売却済み</button>
+                    </div>
+                </div>
+
+                <div class='grid grid-cols-1 sm:grid-cols-2 gap-3'>
+                    <div>
+                        <label class='block font-bold text-slate-700 mb-1'>出品価格 (円)</label>
+                        <input type='number' min='0' id='edit-price' oninput='calcModalProfit(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
+                    </div>
+                    <div id='edit-sold-price-group' class='hidden'>
+                        <label class='block font-bold text-slate-700 mb-1'>実際の売却価格 (円)</label>
+                        <input type='number' min='0' id='edit-sold-price' oninput='calcModalProfit(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500' placeholder='空欄時は出品価格'>
+                    </div>
+                </div>
+
+                <!-- ③ 費用設定・プリセット & 利益シミュレーション -->
+                <div class='bg-slate-50 p-3.5 rounded-xl border border-slate-200 space-y-3'>
+                    <div class='flex items-center justify-between gap-2'>
+                        <div>
+                            <p class='font-bold text-slate-800'>個別費用設定 (カスタマイズ)</p>
+                            <p id='edit-default-summary' class='text-[10px] text-slate-500 mt-0.5'>デフォルト設定適用中</p>
+                        </div>
+                        <label class='inline-flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 shrink-0'>
+                            <input type='checkbox' id='edit-use-custom' onchange='toggleCustomSettings(""edit"")' class='w-4 h-4 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500'>
+                            <span class='text-[11px]'>有効にする</span>
+                        </label>
+                    </div>
+
+                    <!-- モール別プリセットチップ -->
+                    <div>
+                        <p class='text-[10px] font-bold text-slate-500 mb-1'>出品先プリセット (クリックで費用を一括反映)</p>
+                        <div id='edit-preset-chips' class='flex flex-wrap gap-1.5'></div>
+                    </div>
+
+                    <div id='edit-custom-settings-fields' class='space-y-3 hidden pt-1 border-t border-slate-200'>
+                        <div>
+                            <label class='block text-[11px] font-bold text-slate-700 mb-1'>販売手数料率 (%)</label>
+                            <input type='number' min='0' id='edit-fee-rate' value='5' oninput='onCostInput(""edit"")' class='w-full p-1.5 border border-slate-300 rounded-lg text-xs bg-white'>
+                            <div class='flex flex-wrap gap-1.5 mt-1.5'>
+                                <button type='button' id='edit-fee-chip-5' onclick='setQuickFee(""edit"", 5)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>5% (PayPay等)</button>
+                                <button type='button' id='edit-fee-chip-10' onclick='setQuickFee(""edit"", 10)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>10% (メルカリ等)</button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class='block text-[11px] font-bold text-slate-700 mb-1'>送料 (円)</label>
+                            <input type='number' min='0' id='edit-shipping' value='210' oninput='onCostInput(""edit"")' class='w-full p-1.5 border border-slate-300 rounded-lg text-xs bg-white'>
+                            <div class='flex flex-wrap gap-1.5 mt-1.5'>
+                                <button type='button' id='edit-ship-chip-0' onclick='setQuickShipping(""edit"", 0)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>0円 (無料)</button>
+                                <button type='button' id='edit-ship-chip-210' onclick='setQuickShipping(""edit"", 210)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>210円 (ネコポス等)</button>
+                                <button type='button' id='edit-ship-chip-450' onclick='setQuickShipping(""edit"", 450)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>450円 (コンパクト)</button>
+                                <button type='button' id='edit-ship-chip-750' onclick='setQuickShipping(""edit"", 750)' class='px-2 py-0.5 rounded-md text-[10px] font-bold border transition'>750円 (60サイズ)</button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class='block text-[11px] font-bold text-slate-700 mb-1'>経費・梱包資材費 (円)</label>
+                            <div class='flex items-center gap-2'>
+                                <input type='number' min='0' id='edit-expense' value='55' oninput='onCostInput(""edit"")' class='flex-1 p-1.5 border border-slate-300 rounded-lg text-xs bg-white'>
+                                <button type='button' onclick='setQuickExpense(""edit"", 0)' class='px-2.5 py-1.5 rounded-md text-[10px] font-bold border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition'>0円</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- リアルタイム利益シミュレーションカード -->
+                    <div class='bg-indigo-50 border border-indigo-200 rounded-lg p-2.5 space-y-1'>
+                        <p class='text-[11px] font-bold text-indigo-900'>🧮 利益シミュレーション</p>
+                        <p id='edit-profit-formula' class='text-[10px] text-indigo-800 font-mono'>売価 ¥0 - 手数料(5%) ¥0 - 送料 ¥210 - 経費 ¥55</p>
+                        <p id='edit-profit-value' class='text-sm font-black text-indigo-700'>純利益: ¥0 (0%)</p>
+                    </div>
                 </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
                 <button onclick='closeEditModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
-                <button onclick='updateItem()' class='px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition'>変更を保存</button>
+                <button id='edit-submit-btn' onclick='updateItem()' class='px-4 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition'>変更を保存</button>
             </div>
         </div>
     </div>
@@ -495,6 +635,25 @@ public static class DashboardHtml
         let selectedItemIds = new Set();
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
+        let pendingAddPhotoFiles = [];
+        let pcSettings = {
+            defaultFeeRatePercent: 5,
+            defaultShippingCost: 210,
+            defaultExpenseCost: 55,
+            activePresetId: 'yahoo_furima',
+            presets: [
+                { id: 'yahoo_furima', name: 'Yahoo!フリマ (基本)', feeRatePercent: 5, shippingCost: 210, expenseCost: 55 },
+                { id: 'mercari', name: 'メルカリ (ネコポス/ゆうパケット)', feeRatePercent: 10, shippingCost: 210, expenseCost: 55 },
+                { id: 'rakuma', name: '楽天ラクマ (かんたんラクマパック)', feeRatePercent: 10, shippingCost: 180, expenseCost: 55 },
+                { id: 'yupaket_mini', name: 'ゆうパケットポストmini', feeRatePercent: 5, shippingCost: 160, expenseCost: 20 }
+            ]
+        };
+
+        function parseNonNegInt(val, fallback) {
+            if (val === '' || val === null || val === undefined) return fallback;
+            const n = parseInt(val, 10);
+            return (!isNaN(n) && n >= 0) ? n : fallback;
+        }
 
         function getHeaders() {
             const h = { 'Content-Type': 'application/json; charset=utf-8' };
@@ -584,19 +743,36 @@ public static class DashboardHtml
         }
 
         document.addEventListener('DOMContentLoaded', () => {
+            fetchSettings();
             fetchItems();
             setInterval(fetchItems, 3000);
-            document.getElementById('edit-status').addEventListener('change', (e) => {
-                const isSold = e.target.value === 'SOLD';
-                document.getElementById('edit-sold-price-group').className = isSold ? 'block' : 'hidden';
-            });
 
-            // ドラッグ＆ドロップ写真アップロードの初期化
+            // ドラッグ＆ドロップ写真アップロードの初期化 (ギャラリー・新規追加・編集モーダル)
             setupDropZone();
+            setupModalPhotoDropZone('add-photo-drop-zone', addPendingPhotos);
+            setupModalPhotoDropZone('edit-photo-drop-zone', uploadEditPhotoFiles);
         });
+
+        async function fetchSettings() {
+            try {
+                const res = await fetch('/api/settings', { headers: getHeaders() });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (data) {
+                    pcSettings = {
+                        defaultFeeRatePercent: parseNonNegInt(data.defaultFeeRatePercent, 5),
+                        defaultShippingCost: parseNonNegInt(data.defaultShippingCost, 210),
+                        defaultExpenseCost: parseNonNegInt(data.defaultExpenseCost, 55),
+                        activePresetId: data.activePresetId || 'yahoo_furima',
+                        presets: (Array.isArray(data.presets) && data.presets.length > 0) ? data.presets : pcSettings.presets
+                    };
+                }
+            } catch (e) {}
+        }
 
         async function fetchItems() {
             try {
+                fetchSettings();
                 const res = await fetch('/api/items', { headers: getHeaders() });
                 if (!res.ok) return;
                 allItems = await res.json();
@@ -644,9 +820,9 @@ public static class DashboardHtml
 
             sold.forEach(i => {
                 const sp = i.soldPrice > 0 ? i.soldPrice : (i.price || 0);
-                const feeRate = i.feeRatePercent || 5;
-                const shipping = i.shippingCost || 210;
-                const expense = i.expenseCost || 55;
+                const feeRate = i.feeRatePercent != null ? i.feeRatePercent : pcSettings.defaultFeeRatePercent;
+                const shipping = i.shippingCost != null ? i.shippingCost : pcSettings.defaultShippingCost;
+                const expense = i.expenseCost != null ? i.expenseCost : pcSettings.defaultExpenseCost;
                 totalFee += Math.floor(sp * feeRate / 100);
                 totalShipping += shipping;
                 totalExpense += expense;
@@ -1052,9 +1228,9 @@ public static class DashboardHtml
             checkTitleLength('merge');
 
             document.getElementById('merge-price').value = originalTotal;
-            document.getElementById('merge-shipping').value = 210;
-            document.getElementById('merge-fee-rate').value = 5;
-            document.getElementById('merge-expense').value = 55;
+            document.getElementById('merge-shipping').value = pcSettings.defaultShippingCost;
+            document.getElementById('merge-fee-rate').value = pcSettings.defaultFeeRatePercent;
+            document.getElementById('merge-expense').value = pcSettings.defaultExpenseCost;
 
             const breakdown = selectedItems.map(i => '- ' + i.title + ' (¥' + (i.price || 0).toLocaleString() + ')').join('\n');
             document.getElementById('merge-description').value = '【まとめ買い対象商品 (' + totalSubItems + '点)】\n' + breakdown + '\n\n--- 商品説明 ---\nそれぞれの商品の状態は個別写真をご確認ください。個別でのご購入よりお安く設定しております。';
@@ -1070,10 +1246,10 @@ public static class DashboardHtml
         function updateMergeCalculations() {
             const selectedItems = allItems.filter(i => selectedItemIds.has(i.id));
             const originalTotal = selectedItems.reduce((s, i) => s + (i.price || 0), 0);
-            const price = parseInt(document.getElementById('merge-price').value) || 0;
-            const shipping = parseInt(document.getElementById('merge-shipping').value) || 210;
-            const feeRate = parseInt(document.getElementById('merge-fee-rate').value) || 5;
-            const expense = parseInt(document.getElementById('merge-expense').value) || 55;
+            const price = parseNonNegInt(document.getElementById('merge-price').value, 0);
+            const shipping = parseNonNegInt(document.getElementById('merge-shipping').value, pcSettings.defaultShippingCost);
+            const feeRate = parseNonNegInt(document.getElementById('merge-fee-rate').value, pcSettings.defaultFeeRatePercent);
+            const expense = parseNonNegInt(document.getElementById('merge-expense').value, pcSettings.defaultExpenseCost);
 
             const discount = Math.max(0, originalTotal - price);
             document.getElementById('merge-discount-text').innerText = '元計:¥' + originalTotal.toLocaleString() + ' / 値引:¥' + discount.toLocaleString();
@@ -1085,10 +1261,10 @@ public static class DashboardHtml
 
         async function submitMerge() {
             const title = document.getElementById('merge-title').value.trim();
-            const price = parseInt(document.getElementById('merge-price').value) || 0;
-            const shipping = parseInt(document.getElementById('merge-shipping').value) || 210;
-            const feeRate = parseInt(document.getElementById('merge-fee-rate').value) || 5;
-            const expense = parseInt(document.getElementById('merge-expense').value) || 55;
+            const price = parseNonNegInt(document.getElementById('merge-price').value, 0);
+            const shipping = parseNonNegInt(document.getElementById('merge-shipping').value, pcSettings.defaultShippingCost);
+            const feeRate = parseNonNegInt(document.getElementById('merge-fee-rate').value, pcSettings.defaultFeeRatePercent);
+            const expense = parseNonNegInt(document.getElementById('merge-expense').value, pcSettings.defaultExpenseCost);
             const description = document.getElementById('merge-description').value.trim();
 
             if (!title) {
@@ -1190,26 +1366,291 @@ public static class DashboardHtml
             document.getElementById('image-modal').classList.add('hidden');
         }
 
-        function openEditModal(id) {
+        function setupModalPhotoDropZone(zoneId, onFilesDropped) {
+            const zone = document.getElementById(zoneId);
+            if (!zone) return;
+            const inputId = zoneId === 'add-photo-drop-zone' ? 'add-photo-input' : 'edit-photo-input';
+            zone.onclick = () => document.getElementById(inputId).click();
+            zone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                zone.classList.add('ring-2', 'ring-indigo-400');
+            });
+            zone.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                zone.classList.remove('ring-2', 'ring-indigo-400');
+            });
+            zone.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                zone.classList.remove('ring-2', 'ring-indigo-400');
+                if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    await onFilesDropped(e.dataTransfer.files);
+                }
+            });
+        }
+
+        function setModalStatus(prefix, status) {
+            document.getElementById(prefix + '-status').value = status;
+            ['DRAFT', 'LISTED', 'SOLD'].forEach(st => {
+                const btn = document.getElementById(prefix + '-status-chip-' + st);
+                if (!btn) return;
+                if (st === status) {
+                    const activeColor = st === 'SOLD'
+                        ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
+                        : (st === 'DRAFT' ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-emerald-600 text-white border-emerald-600 shadow-sm');
+                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold border transition ' + activeColor;
+                } else {
+                    btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 transition';
+                }
+            });
+            const soldGroup = document.getElementById(prefix + '-sold-price-group');
+            if (soldGroup) {
+                soldGroup.className = (status === 'SOLD') ? 'block' : 'hidden';
+            }
+            calcModalProfit(prefix);
+        }
+
+        function toggleCustomSettings(prefix) {
+            const useCustom = document.getElementById(prefix + '-use-custom').checked;
+            const fields = document.getElementById(prefix + '-custom-settings-fields');
+            if (fields) {
+                if (useCustom) fields.classList.remove('hidden');
+                else fields.classList.add('hidden');
+            }
+            updateCostQuickChipStates(prefix);
+            renderPresetChips(prefix);
+            calcModalProfit(prefix);
+        }
+
+        function renderPresetChips(prefix) {
+            const container = document.getElementById(prefix + '-preset-chips');
+            if (!container) return;
+            const useCustom = document.getElementById(prefix + '-use-custom').checked;
+            const curFee = parseNonNegInt(document.getElementById(prefix + '-fee-rate').value, pcSettings.defaultFeeRatePercent);
+            const curShip = parseNonNegInt(document.getElementById(prefix + '-shipping').value, pcSettings.defaultShippingCost);
+            const curExp = parseNonNegInt(document.getElementById(prefix + '-expense').value, pcSettings.defaultExpenseCost);
+
+            const summaryElem = document.getElementById(prefix + '-default-summary');
+            if (summaryElem) {
+                summaryElem.innerText = useCustom
+                    ? '個別設定を適用中'
+                    : ('デフォルト設定 (手数料' + pcSettings.defaultFeeRatePercent + '% / 送料' + pcSettings.defaultShippingCost + '円 / 経費' + pcSettings.defaultExpenseCost + '円)');
+            }
+
+            container.innerHTML = (pcSettings.presets || []).map((p, idx) => {
+                const isSelected = useCustom
+                    ? (curFee === p.feeRatePercent && curShip === p.shippingCost && curExp === p.expenseCost)
+                    : (p.id === pcSettings.activePresetId);
+                const cls = isSelected
+                    ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm'
+                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100';
+                return `<button type='button' onclick='applyPresetByIndex(""${prefix}"", ${idx})' class='px-2.5 py-1 rounded-md text-[10px] font-bold border transition ${cls}'>${escapeHtml(p.name)} (${p.feeRatePercent}% / ¥${p.shippingCost})</button>`;
+            }).join('');
+        }
+
+        function applyPresetByIndex(prefix, idx) {
+            const preset = (pcSettings.presets || [])[idx];
+            if (!preset) return;
+            document.getElementById(prefix + '-use-custom').checked = true;
+            document.getElementById(prefix + '-fee-rate').value = preset.feeRatePercent;
+            document.getElementById(prefix + '-shipping').value = preset.shippingCost;
+            document.getElementById(prefix + '-expense').value = preset.expenseCost;
+            toggleCustomSettings(prefix);
+        }
+
+        function setQuickFee(prefix, fee) {
+            document.getElementById(prefix + '-use-custom').checked = true;
+            document.getElementById(prefix + '-fee-rate').value = fee;
+            toggleCustomSettings(prefix);
+        }
+
+        function setQuickShipping(prefix, ship) {
+            document.getElementById(prefix + '-use-custom').checked = true;
+            document.getElementById(prefix + '-shipping').value = ship;
+            toggleCustomSettings(prefix);
+        }
+
+        function setQuickExpense(prefix, exp) {
+            document.getElementById(prefix + '-use-custom').checked = true;
+            document.getElementById(prefix + '-expense').value = exp;
+            toggleCustomSettings(prefix);
+        }
+
+        function onCostInput(prefix) {
+            updateCostQuickChipStates(prefix);
+            renderPresetChips(prefix);
+            calcModalProfit(prefix);
+        }
+
+        function updateCostQuickChipStates(prefix) {
+            const feeVal = parseNonNegInt(document.getElementById(prefix + '-fee-rate').value, -1);
+            [5, 10].forEach(v => {
+                const b = document.getElementById(prefix + '-fee-chip-' + v);
+                if (!b) return;
+                b.className = (feeVal === v)
+                    ? 'px-2 py-0.5 rounded-md text-[10px] font-bold border border-indigo-600 bg-indigo-600 text-white transition'
+                    : 'px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition';
+            });
+
+            const shipVal = parseNonNegInt(document.getElementById(prefix + '-shipping').value, -1);
+            [0, 210, 450, 750].forEach(v => {
+                const b = document.getElementById(prefix + '-ship-chip-' + v);
+                if (!b) return;
+                b.className = (shipVal === v)
+                    ? 'px-2 py-0.5 rounded-md text-[10px] font-bold border border-indigo-600 bg-indigo-600 text-white transition'
+                    : 'px-2 py-0.5 rounded-md text-[10px] font-bold border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 transition';
+            });
+        }
+
+        function calcModalProfit(prefix) {
+            const status = document.getElementById(prefix + '-status').value;
+            const listPrice = parseNonNegInt(document.getElementById(prefix + '-price').value, 0);
+            const soldInputVal = document.getElementById(prefix + '-sold-price') ? document.getElementById(prefix + '-sold-price').value : '';
+            const soldPrice = (status === 'SOLD' && soldInputVal !== '') ? parseNonNegInt(soldInputVal, listPrice) : 0;
+            const basePrice = (status === 'SOLD' && soldPrice > 0) ? soldPrice : listPrice;
+
+            const useCustom = document.getElementById(prefix + '-use-custom').checked;
+            const shipping = useCustom
+                ? parseNonNegInt(document.getElementById(prefix + '-shipping').value, pcSettings.defaultShippingCost)
+                : pcSettings.defaultShippingCost;
+            const feeRate = useCustom
+                ? parseNonNegInt(document.getElementById(prefix + '-fee-rate').value, pcSettings.defaultFeeRatePercent)
+                : pcSettings.defaultFeeRatePercent;
+            const expense = useCustom
+                ? parseNonNegInt(document.getElementById(prefix + '-expense').value, pcSettings.defaultExpenseCost)
+                : pcSettings.defaultExpenseCost;
+
+            const fee = Math.floor(basePrice * feeRate / 100);
+            const profit = Math.max(0, basePrice - fee - shipping - expense);
+            const margin = basePrice > 0 ? Math.round((profit / basePrice) * 100) : 0;
+
+            const formulaElem = document.getElementById(prefix + '-profit-formula');
+            if (formulaElem) {
+                formulaElem.innerText = '売価 ¥' + basePrice.toLocaleString() + ' - 手数料(' + feeRate + '%) ¥' + fee.toLocaleString() + ' - 送料 ¥' + shipping.toLocaleString() + ' - 経費 ¥' + expense.toLocaleString();
+            }
+            const valueElem = document.getElementById(prefix + '-profit-value');
+            if (valueElem) {
+                valueElem.innerText = '純利益: ¥' + profit.toLocaleString() + ' (' + margin + '%)';
+            }
+        }
+
+        async function openEditModal(id) {
+            await fetchSettings();
             const item = allItems.find(i => i.id === id);
             if (!item) return;
 
             document.getElementById('edit-id').value = item.id;
             document.getElementById('edit-title').value = item.title || '';
-            document.getElementById('edit-price').value = item.price || 0;
-            document.getElementById('edit-sold-price').value = item.soldPrice || 0;
-            document.getElementById('edit-status').value = item.status || 'LISTED';
+            document.getElementById('edit-price').value = (item.price != null) ? item.price : 0;
+            document.getElementById('edit-sold-price').value = (item.soldPrice && item.soldPrice > 0) ? item.soldPrice : '';
             document.getElementById('edit-description').value = item.description || '';
 
-            checkTitleLength('edit');
+            const useCustom = !!item.useCustomSettings;
+            document.getElementById('edit-use-custom').checked = useCustom;
+            document.getElementById('edit-shipping').value = (item.shippingCost != null) ? item.shippingCost : pcSettings.defaultShippingCost;
+            document.getElementById('edit-fee-rate').value = (item.feeRatePercent != null) ? item.feeRatePercent : pcSettings.defaultFeeRatePercent;
+            document.getElementById('edit-expense').value = (item.expenseCost != null) ? item.expenseCost : pcSettings.defaultExpenseCost;
 
-            const isSold = item.status === 'SOLD';
-            document.getElementById('edit-sold-price-group').className = isSold ? 'block' : 'hidden';
+            checkTitleLength('edit');
+            setModalStatus('edit', item.status || 'LISTED');
+            toggleCustomSettings('edit');
+            renderEditModalPhotos(item.id);
 
             const folderBtn = document.getElementById('edit-open-folder-btn');
             folderBtn.onclick = () => openFolder(item.id);
 
             document.getElementById('edit-modal').classList.remove('hidden');
+        }
+
+        function renderEditModalPhotos(itemId) {
+            const item = allItems.find(i => i.id == itemId);
+            const grid = document.getElementById('edit-photo-preview-grid');
+            const countElem = document.getElementById('edit-photo-count');
+            const photos = (item && Array.isArray(item.photos)) ? item.photos : [];
+            if (countElem) countElem.innerText = photos.length;
+            if (!grid) return;
+
+            if (photos.length === 0) {
+                grid.innerHTML = `<p class='text-[11px] text-slate-400'>※ 登録済みの写真はありません</p>`;
+                return;
+            }
+
+            grid.innerHTML = photos.map((p, idx) => {
+                const url = p.md5Hash ? '/api/photos/' + p.md5Hash : (p.photoUrl || '');
+                const hash = p.md5Hash || '';
+                return `<div class='relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0 group'>
+                    <img src='${url}' onclick='window.open(""${url}"", ""_blank"")' class='w-full h-full object-cover cursor-pointer' title='クリックで原寸表示'>
+                    <span class='absolute top-1 left-1 bg-black/60 text-white text-[9px] font-mono px-1 rounded'>#${idx + 1}</span>
+                    ${hash ? `<button type='button' onclick='deleteEditPhotoByIdx(${item.id}, ${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='写真を削除'><i class='fa-solid fa-xmark'></i></button>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        async function handleEditPhotoInputChange(e) {
+            if (e.target.files && e.target.files.length > 0) {
+                await uploadEditPhotoFiles(e.target.files);
+                e.target.value = '';
+            }
+        }
+
+        async function uploadEditPhotoFiles(fileList) {
+            const itemId = document.getElementById('edit-id').value;
+            if (!itemId) return;
+            const files = Array.from(fileList).filter(f => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(f.name) || (f.type && f.type.startsWith('image/')));
+            if (files.length === 0) {
+                showToast('有効な画像ファイルを選択してください');
+                return;
+            }
+
+            showToast(files.length + '枚の写真を追加中...');
+            let uploaded = 0;
+            for (const f of files) {
+                try {
+                    const buf = await f.arrayBuffer();
+                    const res = await fetch('/api/items/' + itemId + '/photos/add', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/octet-stream',
+                            ...(AUTH_TOKEN ? { 'Authorization': 'Bearer ' + AUTH_TOKEN } : {})
+                        },
+                        body: buf
+                    });
+                    if (res.ok) uploaded++;
+                } catch (err) {
+                    console.log('Edit upload error:', err);
+                }
+            }
+            await fetchItems();
+            renderEditModalPhotos(itemId);
+            showToast(uploaded + '枚の写真を追加しました！');
+        }
+
+        async function deleteEditPhotoByIdx(itemId, photoIdx) {
+            const item = allItems.find(i => i.id == itemId);
+            const photo = (item && item.photos) ? item.photos[photoIdx] : null;
+            const md5Hash = photo ? photo.md5Hash : '';
+            if (!md5Hash) return;
+            if (!confirm('この写真を商品から削除しますか？')) return;
+            try {
+                const res = await fetch('/api/items/' + itemId + '/photos/delete', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ md5Hash })
+                });
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        await fetchItems();
+                        renderEditModalPhotos(itemId);
+                        showToast('写真を削除しました');
+                    } else {
+                        alert('写真削除に失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
         }
 
         function closeEditModal() {
@@ -1219,21 +1660,38 @@ public static class DashboardHtml
         async function updateItem() {
             const id = document.getElementById('edit-id').value;
             const title = document.getElementById('edit-title').value.trim();
-            const price = parseInt(document.getElementById('edit-price').value) || 0;
+            const price = parseNonNegInt(document.getElementById('edit-price').value, 0);
             const status = document.getElementById('edit-status').value;
-            const soldPrice = status === 'SOLD' ? (parseInt(document.getElementById('edit-sold-price').value) || price) : 0;
+            const soldRaw = document.getElementById('edit-sold-price').value;
+            const soldPrice = status === 'SOLD' ? parseNonNegInt(soldRaw, price) : 0;
             const description = document.getElementById('edit-description').value.trim();
+            const useCustomSettings = document.getElementById('edit-use-custom').checked;
+            const shippingCost = useCustomSettings
+                ? parseNonNegInt(document.getElementById('edit-shipping').value, pcSettings.defaultShippingCost)
+                : pcSettings.defaultShippingCost;
+            const feeRatePercent = useCustomSettings
+                ? parseNonNegInt(document.getElementById('edit-fee-rate').value, pcSettings.defaultFeeRatePercent)
+                : pcSettings.defaultFeeRatePercent;
+            const expenseCost = useCustomSettings
+                ? parseNonNegInt(document.getElementById('edit-expense').value, pcSettings.defaultExpenseCost)
+                : pcSettings.defaultExpenseCost;
 
             if (!title) {
                 alert('商品タイトルを入力してください。');
                 return;
             }
 
+            const btn = document.getElementById('edit-submit-btn');
+            if (btn) btn.disabled = true;
+
             try {
                 const res = await fetch('/api/items/' + id, {
                     method: 'PUT',
                     headers: getHeaders(),
-                    body: JSON.stringify({ title, price, soldPrice, status, description })
+                    body: JSON.stringify({
+                        title, price, soldPrice, status, description,
+                        useCustomSettings, shippingCost, feeRatePercent, expenseCost
+                    })
                 });
 
                 if (res.ok) {
@@ -1250,6 +1708,8 @@ public static class DashboardHtml
                 }
             } catch (e) {
                 alert('通信エラー: ' + e.message);
+            } finally {
+                if (btn) btn.disabled = false;
             }
         }
 
@@ -1278,65 +1738,119 @@ public static class DashboardHtml
             }
         }
 
-        function openAddModal() {
+        function clearPendingAddPhotos() {
+            pendingAddPhotoFiles.forEach(entry => {
+                try { URL.revokeObjectURL(entry.previewUrl); } catch (e) {}
+            });
+            pendingAddPhotoFiles = [];
+            renderAddModalPhotos();
+        }
+
+        function handleAddPhotoInputChange(e) {
+            if (e.target.files && e.target.files.length > 0) {
+                addPendingPhotos(e.target.files);
+                e.target.value = '';
+            }
+        }
+
+        function addPendingPhotos(fileList) {
+            const files = Array.from(fileList).filter(f => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(f.name) || (f.type && f.type.startsWith('image/')));
+            if (files.length === 0) {
+                showToast('有効な画像ファイルを選択してください');
+                return;
+            }
+            files.forEach(file => {
+                pendingAddPhotoFiles.push({
+                    file,
+                    previewUrl: URL.createObjectURL(file)
+                });
+            });
+            renderAddModalPhotos();
+        }
+
+        function removePendingAddPhoto(idx) {
+            const entry = pendingAddPhotoFiles[idx];
+            if (entry) {
+                try { URL.revokeObjectURL(entry.previewUrl); } catch (e) {}
+            }
+            pendingAddPhotoFiles.splice(idx, 1);
+            renderAddModalPhotos();
+        }
+
+        function renderAddModalPhotos() {
+            const grid = document.getElementById('add-photo-preview-grid');
+            const countElem = document.getElementById('add-photo-count');
+            if (countElem) countElem.innerText = pendingAddPhotoFiles.length;
+            if (!grid) return;
+
+            if (pendingAddPhotoFiles.length === 0) {
+                grid.innerHTML = `<p class='text-[11px] text-slate-400'>※ 追加する写真を選択するとプレビューが表示されます</p>`;
+                return;
+            }
+
+            grid.innerHTML = pendingAddPhotoFiles.map((entry, idx) => `
+                <div class='relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0'>
+                    <img src='${entry.previewUrl}' class='w-full h-full object-cover'>
+                    <span class='absolute top-1 left-1 bg-black/60 text-white text-[9px] font-mono px-1 rounded'>#${idx + 1}</span>
+                    <button type='button' onclick='removePendingAddPhoto(${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='選択から除外'><i class='fa-solid fa-xmark'></i></button>
+                </div>
+            `).join('');
+        }
+
+        async function openAddModal() {
+            await fetchSettings();
             document.getElementById('add-title').value = '';
             document.getElementById('add-price').value = '';
-            document.getElementById('add-status').value = 'DRAFT';
+            document.getElementById('add-sold-price').value = '';
             document.getElementById('add-description').value = '';
             document.getElementById('add-use-custom').checked = false;
-            toggleAddCustomSettings();
+            document.getElementById('add-shipping').value = pcSettings.defaultShippingCost;
+            document.getElementById('add-fee-rate').value = pcSettings.defaultFeeRatePercent;
+            document.getElementById('add-expense').value = pcSettings.defaultExpenseCost;
+            clearPendingAddPhotos();
+            setModalStatus('add', 'DRAFT');
+            toggleCustomSettings('add');
             checkTitleLength('add');
             document.getElementById('add-modal').classList.remove('hidden');
         }
 
         function closeAddModal() {
+            clearPendingAddPhotos();
             document.getElementById('add-modal').classList.add('hidden');
-        }
-
-        function toggleAddCustomSettings() {
-            const useCustom = document.getElementById('add-use-custom').checked;
-            const fields = document.getElementById('add-custom-settings-fields');
-            if (useCustom) fields.classList.remove('hidden');
-            else fields.classList.add('hidden');
-            calcAddProfit();
-        }
-
-        function calcAddProfit() {
-            const price = parseInt(document.getElementById('add-price').value) || 0;
-            const useCustom = document.getElementById('add-use-custom').checked;
-            const shipping = useCustom ? (parseInt(document.getElementById('add-shipping').value) || 0) : 210;
-            const feeRate = useCustom ? (parseFloat(document.getElementById('add-fee-rate').value) || 0) : 5;
-            const expense = useCustom ? (parseInt(document.getElementById('add-expense').value) || 0) : 55;
-
-            const fee = Math.floor(price * feeRate / 100);
-            const profit = price - fee - shipping - expense;
-            const margin = price > 0 ? Math.round((profit / price) * 100) : 0;
-
-            const elem = document.getElementById('add-profit-preview');
-            if (elem) elem.innerText = '概算利益: ¥' + profit.toLocaleString() + ' (' + margin + '%)';
         }
 
         async function createItem() {
             const title = document.getElementById('add-title').value.trim();
-            const price = parseInt(document.getElementById('add-price').value) || 0;
+            const price = parseNonNegInt(document.getElementById('add-price').value, 0);
             const status = document.getElementById('add-status').value;
+            const soldRaw = document.getElementById('add-sold-price').value;
+            const soldPrice = status === 'SOLD' ? parseNonNegInt(soldRaw, price) : 0;
             const description = document.getElementById('add-description').value.trim();
             const useCustomSettings = document.getElementById('add-use-custom').checked;
-            const shippingCost = useCustomSettings ? (parseInt(document.getElementById('add-shipping').value) || 210) : 210;
-            const feeRatePercent = useCustomSettings ? (parseFloat(document.getElementById('add-fee-rate').value) || 5) : 5;
-            const expenseCost = useCustomSettings ? (parseInt(document.getElementById('add-expense').value) || 55) : 55;
+            const shippingCost = useCustomSettings
+                ? parseNonNegInt(document.getElementById('add-shipping').value, pcSettings.defaultShippingCost)
+                : pcSettings.defaultShippingCost;
+            const feeRatePercent = useCustomSettings
+                ? parseNonNegInt(document.getElementById('add-fee-rate').value, pcSettings.defaultFeeRatePercent)
+                : pcSettings.defaultFeeRatePercent;
+            const expenseCost = useCustomSettings
+                ? parseNonNegInt(document.getElementById('add-expense').value, pcSettings.defaultExpenseCost)
+                : pcSettings.defaultExpenseCost;
 
             if (!title) {
                 alert('商品タイトルを入力してください。');
                 return;
             }
 
+            const btn = document.getElementById('add-submit-btn');
+            if (btn) btn.disabled = true;
+
             try {
                 const res = await fetch('/api/items', {
                     method: 'POST',
                     headers: getHeaders(),
                     body: JSON.stringify({
-                        title, price, status, description,
+                        title, price, soldPrice, status, description,
                         useCustomSettings, shippingCost, feeRatePercent, expenseCost
                     })
                 });
@@ -1344,8 +1858,30 @@ public static class DashboardHtml
                 if (res.ok) {
                     const result = await res.json();
                     if (result.status === 'ok') {
+                        let uploaded = 0;
+                        if (pendingAddPhotoFiles.length > 0 && result.id) {
+                            showToast('商品登録完了。写真 (' + pendingAddPhotoFiles.length + '枚) をアップロード中...');
+                            for (const entry of pendingAddPhotoFiles) {
+                                try {
+                                    const buf = await entry.file.arrayBuffer();
+                                    const upRes = await fetch('/api/items/' + result.id + '/photos/add', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/octet-stream',
+                                            ...(AUTH_TOKEN ? { 'Authorization': 'Bearer ' + AUTH_TOKEN } : {})
+                                        },
+                                        body: buf
+                                    });
+                                    if (upRes.ok) uploaded++;
+                                } catch (upErr) {
+                                    console.log('Add photo upload error:', upErr);
+                                }
+                            }
+                        }
+                        const stLabel = status === 'DRAFT' ? '下書き' : (status === 'SOLD' ? '売却済' : '出品中');
+                        const photoMsg = uploaded > 0 ? ' (写真' + uploaded + '枚)' : '';
                         closeAddModal();
-                        showToast('新規商品（' + (status === 'DRAFT' ? '下書き' : '出品中') + '）を追加しました！');
+                        showToast('新規商品（' + stLabel + '）を追加しました' + photoMsg + '！');
                         fetchItems();
                     } else {
                         alert('追加失敗: ' + (result.message || '不明なエラー'));
@@ -1355,6 +1891,8 @@ public static class DashboardHtml
                 }
             } catch (e) {
                 alert('通信エラー: ' + e.message);
+            } finally {
+                if (btn) btn.disabled = false;
             }
         }
 

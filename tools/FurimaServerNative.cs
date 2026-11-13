@@ -492,6 +492,10 @@ class FurimaServerNative
                     { "hashes", validHashes }
                 });
             }
+            else if (rawPath == "/api/settings" && req.HttpMethod == "GET")
+            {
+                SendJson(res, SyncStore.GetDefaultSettings());
+            }
             else if (rawPath == "/api/sync/items" && req.HttpMethod == "POST")
             {
                 lastHeartbeat = DateTime.Now;
@@ -523,6 +527,10 @@ class FurimaServerNative
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/add") && req.HttpMethod == "POST")
             {
                 HandleAddPhoto(req, res, rawPath);
+            }
+            else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/delete") && req.HttpMethod == "POST")
+            {
+                HandleDeletePhoto(req, res, rawPath);
             }
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/open-folder") && req.HttpMethod == "POST")
             {
@@ -823,6 +831,43 @@ class FurimaServerNative
 
                     SaveItemsDbToDisk();
 
+                    JObject dsObj = json["defaultSettings"] as JObject;
+                    if (dsObj != null)
+                    {
+                        try
+                        {
+                            var cfg = new DefaultSettingsConfig
+                            {
+                                defaultFeeRatePercent = Math.Max(0, ParseIntSafe(dsObj["defaultFeeRatePercent"], 5)),
+                                defaultShippingCost = Math.Max(0, ParseIntSafe(dsObj["defaultShippingCost"], 210)),
+                                defaultExpenseCost = Math.Max(0, ParseIntSafe(dsObj["defaultExpenseCost"], 55)),
+                                activePresetId = dsObj.Value<string>("activePresetId") ?? "yahoo_furima",
+                                presets = new List<FeePresetConfig>()
+                            };
+                            JArray presetsArr = dsObj["presets"] as JArray;
+                            if (presetsArr != null)
+                            {
+                                foreach (JObject pToken in presetsArr)
+                                {
+                                    if (pToken == null) continue;
+                                    cfg.presets.Add(new FeePresetConfig
+                                    {
+                                        id = pToken.Value<string>("id") ?? "",
+                                        name = pToken.Value<string>("name") ?? "",
+                                        feeRatePercent = Math.Max(0, ParseIntSafe(pToken["feeRatePercent"], 5)),
+                                        shippingCost = Math.Max(0, ParseIntSafe(pToken["shippingCost"], 210)),
+                                        expenseCost = Math.Max(0, ParseIntSafe(pToken["expenseCost"], 55))
+                                    });
+                                }
+                            }
+                            SyncStore.SaveDefaultSettings(cfg);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("基本設定の同期保存例外: " + ex.Message);
+                        }
+                    }
+
                     SendJson(res, new Dictionary<string, object>
                     {
                         { "status", "ok" },
@@ -1045,13 +1090,13 @@ class FurimaServerNative
                     int expense = item.ContainsKey("expenseCost") && item["expenseCost"] != null ? ParseIntSafe(item["expenseCost"], 55) : 55;
                     bool useCustom = item.ContainsKey("useCustomSettings") && item["useCustomSettings"] != null && (bool)item["useCustomSettings"];
 
-                    if (json["shippingCost"] != null) shipping = ParseIntSafe(json["shippingCost"], shipping);
-                    if (json["feeRatePercent"] != null) feeRate = ParseIntSafe(json["feeRatePercent"], feeRate);
-                    if (json["expenseCost"] != null) expense = ParseIntSafe(json["expenseCost"], expense);
+                    if (json["shippingCost"] != null && json["shippingCost"].Type != JTokenType.Null) shipping = Math.Max(0, ParseIntSafe(json["shippingCost"], shipping));
+                    if (json["feeRatePercent"] != null && json["feeRatePercent"].Type != JTokenType.Null) feeRate = Math.Max(0, ParseIntSafe(json["feeRatePercent"], feeRate));
+                    if (json["expenseCost"] != null && json["expenseCost"].Type != JTokenType.Null) expense = Math.Max(0, ParseIntSafe(json["expenseCost"], expense));
                     if (json["useCustomSettings"] != null) useCustom = json.Value<bool>("useCustomSettings");
 
                     int calcPrice = (status == "SOLD" && soldPrice > 0) ? soldPrice : price;
-                    int profit = calcPrice - (calcPrice * feeRate / 100) - shipping - expense;
+                    int profit = Math.Max(0, calcPrice - (calcPrice * feeRate / 100) - shipping - expense);
 
                     long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     long existingSoldAt = item.ContainsKey("soldAt") ? ParseLongSafe(item["soldAt"], 0) : 0;
@@ -1220,18 +1265,27 @@ class FurimaServerNative
                 JObject json = JObject.Parse(jsonStr);
 
                 string title = json.Value<string>("title") ?? "新規商品";
-                int price = json.Value<int>("price");
+                int price = Math.Max(0, ParseIntSafe(json["price"], 0));
+                int soldPrice = json["soldPrice"] != null && json["soldPrice"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["soldPrice"], 0))
+                    : 0;
                 string status = json.Value<string>("status") ?? "DRAFT";
                 string description = json.Value<string>("description") ?? "";
-                bool useCustomSettings = json.Value<bool>("useCustomSettings");
-                int shippingCost = json.Value<int>("shippingCost");
-                if (shippingCost <= 0) shippingCost = 210;
-                int feeRatePercent = json.Value<int>("feeRatePercent");
-                if (feeRatePercent <= 0) feeRatePercent = 5;
-                int expenseCost = json.Value<int>("expenseCost");
-                if (expenseCost <= 0) expenseCost = 55;
+                bool useCustomSettings = json["useCustomSettings"] != null && json.Value<bool>("useCustomSettings");
 
-                int profit = price - (price * feeRatePercent / 100) - shippingCost - expenseCost;
+                var defaults = SyncStore.GetDefaultSettings();
+                int shippingCost = json["shippingCost"] != null && json["shippingCost"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["shippingCost"], defaults.defaultShippingCost))
+                    : defaults.defaultShippingCost;
+                int feeRatePercent = json["feeRatePercent"] != null && json["feeRatePercent"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["feeRatePercent"], defaults.defaultFeeRatePercent))
+                    : defaults.defaultFeeRatePercent;
+                int expenseCost = json["expenseCost"] != null && json["expenseCost"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["expenseCost"], defaults.defaultExpenseCost))
+                    : defaults.defaultExpenseCost;
+
+                int calcPrice = (status == "SOLD" && soldPrice > 0) ? soldPrice : price;
+                int profit = Math.Max(0, calcPrice - (calcPrice * feeRatePercent / 100) - shippingCost - expenseCost);
                 string statusLabel = status == "SOLD" ? "売却済み" : (status == "DRAFT" ? "未出品" : "出品中");
                 long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
@@ -1266,7 +1320,7 @@ class FurimaServerNative
                         { "status", status },
                         { "statusLabel", statusLabel },
                         { "price", price },
-                        { "soldPrice", 0 },
+                        { "soldPrice", status == "SOLD" ? soldPrice : 0 },
                         { "profit", profit },
                         { "shippingCost", shippingCost },
                         { "feeRatePercent", feeRatePercent },
@@ -1402,15 +1456,19 @@ class FurimaServerNative
                     return;
                 }
 
+                var mergeDefaults = SyncStore.GetDefaultSettings();
                 string mergedTitle = json.Value<string>("mergedTitle") ?? "まとめ買い商品";
                 string mergedDescription = json.Value<string>("mergedDescription") ?? "";
-                int totalSoldPrice = ParseIntSafe(json["totalSoldPrice"], 0);
-                int newShippingCost = ParseIntSafe(json["newShippingCost"], 210);
-                if (newShippingCost <= 0) newShippingCost = 210;
-                int newFeeRatePercent = ParseIntSafe(json["newFeeRatePercent"], 5);
-                if (newFeeRatePercent <= 0) newFeeRatePercent = 5;
-                int newExpenseCost = ParseIntSafe(json["newExpenseCost"], 55);
-                if (newExpenseCost <= 0) newExpenseCost = 55;
+                int totalSoldPrice = Math.Max(0, ParseIntSafe(json["totalSoldPrice"], 0));
+                int newShippingCost = json["newShippingCost"] != null && json["newShippingCost"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["newShippingCost"], mergeDefaults.defaultShippingCost))
+                    : mergeDefaults.defaultShippingCost;
+                int newFeeRatePercent = json["newFeeRatePercent"] != null && json["newFeeRatePercent"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["newFeeRatePercent"], mergeDefaults.defaultFeeRatePercent))
+                    : mergeDefaults.defaultFeeRatePercent;
+                int newExpenseCost = json["newExpenseCost"] != null && json["newExpenseCost"].Type != JTokenType.Null
+                    ? Math.Max(0, ParseIntSafe(json["newExpenseCost"], mergeDefaults.defaultExpenseCost))
+                    : mergeDefaults.defaultExpenseCost;
                 string asStatus = json.Value<string>("asStatus") ?? "LISTED";
 
                 int newParentId = 1;
@@ -1751,7 +1809,7 @@ class FurimaServerNative
                     {
                         { "id", 0 },
                         { "itemId", itemId },
-                        { "photoUrl", "" },
+                        { "photoUrl", "/api/photos/" + computedHash },
                         { "md5Hash", computedHash },
                         { "displayOrder", photosList.Count }
                     });
@@ -1773,6 +1831,112 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("HandleAddPhoto エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleDeletePhoto(HttpListenerRequest req, HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length);
+            idStr = idStr.Substring(0, idStr.Length - "/photos/delete".Length).Trim();
+            int itemId;
+            if (!int.TryParse(idStr, out itemId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid ID" } });
+                return;
+            }
+
+            string targetHash = "";
+            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+            {
+                string jsonStr = reader.ReadToEnd();
+                if (!string.IsNullOrEmpty(jsonStr))
+                {
+                    JObject json = JObject.Parse(jsonStr);
+                    targetHash = (json.Value<string>("md5Hash") ?? "").Trim().ToLower();
+                }
+            }
+
+            if (string.IsNullOrEmpty(targetHash))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "md5Hash が指定されていません" } });
+                return;
+            }
+
+            int remainingCount = 0;
+            bool removedAny = false;
+            lock (lockObj)
+            {
+                var item = itemsDb.Find(i => ParseIntSafe(i["id"]) == itemId);
+                if (item == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Item not found" } });
+                    return;
+                }
+
+                var updatedPhotos = new List<Dictionary<string, object>>();
+                if (item.ContainsKey("photos") && item["photos"] != null)
+                {
+                    var enumPhotos = item["photos"] as System.Collections.IEnumerable;
+                    if (enumPhotos != null)
+                    {
+                        foreach (var pObj in enumPhotos)
+                        {
+                            Dictionary<string, object> dictCopy = null;
+                            if (pObj is Dictionary<string, object>)
+                            {
+                                dictCopy = new Dictionary<string, object>((Dictionary<string, object>)pObj);
+                            }
+                            else if (pObj is JObject)
+                            {
+                                dictCopy = ((JObject)pObj).ToObject<Dictionary<string, object>>();
+                            }
+                            if (dictCopy == null) continue;
+
+                            string h = dictCopy.ContainsKey("md5Hash") && dictCopy["md5Hash"] != null
+                                ? dictCopy["md5Hash"].ToString().Trim().ToLower()
+                                : "";
+                            if (string.Equals(h, targetHash, StringComparison.OrdinalIgnoreCase))
+                            {
+                                removedAny = true;
+                                continue;
+                            }
+                            dictCopy["displayOrder"] = updatedPhotos.Count;
+                            updatedPhotos.Add(dictCopy);
+                        }
+                    }
+                }
+
+                item["photos"] = updatedPhotos;
+                remainingCount = updatedPhotos.Count;
+                if (removedAny)
+                {
+                    item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    item["syncedToPhone"] = false;
+                }
+            }
+
+            if (removedAny)
+            {
+                SaveItemsDbToDisk();
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "removed", removedAny },
+                { "remainingCount", remainingCount }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleDeletePhoto エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

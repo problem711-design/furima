@@ -4,16 +4,56 @@ using System.Text;
 using Newtonsoft.Json;
 using System.Collections.Generic;
 
+public class FeePresetConfig
+{
+    public string id { get; set; }
+    public string name { get; set; }
+    public int feeRatePercent { get; set; }
+    public int shippingCost { get; set; }
+    public int expenseCost { get; set; }
+}
+
+public class DefaultSettingsConfig
+{
+    public int defaultFeeRatePercent { get; set; }
+    public int defaultShippingCost { get; set; }
+    public int defaultExpenseCost { get; set; }
+    public string activePresetId { get; set; }
+    public List<FeePresetConfig> presets { get; set; }
+
+    public static DefaultSettingsConfig CreateDefault()
+    {
+        return new DefaultSettingsConfig
+        {
+            defaultFeeRatePercent = 5,
+            defaultShippingCost = 210,
+            defaultExpenseCost = 55,
+            activePresetId = "yahoo_furima",
+            presets = new List<FeePresetConfig>
+            {
+                new FeePresetConfig { id = "yahoo_furima", name = "Yahoo!フリマ (基本)", feeRatePercent = 5, shippingCost = 210, expenseCost = 55 },
+                new FeePresetConfig { id = "mercari", name = "メルカリ (ネコポス/ゆうパケット)", feeRatePercent = 10, shippingCost = 210, expenseCost = 55 },
+                new FeePresetConfig { id = "rakuma", name = "楽天ラクマ (かんたんラクマパック)", feeRatePercent = 10, shippingCost = 180, expenseCost = 55 },
+                new FeePresetConfig { id = "yupaket_mini", name = "ゆうパケットポストmini", feeRatePercent = 5, shippingCost = 160, expenseCost = 20 }
+            }
+        };
+    }
+}
+
 public class StoreConfig
 {
     public string storeId { get; set; }
     public string path { get; set; }
     public string authToken { get; set; }
     public string createdAt { get; set; }
+    public DefaultSettingsConfig defaultSettings { get; set; }
 }
 
 public static class SyncStore
 {
+    private static readonly object _configLock = new object();
+    private static string _storeJsonPath = "";
+    private static StoreConfig _currentConfig = null;
     private static string _storeId = "";
     private static string _syncDir = "";
     private static string _authToken = "";
@@ -22,9 +62,56 @@ public static class SyncStore
     public static string SyncDir { get { return _syncDir; } }
     public static string AuthToken { get { return _authToken; } }
 
+    public static DefaultSettingsConfig GetDefaultSettings()
+    {
+        lock (_configLock)
+        {
+            if (_currentConfig != null && _currentConfig.defaultSettings != null)
+            {
+                return _currentConfig.defaultSettings;
+            }
+            return DefaultSettingsConfig.CreateDefault();
+        }
+    }
+
+    public static void SaveDefaultSettings(DefaultSettingsConfig settings)
+    {
+        if (settings == null) return;
+        lock (_configLock)
+        {
+            if (_currentConfig == null)
+            {
+                _currentConfig = new StoreConfig
+                {
+                    storeId = _storeId,
+                    path = _syncDir,
+                    authToken = _authToken,
+                    createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK")
+                };
+            }
+            if (settings.presets == null || settings.presets.Count == 0)
+            {
+                settings.presets = DefaultSettingsConfig.CreateDefault().presets;
+            }
+            _currentConfig.defaultSettings = settings;
+            if (!string.IsNullOrEmpty(_storeJsonPath))
+            {
+                try
+                {
+                    File.WriteAllText(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), Encoding.UTF8);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[警告] store.json の設定保存に失敗しました: " + ex.Message);
+                }
+            }
+        }
+    }
+
     public static void Initialize(string baseDir, ref string serverAuthToken)
     {
         string storeJsonPath = Path.Combine(baseDir, "store.json");
+        _storeJsonPath = storeJsonPath;
 
         if (File.Exists(storeJsonPath))
         {
@@ -36,19 +123,30 @@ public static class SyncStore
                 {
                     _storeId = cfg.storeId;
                     _syncDir = cfg.path;
+                    bool dirty = false;
                     if (string.IsNullOrEmpty(cfg.authToken))
                     {
                         _authToken = !string.IsNullOrEmpty(serverAuthToken) ? serverAuthToken : Guid.NewGuid().ToString("N").Substring(0, 12);
                         cfg.authToken = _authToken;
+                        dirty = true;
+                    }
+                    else
+                    {
+                        _authToken = cfg.authToken;
+                    }
+                    if (cfg.defaultSettings == null)
+                    {
+                        cfg.defaultSettings = DefaultSettingsConfig.CreateDefault();
+                        dirty = true;
+                    }
+                    _currentConfig = cfg;
+                    if (dirty)
+                    {
                         try
                         {
                             File.WriteAllText(storeJsonPath, JsonConvert.SerializeObject(cfg, Formatting.Indented), Encoding.UTF8);
                         }
                         catch {}
-                    }
-                    else
-                    {
-                        _authToken = cfg.authToken;
                     }
                     if (!Directory.Exists(_syncDir))
                     {
@@ -75,8 +173,10 @@ public static class SyncStore
             storeId = _storeId,
             path = _syncDir,
             authToken = _authToken,
-            createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK")
+            createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK"),
+            defaultSettings = DefaultSettingsConfig.CreateDefault()
         };
+        _currentConfig = newCfg;
 
         serverAuthToken = _authToken;
 

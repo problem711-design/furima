@@ -36,11 +36,30 @@ data class SyncItemDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class SyncFeePresetDto(
+    @param:Json(name = "id") val id: String,
+    @param:Json(name = "name") val name: String,
+    @param:Json(name = "feeRatePercent") val feeRatePercent: Int,
+    @param:Json(name = "shippingCost") val shippingCost: Int,
+    @param:Json(name = "expenseCost") val expenseCost: Int
+)
+
+@JsonClass(generateAdapter = true)
+data class SyncSettingsDto(
+    @param:Json(name = "defaultFeeRatePercent") val defaultFeeRatePercent: Int,
+    @param:Json(name = "defaultShippingCost") val defaultShippingCost: Int,
+    @param:Json(name = "defaultExpenseCost") val defaultExpenseCost: Int,
+    @param:Json(name = "activePresetId") val activePresetId: String,
+    @param:Json(name = "presets") val presets: List<SyncFeePresetDto>
+)
+
+@JsonClass(generateAdapter = true)
 data class SyncItemsRequest(
     @param:Json(name = "protocolVersion") val protocolVersion: Int = 3,
     @param:Json(name = "storeId") val storeId: String,
     @param:Json(name = "items") val items: List<SyncItemDto>,
-    @param:Json(name = "activeFolderNames") val activeFolderNames: List<String>
+    @param:Json(name = "activeFolderNames") val activeFolderNames: List<String>,
+    @param:Json(name = "defaultSettings") val defaultSettings: SyncSettingsDto? = null
 )
 
 @JsonClass(generateAdapter = true)
