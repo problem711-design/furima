@@ -30,7 +30,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 3)`** （Phase 2.13 設定双方向同期・デフォルトプリセット強化・テンプレート機能 反映）
+現在のバージョン：**`v0.9β (Build 4)`** （Phase 2.14 ゴミ箱機能・イベント駆動&リビジョン検知同期・Build 4 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -57,7 +57,7 @@
   - `2.13-A` `DefaultSettings` / `store.json` 拡張による設定双方向同期基盤（`PUT /api/settings` ＋ `settingsUpdatedAt` 新旧判定、Room DB 無変更）
   - `2.13-B` デフォルトプリセットの切り替え・編集・即時同期（スマホ設定画面・編集画面チップ・PC管理画面モーダル）
   - `2.13-C` タイトル／商品説明テンプレートの登録・編集・カーソル位置選択挿入（スマホ＆PC管理画面共通）
-- [ ] **フェーズ 2.14 (`v0.9β Build 4`) — 本命「ゴミ箱」機能 ＋ 一人利用最適・競合防止同期への刷新** 【計画策定済・未着手】
+- [x] **フェーズ 2.14 (`v0.9β Build 4`) — 本命「ゴミ箱」機能 ＋ 一人利用最適・競合防止同期への刷新** 【完了】
   - `2.14-A` Room DB 拡張 (`syncUuid`, `deletedAt`, `isDirty`, `MIGRATION_5_6`) ＆ 論理削除/復元/30日超過完全削除リポジトリ
   - `2.14-B` イベント駆動Push ＋ 軽量リビジョン検知 (`dataRevision`/`settingsRevision`) Pull ＋ `isDirty`/`updatedAt` 保護 ＋ UUID衝突防止同期エンジン
   - `2.14-C` スマホ＆PC共通「ゴミ箱」UI実装（復元・完全削除・一括削除・30日保持カウント表示）
@@ -65,6 +65,12 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 2.14 完了 バージョン 0.9β (Build 4)
+- **2.14-A (Room DB拡張 ＆ 論理削除/復元リポジトリ)**：`ItemEntity` に `syncUuid`・`deletedAt`・`isDirty` を追加し、`AppDatabase` を Version 6 (`MIGRATION_5_6`) へ移行。通常一覧/集計クエリへ `deletedAt IS NULL` を適用し、`FleaMarketRepository` に `moveToTrash`・`restoreFromTrash`・`permanentlyDeleteItem`・`emptyTrash`・`purgeExpiredTrash(30)`・`unmergeItem` 時トームストーン記録を実装。
+- **2.14-B (イベント駆動Push ＋ リビジョン検知Pull ＋ 競合防止同期)**：`SyncDtos.kt` / `PcServerClient.kt` / `FleaMarketViewModel.kt` と PC側 `SyncStore.cs` / `FurimaServerNative.cs` を同期プロトコルv4対応へ刷新。`dataRevision` / `settingsRevision` による軽量ハートビート検知、変更発生時500msデバウンスPush、再接続時Push先行ハンドシェイク、`syncUuid` 基準の和集合マージ＆数値ID衝突回避、`isDirty`・`updatedAt` 保護、90日保持トームストーン (`deleted_uuids.json`) によるゾンビ復活防止および `HandleSyncItems` からの無条件全削除廃止を実装。
+- **2.14-C (スマホ＆PC共通ゴミ箱UI ＋ Build 4 統一)**：`TrashScreen.kt`・`MainActivity.kt`・`ItemListScreen.kt`（件数バッジ付きアイコン導線）・`ItemDetailScreen.kt`・`ItemQuickActionDialog.kt` へゴミ箱移動/復元/完全削除/空にするUIおよび30日保持カウント表示を実装。PC側 `DashboardHtml.cs` にも `TRASH` フィルタータブ・バナー・復元/完全削除/空にする操作を追加し、`Phase214TrashAndSyncTest.kt`（Robolectric/JUnit）を追加。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 4`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を `v0.9β (Build 4)` へ統一。
 
 ### 2026/11/13 フェーズ 2.13 完了 バージョン 0.9β (Build 3)
 - **2.13-A (設定双方向同期基盤)**：`DefaultSettings` / `DefaultSettingsManager` / `SyncDtos` / `PcServerClient` / `FleaMarketViewModel` および PC側 `SyncStore.cs` / `FurimaServerNative.cs` を拡張し、`titleTemplates`・`descriptionTemplates`・`settingsUpdatedAt` を含む設定モデルを追加。`PUT /api/settings` の実装および `settingsUpdatedAt` 比較による古い設定の先祖返りガードを追加（Room DB 無変更）。

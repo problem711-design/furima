@@ -46,6 +46,7 @@ import com.example.myapplication.ui.screens.ItemListScreen
 import com.example.myapplication.ui.screens.PcSyncScreen
 import com.example.myapplication.ui.screens.SalesAnalysisScreen
 import com.example.myapplication.ui.screens.SettingsStorageScreen
+import com.example.myapplication.ui.screens.TrashScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -85,6 +86,18 @@ fun FleaMarketApp() {
                 },
                 onNavigateToEdit = { itemId ->
                     navController.navigate("item_edit/$itemId")
+                },
+                onNavigateToTrash = {
+                    navController.navigate("trash")
+                }
+            )
+        }
+
+        composable("trash") {
+            TrashScreen(
+                viewModel = viewModel,
+                onNavigateBack = {
+                    navController.popBackStack()
                 }
             )
         }
@@ -127,7 +140,8 @@ fun MainTabsContainer(
     viewModel: FleaMarketViewModel,
     onNavigateToDetail: (Int) -> Unit,
     onNavigateToAdd: () -> Unit,
-    onNavigateToEdit: (Int) -> Unit
+    onNavigateToEdit: (Int) -> Unit,
+    onNavigateToTrash: () -> Unit
 ) {
     val context = LocalContext.current
     val isSelectionMode by viewModel.isSelectionMode.collectAsState()

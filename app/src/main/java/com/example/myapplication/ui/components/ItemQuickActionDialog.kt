@@ -93,8 +93,8 @@ fun ItemQuickActionDialog(
         AlertDialog(
             onDismissRequest = { if (!isSubmitting) showDeleteConfirm = false },
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-            title = { Text("商品を削除しますか？") },
-            text = { Text("「${item.title}」を削除します。端末内の関連写真も削除されます。この操作は取り消せません。") },
+            title = { Text("ゴミ箱へ移動しますか？") },
+            text = { Text("「${item.title}」をゴミ箱へ移動します（30日間保管され、いつでも元に戻せます）。") },
             confirmButton = {
                 Button(
                     onClick = {
@@ -108,7 +108,7 @@ fun ItemQuickActionDialog(
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.testTag("quick_action_confirm_delete")
                 ) {
-                    Text("削除する")
+                    Text("ゴミ箱へ移動")
                 }
             },
             dismissButton = {
@@ -303,11 +303,11 @@ fun ItemQuickActionDialog(
                     )
                 }
 
-                // 5. 削除
+                // 5. ゴミ箱へ移動
                 QuickActionButton(
                     icon = Icons.Default.Delete,
-                    label = "商品を削除する",
-                    subtitle = "端末の写真ファイルも含めて完全削除",
+                    label = "ゴミ箱へ移動する",
+                    subtitle = "30日間保管され、ゴミ箱画面から復元可能",
                     tint = MaterialTheme.colorScheme.error,
                     testTagName = "quick_action_delete",
                     onClick = {

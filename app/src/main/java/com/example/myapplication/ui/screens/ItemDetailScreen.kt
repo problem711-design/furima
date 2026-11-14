@@ -143,20 +143,21 @@ fun ItemDetailScreen(
     if (showDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showDeleteDialog = false },
-            title = { Text("出品の削除") },
-            text = { Text("「${currentItem.title}」と保存されている写真データを削除しますか？") },
+            title = { Text("ゴミ箱へ移動") },
+            text = { Text("「${currentItem.title}」をゴミ箱へ移動しますか？（ゴミ箱内で30日間保管され、いつでも元に戻せます）") },
             confirmButton = {
                 Button(
                     onClick = {
                         viewModel.deleteItem(itemWithPhotos!!) {
                             showDeleteDialog = false
+                            Toast.makeText(context, "ゴミ箱へ移動しました", Toast.LENGTH_SHORT).show()
                             onNavigateBack()
                         }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.testTag("confirm_delete_button")
                 ) {
-                    Text("削除")
+                    Text("ゴミ箱へ移動")
                 }
             },
             dismissButton = {

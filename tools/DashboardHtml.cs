@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 3)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 4)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -54,6 +54,7 @@ public static class DashboardHtml
                     <button onclick='setFilter(""UNSHARED"")' id='filter-unshared' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>未出品 (<span id='count-unshared'>0</span>)</button>
                     <button onclick='setFilter(""LISTED"")' id='filter-listed' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>出品中 (<span id='count-listed'>0</span>)</button>
                     <button onclick='setFilter(""SOLD"")' id='filter-sold' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>売却済 (<span id='count-sold'>0</span>)</button>
+                    <button onclick='setFilter(""TRASH"")' id='filter-trash' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'><i class='fa-solid fa-trash-can mr-0.5'></i> ゴミ箱 (<span id='count-trash'>0</span>)</button>
                 </div>
 
                 <div class='relative w-40 lg:w-56 shrink-0'>
@@ -69,6 +70,17 @@ public static class DashboardHtml
         <div class='flex flex-col lg:flex-row gap-4 items-start'>
             <!-- 左側: メイン商品グリッド表示エリア -->
             <div class='flex-1 w-full min-w-0'>
+                <div id='trash-banner' class='hidden mb-3 bg-rose-50 border border-rose-200 rounded-lg px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2'>
+                    <div class='flex items-center gap-2 text-xs text-rose-800'>
+                        <i class='fa-solid fa-trash-can text-rose-600 text-sm'></i>
+                        <span class='font-bold'>ゴミ箱</span>
+                        <span class='text-rose-700'>削除した商品は30日間保管され、いつでも復元できます。30日経過後に写真を含め自動完全削除されます。</span>
+                    </div>
+                    <button onclick='emptyTrash()' id='empty-trash-btn' class='px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-xs font-bold shadow-sm transition flex items-center gap-1'>
+                        <i class='fa-solid fa-ban'></i> ゴミ箱を空にする
+                    </button>
+                </div>
+
                 <div id='items-grid' class='grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-3'>
                     <!-- JavaScriptで動的生成 -->
                 </div>
@@ -1234,9 +1246,22 @@ public static class DashboardHtml
             fetchCleanupPreview();
         }
 
+        function isItemTrashed(item) {
+            return !!(item && (item.isDeleted || (item.deletedAt != null && Number(item.deletedAt) > 0)));
+        }
+
+        function getTrashRemainingDays(item) {
+            const deletedAt = Number(item && item.deletedAt ? item.deletedAt : 0);
+            if (deletedAt <= 0) return 30;
+            const dayMs = 24 * 60 * 60 * 1000;
+            const remainingMs = Math.max(0, (deletedAt + 30 * dayMs) - Date.now());
+            return Math.max(0, Math.min(30, Math.ceil(remainingMs / dayMs)));
+        }
+
         function updateStats() {
-            // MERGED（まとめ内包済み）子商品は有効件数から除外（出品中・売却済・未出品の総計と一致させる）
-            const active = allItems.filter(i => !i.isDeleted && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
+            // MERGED（まとめ内包済み）子商品とゴミ箱商品は通常有効件数から除外
+            const active = allItems.filter(i => !isItemTrashed(i) && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
+            const trashed = allItems.filter(i => isItemTrashed(i) && !(i.status === 'MERGED' && i.mergedParentId && i.mergedParentId > 0));
             const listed = active.filter(i => i.status === 'LISTED');
             const unshared = active.filter(i => i.status === 'DRAFT');
             const sold = active.filter(i => i.status === 'SOLD');
@@ -1276,6 +1301,10 @@ public static class DashboardHtml
             document.getElementById('count-unshared').innerText = unshared.length;
             document.getElementById('count-listed').innerText = listed.length;
             document.getElementById('count-sold').innerText = sold.length;
+            const trashCountElem = document.getElementById('count-trash');
+            if (trashCountElem) trashCountElem.innerText = trashed.length;
+            const emptyTrashBtn = document.getElementById('empty-trash-btn');
+            if (emptyTrashBtn) emptyTrashBtn.disabled = trashed.length === 0;
         }
 
         function setFilter(filter) {
@@ -1287,12 +1316,26 @@ public static class DashboardHtml
             if (filter === 'UNSHARED') document.getElementById('filter-unshared').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-amber-700 shadow-sm transition';
             if (filter === 'LISTED') document.getElementById('filter-listed').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition';
             if (filter === 'SOLD') document.getElementById('filter-sold').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-emerald-700 shadow-sm transition';
+            if (filter === 'TRASH') document.getElementById('filter-trash').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-rose-700 shadow-sm transition';
+
+            const trashBanner = document.getElementById('trash-banner');
+            if (trashBanner) {
+                if (filter === 'TRASH') {
+                    trashBanner.classList.remove('hidden');
+                } else {
+                    trashBanner.classList.add('hidden');
+                }
+            }
+            if (filter === 'TRASH' && selectedItemIds.size > 0) {
+                selectedItemIds.clear();
+                updateSelectionBar();
+            }
             renderItems();
         }
 
         function toggleSelect(id) {
             const item = allItems.find(i => i.id === id);
-            if (item && (item.status === 'SOLD' || item.status === 'MERGED' || item.isDeleted)) {
+            if (item && (item.status === 'SOLD' || item.status === 'MERGED' || isItemTrashed(item))) {
                 return;
             }
             if (selectedItemIds.has(id)) {
@@ -1340,13 +1383,20 @@ public static class DashboardHtml
             const emptyState = document.getElementById('empty-state');
             const query = document.getElementById('search-input').value.trim().toLowerCase();
 
+            const isTrashView = currentFilter === 'TRASH';
             let items = allItems.filter(item => {
-                if (item.isDeleted) return false;
-                // まとめ内包済み(MERGED)子商品は個別カードとしては非表示（親まとめ商品内に集約表示）
-                if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
-                if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT') return false;
-                if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
+                const trashed = isItemTrashed(item);
+                if (isTrashView) {
+                    if (!trashed) return false;
+                    if (item.status === 'MERGED' && item.mergedParentId && item.mergedParentId > 0) return false;
+                } else {
+                    if (trashed) return false;
+                    // まとめ内包済み(MERGED)子商品は個別カードとしては非表示（親まとめ商品内に集約表示）
+                    if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
+                    if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
+                    if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT') return false;
+                    if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
+                }
 
                 if (query) {
                     const title = (item.title || '').toLowerCase();
@@ -1356,24 +1406,33 @@ public static class DashboardHtml
                 return true;
             });
 
-            // 5段階優先度＋登録/変更の新しい順ソート
-            const getItemSortPriority = (item) => {
-                const isB = checkIsBundle(item);
-                if (isB && item.status === 'LISTED') return 1;
-                if (isB && item.status === 'DRAFT') return 2;
-                if (!isB && item.status === 'LISTED') return 3;
-                if (!isB && item.status === 'DRAFT') return 4;
-                return 5;
-            };
-            items.sort((a, b) => {
-                const pa = getItemSortPriority(a);
-                const pb = getItemSortPriority(b);
-                if (pa !== pb) return pa - pb;
-                const ta = Math.max(a.updatedAt || 0, a.createdAt || 0);
-                const tb = Math.max(b.updatedAt || 0, b.createdAt || 0);
-                if (tb !== ta) return tb - ta;
-                return (b.id || 0) - (a.id || 0);
-            });
+            if (isTrashView) {
+                items.sort((a, b) => {
+                    const da = Number(a.deletedAt || a.updatedAt || 0);
+                    const db = Number(b.deletedAt || b.updatedAt || 0);
+                    if (db !== da) return db - da;
+                    return (b.id || 0) - (a.id || 0);
+                });
+            } else {
+                // 5段階優先度＋登録/変更の新しい順ソート
+                const getItemSortPriority = (item) => {
+                    const isB = checkIsBundle(item);
+                    if (isB && item.status === 'LISTED') return 1;
+                    if (isB && item.status === 'DRAFT') return 2;
+                    if (!isB && item.status === 'LISTED') return 3;
+                    if (!isB && item.status === 'DRAFT') return 4;
+                    return 5;
+                };
+                items.sort((a, b) => {
+                    const pa = getItemSortPriority(a);
+                    const pb = getItemSortPriority(b);
+                    if (pa !== pb) return pa - pb;
+                    const ta = Math.max(a.updatedAt || 0, a.createdAt || 0);
+                    const tb = Math.max(b.updatedAt || 0, b.createdAt || 0);
+                    if (tb !== ta) return tb - ta;
+                    return (b.id || 0) - (a.id || 0);
+                });
+            }
 
             if (items.length === 0) {
                 grid.innerHTML = '';
@@ -1390,19 +1449,22 @@ public static class DashboardHtml
                 const isDraft = item.status === 'DRAFT';
                 const isBundle = checkIsBundle(item);
                 const isMergedChild = item.status === 'MERGED';
+                const trashed = isItemTrashed(item);
+                const remainingDays = trashed ? getTrashRemainingDays(item) : 30;
                 const profitText = item.profit != null ? ' (利益 ¥' + item.profit.toLocaleString() + ')' : '';
                 const titleLen = (item.title || '').length;
-                const isChecked = selectedItemIds.has(item.id);
+                const isChecked = !trashed && selectedItemIds.has(item.id);
 
-                return `<div class='bg-white rounded-lg border ${isChecked ? 'border-indigo-500 ring-2 ring-indigo-300' : 'border-slate-200'} overflow-hidden shadow-sm hover:shadow-md transition flex flex-col'>
+                return `<div class='bg-white rounded-lg border ${trashed ? 'border-rose-200 bg-rose-50/20' : (isChecked ? 'border-indigo-500 ring-2 ring-indigo-300' : 'border-slate-200')} overflow-hidden shadow-sm hover:shadow-md transition flex flex-col'>
                     <!-- サムネイル外の選択チェックボックスバー -->
                     <div class='px-2.5 py-1 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px]'>
                         <label class='flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 hover:text-indigo-600' onclick='event.stopPropagation()'>
-                            <input type='checkbox' class='w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 ${isSold || isMergedChild ? 'opacity-40 cursor-not-allowed' : ''}' onchange='toggleSelect(${item.id})' ${isChecked ? 'checked' : ''} ${isSold || isMergedChild ? 'disabled' : ''}>
+                            <input type='checkbox' class='w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 ${trashed || isSold || isMergedChild ? 'opacity-40 cursor-not-allowed' : ''}' onchange='toggleSelect(${item.id})' ${isChecked ? 'checked' : ''} ${trashed || isSold || isMergedChild ? 'disabled' : ''}>
                             <span class='font-mono text-slate-500'>#${item.id}</span>
                         </label>
                         <div class='flex items-center gap-1'>
-                            ${!item.isShared ? `<span class='bg-slate-200 text-slate-700 text-[9px] px-1.5 py-0.2 rounded-full font-bold'>未同期</span>` : ''}
+                            ${trashed ? `<span class='bg-rose-100 text-rose-700 text-[10px] px-1.5 py-0.2 rounded-full font-bold'>完全削除まであと ${remainingDays}日</span>` : ''}
+                            ${!trashed && !item.isShared ? `<span class='bg-slate-200 text-slate-700 text-[9px] px-1.5 py-0.2 rounded-full font-bold'>未同期</span>` : ''}
                             ${isBundle ? `<span class='bg-purple-100 text-purple-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-1'><i class='fa-solid fa-gift'></i> まとめ (${item.mergedChildCount || 2}点)</span>` : ''}
                             ${isMergedChild ? `<span class='bg-purple-50 text-purple-600 text-[10px] px-1.5 py-0.2 rounded-full font-bold'>まとめ内包済</span>` : ''}
                         </div>
@@ -1410,11 +1472,14 @@ public static class DashboardHtml
 
                     <!-- サムネイル画像 -->
                     <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openPhotoViewer(${item.id})'>
-                        ${mainPhoto ? `<img src='${mainPhoto}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${mainPhoto}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>` : `<div class='w-full h-full flex items-center justify-center text-slate-300'><i class='fa-solid fa-image text-3xl'></i></div>`}
+                        ${mainPhoto ? `<img src='${mainPhoto}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${mainPhoto}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200 ${trashed ? 'opacity-80' : ''}'>` : `<div class='w-full h-full flex items-center justify-center text-slate-300'><i class='fa-solid fa-image text-3xl'></i></div>`}
                         <div class='absolute top-1.5 left-1.5 flex gap-1 flex-wrap'>
-                            <span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${isSold ? 'bg-rose-600 text-white' : (isDraft ? 'bg-amber-500 text-white' : (isMergedChild ? 'bg-purple-600 text-white' : 'bg-emerald-600 text-white'))}'>
-                                ${isSold ? '売却済' : (isDraft ? '未出品' : (isMergedChild ? 'まとめ済' : '出品中'))}
-                            </span>
+                            ${trashed
+                                ? `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm bg-rose-700 text-white'>ゴミ箱</span>`
+                                : `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${isSold ? 'bg-rose-600 text-white' : (isDraft ? 'bg-amber-500 text-white' : (isMergedChild ? 'bg-purple-600 text-white' : 'bg-emerald-600 text-white'))}'>
+                                    ${isSold ? '売却済' : (isDraft ? '未出品' : (isMergedChild ? 'まとめ済' : '出品中'))}
+                                   </span>`
+                            }
                         </div>
                         ${photos.length > 0 ? `<div class='absolute bottom-1.5 right-1.5 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1'><i class='fa-solid fa-camera'></i> ${photos.length}</div>` : ''}
                     </div>
@@ -1428,6 +1493,7 @@ public static class DashboardHtml
                             <p class='text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-tight'>${escapeHtml(item.description || '')}</p>
                         </div>
 
+                        ${!trashed ? `
                         <!-- Yahoo!フリマ出品コピペ & 写真ビューアー支援バー -->
                         <div class='bg-slate-50 border border-slate-100 rounded p-1 flex items-center justify-between gap-1 text-[10px]'>
                             <button onclick='copyText(${JSON.stringify(item.title || '')}, ""タイトル"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='タイトルをコピー'>
@@ -1442,17 +1508,22 @@ public static class DashboardHtml
                             <button onclick='openPhotoViewer(${item.id})' class='bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded font-bold transition flex items-center justify-center' title='写真ギャラリー / 出品画像ドラッグ'>
                                 <i class='fa-solid fa-images'></i>
                             </button>
-                        </div>
+                        </div>` : ''}
 
-                        <div class='border-t border-slate-100 pt-1.5 flex items-center justify-between'>
+                        <div class='border-t border-slate-100 pt-1.5 flex items-center justify-between gap-1'>
                             <div>
                                 <span class='text-base font-black ${isSold ? 'text-rose-600' : 'text-indigo-600'}'>¥${displayPrice.toLocaleString()}</span>
                                 ${profitText ? `<span class='text-[10px] font-bold text-emerald-600 block'>${profitText}</span>` : ''}
                             </div>
                             <div class='flex gap-1'>
-                                ${isBundle ? `<button onclick='unmergeItem(${item.id})' class='px-1.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded text-[10px] font-bold transition flex items-center gap-1' title='まとめ解除 (個別商品に戻す)'><i class='fa-solid fa-box-open'></i> 解除</button>` : ''}
-                                <button onclick='openEditModal(${item.id})' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold transition' title='編集'><i class='fa-solid fa-pen'></i></button>
-                                <button onclick='deleteItem(${item.id})' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[10px] font-bold transition' title='削除'><i class='fa-solid fa-trash'></i></button>
+                                ${trashed ? `
+                                    <button onclick='restoreItem(${item.id})' class='px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold transition flex items-center gap-1' title='ゴミ箱から復元'><i class='fa-solid fa-rotate-left'></i> 復元</button>
+                                    <button onclick='permanentDeleteItem(${item.id})' class='px-2 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[10px] font-bold transition flex items-center gap-1' title='完全削除'><i class='fa-solid fa-xmark'></i> 完全削除</button>
+                                ` : `
+                                    ${isBundle ? `<button onclick='unmergeItem(${item.id})' class='px-1.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded text-[10px] font-bold transition flex items-center gap-1' title='まとめ解除 (個別商品に戻す)'><i class='fa-solid fa-box-open'></i> 解除</button>` : ''}
+                                    <button onclick='openEditModal(${item.id})' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold transition' title='編集'><i class='fa-solid fa-pen'></i></button>
+                                    <button onclick='deleteItem(${item.id})' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[10px] font-bold transition' title='ゴミ箱へ移動'><i class='fa-solid fa-trash'></i></button>
+                                `}
                             </div>
                         </div>
                     </div>
@@ -1766,9 +1837,14 @@ public static class DashboardHtml
         function openImageModal(itemIdx, photoIdx) {
             const query = document.getElementById('search-input').value.trim().toLowerCase();
             let filteredItems = allItems.filter(item => {
-                if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
-                if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
+                if (currentFilter === 'TRASH') {
+                    if (!isItemTrashed(item)) return false;
+                } else {
+                    if (isItemTrashed(item)) return false;
+                    if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
+                    if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
+                    if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
+                }
                 if (query) {
                     const title = (item.title || '').toLowerCase();
                     const desc = (item.description || '').toLowerCase();
@@ -2146,7 +2222,7 @@ public static class DashboardHtml
         }
 
         async function deleteItem(id) {
-            if (!confirm('商品ID: ' + id + ' を削除します。PCおよび次回同期時にスマホからも削除されます。よろしいですか？')) return;
+            if (!confirm('商品ID #' + id + ' をゴミ箱へ移動しますか？（30日間保管され、ゴミ箱タブから復元できます）')) return;
 
             try {
                 const res = await fetch('/api/items/' + id, {
@@ -2157,13 +2233,91 @@ public static class DashboardHtml
                 if (res.ok) {
                     const result = await res.json();
                     if (result.status === 'ok') {
-                        showToast('商品を削除しました');
+                        showToast('商品をゴミ箱へ移動しました');
                         fetchItems();
                     } else {
                         alert('削除失敗: ' + (result.message || '不明なエラー'));
                     }
                 } else {
-                    alert('サーバー通信エラー (Status: ' + res.status + ')');
+                    alert('サーバー通信エラー (Status ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        async function restoreItem(id) {
+            try {
+                const res = await fetch('/api/items/' + id + '/restore', {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        showToast('商品をゴミ箱から復元しました');
+                        fetchItems();
+                    } else {
+                        alert('復元失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        async function permanentDeleteItem(id) {
+            if (!confirm('商品ID #' + id + ' を完全に削除しますか？\n写真ファイル・同期データを含め元に戻せなくなります。')) return;
+
+            try {
+                const res = await fetch('/api/items/' + id + '/permanent', {
+                    method: 'DELETE',
+                    headers: getHeaders()
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        showToast('商品を完全に削除しました');
+                        fetchItems();
+                    } else {
+                        alert('完全削除失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('通信エラー: ' + e.message);
+            }
+        }
+
+        async function emptyTrash() {
+            const trashedCount = allItems.filter(i => isItemTrashed(i)).length;
+            if (trashedCount === 0) {
+                showToast('ゴミ箱は空です');
+                return;
+            }
+            if (!confirm('ゴミ箱内のすべての商品を完全に削除しますか？\nこの操作は取り消せません。')) return;
+
+            try {
+                const res = await fetch('/api/trash/empty', {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+
+                if (res.ok) {
+                    const result = await res.json();
+                    if (result.status === 'ok') {
+                        showToast('ゴミ箱を空にしました (' + (result.deletedCount || 0) + '件完全削除)');
+                        fetchItems();
+                    } else {
+                        alert('ゴミ箱の削除に失敗: ' + (result.message || '不明なエラー'));
+                    }
+                } else {
+                    alert('サーバー通信エラー (Status ' + res.status + ')');
                 }
             } catch (e) {
                 alert('通信エラー: ' + e.message);
@@ -2423,7 +2577,7 @@ public static class DashboardHtml
         }
 
         function downloadPcCsv() {
-            const exportItems = allItems.filter(i => !i.isDeleted).slice().sort((a, b) => (a.id || 0) - (b.id || 0));
+            const exportItems = allItems.filter(i => !isItemTrashed(i)).slice().sort((a, b) => (a.id || 0) - (b.id || 0));
             if (exportItems.length === 0) {
                 showToast('エクスポート対象の商品がありません');
                 return;

@@ -29,16 +29,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
@@ -91,7 +95,8 @@ fun ItemListScreen(
     viewModel: FleaMarketViewModel,
     onNavigateToDetail: (Int) -> Unit,
     onNavigateToAdd: () -> Unit,
-    onNavigateToEdit: (Int) -> Unit = {}
+    onNavigateToEdit: (Int) -> Unit = {},
+    onNavigateToTrash: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
@@ -105,6 +110,7 @@ fun ItemListScreen(
     val sortOption by viewModel.sortOption.collectAsState()
     val isSelectionMode by viewModel.isSelectionMode.collectAsState()
     val selectedItemIds by viewModel.selectedItemIds.collectAsState()
+    val trashCount by viewModel.trashCount.collectAsState()
 
     var showSortMenu by remember { mutableStateOf(false) }
     var showMergeDialog by remember { mutableStateOf(false) }
@@ -153,7 +159,7 @@ fun ItemListScreen(
             onDelete = {
                 quickActionItem = null
                 viewModel.deleteItem(itemWithPhotos) {
-                    Toast.makeText(context, "商品を削除しました", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "ゴミ箱へ移動しました", Toast.LENGTH_SHORT).show()
                 }
             }
         )
@@ -211,6 +217,32 @@ fun ItemListScreen(
                             colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onPrimary)
                         ) {
                             Text("完了", fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        IconButton(
+                            onClick = onNavigateToTrash,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("open_trash_button")
+                        ) {
+                            BadgedBox(
+                                badge = {
+                                    if (trashCount > 0) {
+                                        Badge(
+                                            containerColor = MaterialTheme.colorScheme.error,
+                                            contentColor = MaterialTheme.colorScheme.onError
+                                        ) {
+                                            Text(if (trashCount > 99) "99+" else trashCount.toString())
+                                        }
+                                    }
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.DeleteOutline,
+                                    contentDescription = "ゴミ箱を開く",
+                                    tint = MaterialTheme.colorScheme.onPrimary
+                                )
+                            }
                         }
                     }
                 }

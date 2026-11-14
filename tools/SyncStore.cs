@@ -62,18 +62,176 @@ public class StoreConfig
     public DefaultSettingsConfig defaultSettings { get; set; }
 }
 
+public class DeletedUuidEntry
+{
+    public string uuid { get; set; }
+    public long deletedAt { get; set; }
+}
+
 public static class SyncStore
 {
     private static readonly object _configLock = new object();
+    private static readonly object _tombstoneLock = new object();
     private static string _storeJsonPath = "";
     private static StoreConfig _currentConfig = null;
     private static string _storeId = "";
     private static string _syncDir = "";
     private static string _authToken = "";
+    private static Dictionary<string, long> _deletedUuidMap = null;
 
     public static string StoreId { get { return _storeId; } }
     public static string SyncDir { get { return _syncDir; } }
     public static string AuthToken { get { return _authToken; } }
+
+    private static string GetDeletedUuidsJsonPath()
+    {
+        if (string.IsNullOrEmpty(_syncDir)) return "";
+        return Path.Combine(_syncDir, "deleted_uuids.json");
+    }
+
+    private static Dictionary<string, long> LoadDeletedUuidMapLocked()
+    {
+        if (_deletedUuidMap != null) return _deletedUuidMap;
+        _deletedUuidMap = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        string path = GetDeletedUuidsJsonPath();
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _deletedUuidMap;
+
+        try
+        {
+            string json = File.ReadAllText(path, Encoding.UTF8);
+            var entries = JsonConvert.DeserializeObject<List<DeletedUuidEntry>>(json);
+            if (entries != null)
+            {
+                long cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (90L * 24L * 60L * 60L * 1000L);
+                foreach (var entry in entries)
+                {
+                    if (entry == null || string.IsNullOrEmpty(entry.uuid)) continue;
+                    string clean = entry.uuid.Trim();
+                    if (clean.Length == 0) continue;
+                    if (entry.deletedAt <= 0 || entry.deletedAt >= cutoff)
+                    {
+                        _deletedUuidMap[clean] = entry.deletedAt;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[警告] deleted_uuids.json の読み込みに失敗しました: " + ex.Message);
+        }
+        return _deletedUuidMap;
+    }
+
+    private static void SaveDeletedUuidMapLocked()
+    {
+        string path = GetDeletedUuidsJsonPath();
+        if (string.IsNullOrEmpty(path) || _deletedUuidMap == null) return;
+        try
+        {
+            long cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (90L * 24L * 60L * 60L * 1000L);
+            var list = new List<DeletedUuidEntry>();
+            var expiredKeys = new List<string>();
+            foreach (var pair in _deletedUuidMap)
+            {
+                if (pair.Value > 0 && pair.Value < cutoff)
+                {
+                    expiredKeys.Add(pair.Key);
+                }
+                else
+                {
+                    list.Add(new DeletedUuidEntry { uuid = pair.Key, deletedAt = pair.Value });
+                }
+            }
+            foreach (var k in expiredKeys)
+            {
+                _deletedUuidMap.Remove(k);
+            }
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+            File.WriteAllText(path, JsonConvert.SerializeObject(list, Formatting.Indented), Encoding.UTF8);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[警告] deleted_uuids.json の保存に失敗しました: " + ex.Message);
+        }
+    }
+
+    public static void RecordPermanentlyDeletedUuid(string uuid)
+    {
+        if (string.IsNullOrEmpty(uuid)) return;
+        string clean = uuid.Trim();
+        if (clean.Length == 0) return;
+        lock (_tombstoneLock)
+        {
+            var map = LoadDeletedUuidMapLocked();
+            map[clean] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            SaveDeletedUuidMapLocked();
+        }
+    }
+
+    public static void RecordPermanentlyDeletedUuids(IEnumerable<string> uuids)
+    {
+        if (uuids == null) return;
+        lock (_tombstoneLock)
+        {
+            var map = LoadDeletedUuidMapLocked();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            bool changed = false;
+            foreach (var uuid in uuids)
+            {
+                if (string.IsNullOrEmpty(uuid)) continue;
+                string clean = uuid.Trim();
+                if (clean.Length == 0) continue;
+                map[clean] = now;
+                changed = true;
+            }
+            if (changed)
+            {
+                SaveDeletedUuidMapLocked();
+            }
+        }
+    }
+
+    public static bool IsUuidPermanentlyDeleted(string uuid)
+    {
+        if (string.IsNullOrEmpty(uuid)) return false;
+        string clean = uuid.Trim();
+        if (clean.Length == 0) return false;
+        lock (_tombstoneLock)
+        {
+            var map = LoadDeletedUuidMapLocked();
+            long deletedAt;
+            if (!map.TryGetValue(clean, out deletedAt)) return false;
+            long cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (90L * 24L * 60L * 60L * 1000L);
+            if (deletedAt > 0 && deletedAt < cutoff)
+            {
+                map.Remove(clean);
+                return false;
+            }
+            return true;
+        }
+    }
+
+    public static List<string> GetPermanentlyDeletedUuids()
+    {
+        lock (_tombstoneLock)
+        {
+            var map = LoadDeletedUuidMapLocked();
+            long cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (90L * 24L * 60L * 60L * 1000L);
+            var list = new List<string>();
+            foreach (var pair in map)
+            {
+                if (pair.Value <= 0 || pair.Value >= cutoff)
+                {
+                    list.Add(pair.Key);
+                }
+            }
+            return list;
+        }
+    }
 
     public static DefaultSettingsConfig GetDefaultSettings()
     {
@@ -248,7 +406,19 @@ public static class SyncStore
 
         foreach (var item in itemsDb)
         {
-            if (item != null && item.ContainsKey("photos") && item["photos"] != null)
+            if (item == null) continue;
+            bool isTrashed = false;
+            if (item.ContainsKey("isDeleted") && item["isDeleted"] != null)
+            {
+                try { if (Convert.ToBoolean(item["isDeleted"])) isTrashed = true; } catch { }
+            }
+            if (!isTrashed && item.ContainsKey("deletedAt") && item["deletedAt"] != null)
+            {
+                try { if (Convert.ToInt64(item["deletedAt"]) > 0) isTrashed = true; } catch { }
+            }
+            if (isTrashed) continue;
+
+            if (item.ContainsKey("photos") && item["photos"] != null)
             {
                 var photosList = item["photos"] as System.Collections.IEnumerable;
                 if (photosList != null)

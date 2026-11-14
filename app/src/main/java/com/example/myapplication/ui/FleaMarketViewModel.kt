@@ -71,6 +71,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     init {
         refreshServerIp()
         viewModelScope.launch(Dispatchers.IO) {
+            repository.purgeExpiredTrash(30)
             repository.seedInitialTestDataIfNeeded()
         }
     }
@@ -95,6 +96,20 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             scope = viewModelScope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
+        )
+
+    val trashedItemsWithPhotos: StateFlow<List<ItemWithPhotos>> = repository.getTrashedItemsWithPhotos()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val trashCount: StateFlow<Int> = repository.getTrashedCount()
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = 0
         )
 
     val allSalesSummary: StateFlow<SalesSummary> = repository.getSalesSummary()
@@ -343,7 +358,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         if (url.isNotBlank() && _isPcServerConnected.value) {
             viewModelScope.launch(Dispatchers.IO) {
                 syncMutex.withLock {
-                    pcServerClient.pushSettingsToServer(url, token)
+                    if (pcServerClient.pushSettingsToServer(url, token)) {
+                        refreshKnownRevisions(url, token)
+                    }
                 }
             }
         }
@@ -446,9 +463,33 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     fun deleteItem(itemWithPhotos: ItemWithPhotos, onSuccess: () -> Unit) {
         viewModelScope.launch {
-            repository.deleteItem(itemWithPhotos)
+            repository.moveToTrash(itemWithPhotos)
             triggerAutoSync()
             onSuccess()
+        }
+    }
+
+    fun restoreFromTrash(itemId: Int, onSuccess: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.restoreFromTrash(itemId)
+            triggerAutoSync()
+            onSuccess()
+        }
+    }
+
+    fun permanentlyDeleteItem(itemWithPhotos: ItemWithPhotos, onSuccess: () -> Unit = {}) {
+        viewModelScope.launch {
+            repository.permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
+            triggerAutoSync()
+            onSuccess()
+        }
+    }
+
+    fun emptyTrash(onSuccess: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.emptyTrash()
+            triggerAutoSync()
+            onSuccess(count)
         }
     }
 
@@ -702,37 +743,77 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private var heartbeatJob: Job? = null
     private var autoSyncJob: Job? = null
     private val syncMutex = Mutex()
+    @Volatile private var lastKnownDataRevision: Long = -1L
+    @Volatile private var lastKnownSettingsRevision: Long = -1L
 
     init {
         startHeartbeatLoop()
     }
 
+    private suspend fun refreshKnownRevisions(url: String, token: String) {
+        val hb = pcServerClient.sendHeartbeatWithRevision(url, token)
+        if (hb.isConnected) {
+            lastKnownDataRevision = hb.dataRevision
+            lastKnownSettingsRevision = hb.settingsRevision
+        }
+    }
+
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = viewModelScope.launch(Dispatchers.IO) {
-            var loopCount = 0
+            var wasConnected = false
             while (isActive) {
                 val url = _pcServerUrl.value
                 val token = _pcAuthToken.value
                 if (url.isNotBlank()) {
-                    val connected = pcServerClient.sendHeartbeat(url, token)
+                    val hb = pcServerClient.sendHeartbeatWithRevision(url, token)
+                    val connected = hb.isConnected
                     _isPcServerConnected.value = connected
-                    // 定期自動同期: 接続中は約12秒ごと (3ループに1回) にPC側の変更や削除・設定を自動取得
-                    if (connected && loopCount % 3 == 0) {
-                        if (syncMutex.tryLock()) {
+
+                    if (!connected) {
+                        wasConnected = false
+                    } else if (!wasConnected) {
+                        // 再接続時ハンドシェイク 未同期ローカル変更を優先PushしてからPC差分を取得
+                        wasConnected = true
+                        syncMutex.withLock {
                             try {
                                 pcServerClient.fetchAndSyncServerSettings(url, token)
+                                val hasLocalDirty = repository.getDao().getDirtyItemsCount() > 0 ||
+                                    repository.getPendingDeletedUuids().isNotEmpty()
+                                if (hasLocalDirty) {
+                                    pcServerClient.syncDeltaToPcServer(url, token)
+                                }
                                 pcServerClient.fetchServerItems(url, token)
+                                refreshKnownRevisions(url, token)
                             } catch (_: Exception) {
-                            } finally {
-                                syncMutex.unlock()
+                            }
+                        }
+                    } else {
+                        // 接続維持中 リビジョン番号に変化があったときのみ必要最小限のPullを実行
+                        val settingsChanged = hb.settingsRevision > 0L && hb.settingsRevision != lastKnownSettingsRevision
+                        val dataChanged = hb.dataRevision > 0L && hb.dataRevision != lastKnownDataRevision
+                        if (settingsChanged || dataChanged) {
+                            if (syncMutex.tryLock()) {
+                                try {
+                                    if (settingsChanged) {
+                                        pcServerClient.fetchAndSyncServerSettings(url, token)
+                                        lastKnownSettingsRevision = hb.settingsRevision
+                                    }
+                                    if (dataChanged) {
+                                        pcServerClient.fetchServerItems(url, token)
+                                        lastKnownDataRevision = hb.dataRevision
+                                    }
+                                } catch (_: Exception) {
+                                } finally {
+                                    syncMutex.unlock()
+                                }
                             }
                         }
                     }
                 } else {
                     _isPcServerConnected.value = false
+                    wasConnected = false
                 }
-                loopCount++
                 delay(4000)
             }
         }
@@ -755,6 +836,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     val result = pcServerClient.syncDeltaToPcServer(url, token)
                     if (result.isSuccess) {
                         pcServerClient.fetchServerItems(url, token)
+                        refreshKnownRevisions(url, token)
                     }
                 } catch (_: Exception) {}
             }
@@ -796,10 +878,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     fun testPcServerConnection(onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
-            val connected = pcServerClient.checkServerStatus(_pcServerUrl.value, _pcAuthToken.value)
+            val url = _pcServerUrl.value
+            val token = _pcAuthToken.value
+            val connected = pcServerClient.checkServerStatus(url, token)
             _isPcServerConnected.value = connected
             if (connected) {
-                pcServerClient.sendHeartbeat(_pcServerUrl.value, _pcAuthToken.value)
+                refreshKnownRevisions(url, token)
             }
             onResult(connected)
         }
@@ -814,6 +898,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 val pushRes = pcServerClient.syncDeltaToPcServer(url, token)
                 if (pushRes.isSuccess) {
                     pcServerClient.fetchServerItems(url, token)
+                    refreshKnownRevisions(url, token)
                 }
                 pushRes
             }

@@ -173,7 +173,7 @@
 目標バージョン：**`v0.9β (Build 4)`**
 
 ### 5.1 サブフェーズ 2.14-A — Room DB拡張（`syncUuid` / `deletedAt` / `isDirty`）＆ 論理削除/復元リポジトリ
-- [ ] **実装完了**
+- [x] **実装完了**
 * **対象ファイル**：
   * `app/src/main/java/com/example/myapplication/data/local/ItemEntity.kt`
   * `app/src/main/java/com/example/myapplication/data/local/AppDatabase.kt`
@@ -195,7 +195,7 @@
      - まとめ買い商品の削除時・解除時の親子整合（親がゴミ箱に入った場合の子商品扱い、またはゴミ箱からの単体復元ルール）も破綻しないよう明記して制御する。
 
 ### 5.2 サブフェーズ 2.14-B — イベント駆動Push ＋ リビジョン検知Pull ＋ 競合防止同期エンジン
-- [ ] **実装完了**
+- [x] **実装完了**
 * **対象ファイル**：
   * `app/src/main/java/com/example/myapplication/data/server/SyncDtos.kt`
   * `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`
@@ -219,7 +219,7 @@
      - **ID衝突防止**：PC側で作成された未知の `syncUuid` をスマホ側 Room に取り込む際、スマホ側に既に同じ数値 `id` が別商品として存在していたら `id = 0` で自動採番インサートする（`syncUuid` を真のキーとすることでオフライン新規作成の番号被りによる上書きを根絶）。
 
 ### 5.3 サブフェーズ 2.14-C — スマホ＆PC共通「ゴミ箱」UI ＋ Build 4 統一
-- [ ] **実装完了**
+- [x] **実装完了**
 * **対象ファイル**：
   * スマホ：`app/src/main/java/com/example/myapplication/ui/screens/TrashScreen.kt`（または `ItemListScreen.kt` 内のフィルター／専用ダイアログ・画面）およびナビゲーション導線（トップバーアイコン等）
   * PC：`tools/DashboardHtml.cs`（フィルターに「ゴミ箱」タブ、復元ボタン、完全削除ボタン、「ゴミ箱を空にする」操作）

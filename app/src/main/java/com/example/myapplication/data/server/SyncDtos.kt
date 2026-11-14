@@ -12,6 +12,8 @@ data class SyncPhotoDto(
 @JsonClass(generateAdapter = true)
 data class SyncItemDto(
     @param:Json(name = "id") val id: Int,
+    @param:Json(name = "syncUuid") val syncUuid: String = "",
+    @param:Json(name = "deletedAt") val deletedAt: Long? = null,
     @param:Json(name = "title") val title: String,
     @param:Json(name = "description") val description: String,
     @param:Json(name = "status") val status: String,
@@ -21,6 +23,7 @@ data class SyncItemDto(
     @param:Json(name = "statusLabel") val statusLabel: String,
     @param:Json(name = "photos") val photos: List<SyncPhotoDto>,
     @param:Json(name = "mergedParentId") val mergedParentId: Int? = null,
+    @param:Json(name = "mergedParentSyncUuid") val mergedParentSyncUuid: String? = null,
     @param:Json(name = "mergedChildCount") val mergedChildCount: Int? = null,
     @param:Json(name = "bundleLevel") val bundleLevel: Int? = null,
     @param:Json(name = "mergedChildTitles") val mergedChildTitles: String? = null,
@@ -65,20 +68,24 @@ data class SyncSettingsDto(
 
 @JsonClass(generateAdapter = true)
 data class SyncItemsRequest(
-    @param:Json(name = "protocolVersion") val protocolVersion: Int = 3,
+    @param:Json(name = "protocolVersion") val protocolVersion: Int = 4,
     @param:Json(name = "storeId") val storeId: String,
     @param:Json(name = "items") val items: List<SyncItemDto>,
     @param:Json(name = "activeFolderNames") val activeFolderNames: List<String>,
-    @param:Json(name = "defaultSettings") val defaultSettings: SyncSettingsDto? = null
+    @param:Json(name = "defaultSettings") val defaultSettings: SyncSettingsDto? = null,
+    @param:Json(name = "permanentlyDeletedUuids") val permanentlyDeletedUuids: List<String> = emptyList()
 )
 
 @JsonClass(generateAdapter = true)
 data class SyncItemsResponse(
     @param:Json(name = "status") val status: String,
-    @param:Json(name = "protocolVersion") val protocolVersion: Int = 3,
+    @param:Json(name = "protocolVersion") val protocolVersion: Int = 4,
     @param:Json(name = "storeId") val storeId: String? = null,
     @param:Json(name = "syncedHashes") val syncedHashes: List<String> = emptyList(),
     @param:Json(name = "neededHashes") val neededHashes: List<String> = emptyList(),
+    @param:Json(name = "permanentlyDeletedUuids") val permanentlyDeletedUuids: List<String> = emptyList(),
+    @param:Json(name = "dataRevision") val dataRevision: Long = 0L,
+    @param:Json(name = "settingsRevision") val settingsRevision: Long = 0L,
     @param:Json(name = "message") val message: String? = null
 )
 
@@ -88,4 +95,10 @@ data class SyncPhotoResponse(
     @param:Json(name = "stored") val stored: Boolean = false,
     @param:Json(name = "hash") val hash: String? = null,
     @param:Json(name = "message") val message: String? = null
+)
+
+data class HeartbeatInfo(
+    val isConnected: Boolean,
+    val dataRevision: Long = 0L,
+    val settingsRevision: Long = 0L
 )

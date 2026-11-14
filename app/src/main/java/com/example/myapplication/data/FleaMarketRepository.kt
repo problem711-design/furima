@@ -22,6 +22,34 @@ class FleaMarketRepository(private val context: Context) {
 
     val defaultSettings: StateFlow<DefaultSettings> = defaultSettingsManager.settings
 
+    private val syncTombstonePrefs =
+        context.getSharedPreferences("flea_market_sync_tombstones", Context.MODE_PRIVATE)
+
+    fun addPendingDeletedUuid(uuid: String) {
+        val clean = uuid.trim()
+        if (clean.isBlank()) return
+        synchronized(syncTombstonePrefs) {
+            val current = (syncTombstonePrefs.getStringSet("pending_deleted_uuids", emptySet()) ?: emptySet()).toMutableSet()
+            current.add(clean)
+            syncTombstonePrefs.edit().putStringSet("pending_deleted_uuids", current).apply()
+        }
+    }
+
+    fun getPendingDeletedUuids(): Set<String> {
+        synchronized(syncTombstonePrefs) {
+            return (syncTombstonePrefs.getStringSet("pending_deleted_uuids", emptySet()) ?: emptySet()).toSet()
+        }
+    }
+
+    fun removePendingDeletedUuids(uuids: Collection<String>) {
+        if (uuids.isEmpty()) return
+        synchronized(syncTombstonePrefs) {
+            val current = (syncTombstonePrefs.getStringSet("pending_deleted_uuids", emptySet()) ?: emptySet()).toMutableSet()
+            current.removeAll(uuids.map { it.trim() }.toSet())
+            syncTombstonePrefs.edit().putStringSet("pending_deleted_uuids", current).apply()
+        }
+    }
+
     fun updateDefaultSettings(newSettings: DefaultSettings, stampNow: Boolean = true) {
         defaultSettingsManager.updateSettings(newSettings, stampNow)
     }
@@ -29,6 +57,10 @@ class FleaMarketRepository(private val context: Context) {
     fun getAllActiveItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getAllActiveItemsWithPhotos()
 
     suspend fun getActiveItemsWithPhotosDirect(): List<ItemWithPhotos> = dao.getActiveItemsWithPhotosDirect()
+
+    fun getTrashedItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getTrashedItemsWithPhotos()
+
+    fun getTrashedCount(): Flow<Int> = dao.getTrashedCount()
 
     fun getAllItems(): Flow<List<ItemEntity>> = dao.getAllActiveItems()
 
@@ -72,11 +104,14 @@ class FleaMarketRepository(private val context: Context) {
         existingFilePaths: List<String> = emptyList()
     ): Long {
         val existingItem = if (id != 0) dao.getItemWithPhotosById(id)?.item else null
+        val now = System.currentTimeMillis()
         val soldAt = if (status == "SOLD") {
-            existingItem?.soldAt ?: System.currentTimeMillis()
+            existingItem?.soldAt ?: now
         } else {
             null
         }
+        val preservedUuid = existingItem?.syncUuid?.takeIf { it.isNotBlank() }
+            ?: java.util.UUID.randomUUID().toString()
 
         val item = ItemEntity(
             id = id,
@@ -90,9 +125,18 @@ class FleaMarketRepository(private val context: Context) {
             expenseCost = expenseCost,
             useCustomSettings = useCustomSettings,
             isShared = existingItem?.isShared ?: false,
-            createdAt = existingItem?.createdAt ?: System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis(),
-            soldAt = soldAt
+            mergedParentId = existingItem?.mergedParentId,
+            mergedChildCount = existingItem?.mergedChildCount ?: 0,
+            mergedChildTitles = existingItem?.mergedChildTitles ?: "",
+            originalTotalBundlePrice = existingItem?.originalTotalBundlePrice ?: 0,
+            discountAmount = existingItem?.discountAmount ?: 0,
+            bundleLevel = existingItem?.bundleLevel ?: 0,
+            createdAt = existingItem?.createdAt ?: now,
+            updatedAt = now,
+            soldAt = soldAt,
+            syncUuid = preservedUuid,
+            deletedAt = existingItem?.deletedAt,
+            isDirty = true
         )
 
         val itemId = if (id == 0) {
@@ -166,8 +210,14 @@ class FleaMarketRepository(private val context: Context) {
     }
 
     suspend fun updateItemStatus(item: ItemEntity, newStatus: String) {
-        val soldAt = if (newStatus == "SOLD") (item.soldAt ?: System.currentTimeMillis()) else null
-        val updated = item.copy(status = newStatus, soldAt = soldAt)
+        val now = System.currentTimeMillis()
+        val soldAt = if (newStatus == "SOLD") (item.soldAt ?: now) else null
+        val updated = item.copy(
+            status = newStatus,
+            soldAt = soldAt,
+            updatedAt = now,
+            isDirty = true
+        )
         dao.updateItem(updated)
     }
 
@@ -198,7 +248,9 @@ class FleaMarketRepository(private val context: Context) {
         val maxChildLevel = childItems.maxOfOrNull { it.item.bundleLevel } ?: 0
         val totalChildCount = childItems.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
 
-        // 1. 新しいまとめ商品の作成 (デフォルトで LISTED: 出品中)
+        val now = System.currentTimeMillis()
+
+        // 1. 新しいまとめ商品の作成 (デフォルトで LISTED 出品中)
         val parentItem = ItemEntity(
             title = mergedTitle,
             description = mergedDescription,
@@ -214,13 +266,17 @@ class FleaMarketRepository(private val context: Context) {
             originalTotalBundlePrice = originalTotal,
             discountAmount = discount,
             bundleLevel = maxChildLevel + 1,
-            createdAt = System.currentTimeMillis(),
-            soldAt = if (asStatus == "SOLD") System.currentTimeMillis() else null
+            createdAt = now,
+            updatedAt = now,
+            soldAt = if (asStatus == "SOLD") now else null,
+            syncUuid = java.util.UUID.randomUUID().toString(),
+            deletedAt = null,
+            isDirty = true
         )
         val parentId = dao.insertItem(parentItem).toInt()
 
         // 2. 元の個別商品のステータスを「MERGED」に更新（通常一覧から除外、履歴保持）
-        dao.markItemsMerged(childItemIds, parentId)
+        dao.markItemsMerged(childItemIds, parentId, now)
 
         // 3. 元の各商品の写真をすべて親商品に引き継ぎ（MD5ハッシュも継承）
         val parentPhotos = mutableListOf<PhotoEntity>()
@@ -245,16 +301,17 @@ class FleaMarketRepository(private val context: Context) {
     /**
      * まとめ買い出品を解除（バラす）
      * 子商品のステータスを LISTED に戻し、mergedParentId を解除。
-     * 親商品とその写真レコードを削除する。
+     * 親商品とその写真レコードを削除し、親 syncUuid を完全削除記録へ追加する。
      */
     suspend fun unmergeItem(parentId: Int) {
         val parent = dao.getItemWithPhotosById(parentId) ?: return
-        // 1. 子商品のステータスを LISTED に戻し、親IDを解除
-        dao.restoreMergedChildren(parentId)
-        // 2. 親商品の写真レコードを削除
+        val now = System.currentTimeMillis()
+        dao.restoreMergedChildren(parentId, now)
         dao.deletePhotosByItemId(parentId)
-        // 3. 親商品を削除
         dao.deleteItem(parent.item)
+        if (parent.item.syncUuid.isNotBlank()) {
+            addPendingDeletedUuid(parent.item.syncUuid)
+        }
     }
 
     /**
@@ -264,9 +321,118 @@ class FleaMarketRepository(private val context: Context) {
         return dao.getMergedChildItemsWithPhotos(parentId)
     }
 
+    /**
+     * 論理削除（ゴミ箱へ移動）：写真ファイルは保持し、30日間復元可能にする
+     */
+    suspend fun moveToTrash(itemWithPhotos: ItemWithPhotos) {
+        val now = System.currentTimeMillis()
+        dao.softDeleteItem(itemWithPhotos.item.id, now, now)
+        if (itemWithPhotos.item.mergedChildCount > 0) {
+            dao.softDeleteChildrenByParent(itemWithPhotos.item.id, now, now)
+        }
+    }
+
+    /**
+     * 既存呼び出し互換のための削除エントリ（論理削除を実行）
+     */
     suspend fun deleteItem(itemWithPhotos: ItemWithPhotos) {
-        photoStorageManager.deletePhotoFiles(itemWithPhotos.photos)
-        dao.deleteItem(itemWithPhotos.item)
+        moveToTrash(itemWithPhotos)
+    }
+
+    /**
+     * ゴミ箱から元の出品状態へ復元
+     */
+    suspend fun restoreFromTrash(itemId: Int) {
+        val now = System.currentTimeMillis()
+        dao.restoreFromTrash(itemId, now)
+        dao.restoreChildrenByParent(itemId, now)
+    }
+
+    /**
+     * 完全削除：他アイテムから参照されていない写真ファイルとDBレコードを物理削除する
+     */
+    suspend fun permanentlyDeleteItem(
+        itemWithPhotos: ItemWithPhotos,
+        recordTombstoneForSync: Boolean = true
+    ) {
+        val item = itemWithPhotos.item
+        if (item.mergedChildCount > 0) {
+            val children = dao.getMergedChildItemsWithPhotos(item.id)
+            for (child in children) {
+                deleteSingleItemPhysically(child, recordTombstoneForSync)
+            }
+        }
+        deleteSingleItemPhysically(itemWithPhotos, recordTombstoneForSync)
+    }
+
+    private suspend fun deleteSingleItemPhysically(
+        itemWithPhotos: ItemWithPhotos,
+        recordTombstoneForSync: Boolean
+    ) {
+        val item = itemWithPhotos.item
+        val otherPhotos = dao.getPhotosExcludingItem(item.id)
+        val referencedPaths = HashSet<String>()
+        for (p in otherPhotos) {
+            if (p.filePath.isNotBlank()) referencedPaths.add(p.filePath)
+            if (!p.thumbnailPath.isNullOrBlank()) referencedPaths.add(p.thumbnailPath)
+        }
+
+        val unreferencedPhotos = itemWithPhotos.photos.mapNotNull { p ->
+            val origOk = p.filePath.isNotBlank() && !referencedPaths.contains(p.filePath)
+            val thumbOk = !p.thumbnailPath.isNullOrBlank() && !referencedPaths.contains(p.thumbnailPath)
+            if (!origOk && !thumbOk) {
+                null
+            } else {
+                p.copy(
+                    filePath = if (origOk) p.filePath else "",
+                    thumbnailPath = if (thumbOk) p.thumbnailPath else null
+                )
+            }
+        }
+        if (unreferencedPhotos.isNotEmpty()) {
+            photoStorageManager.deletePhotoFiles(unreferencedPhotos)
+        }
+
+        dao.deletePhotosByItemId(item.id)
+        dao.deleteItem(item)
+        if (recordTombstoneForSync && item.syncUuid.isNotBlank()) {
+            addPendingDeletedUuid(item.syncUuid)
+        }
+    }
+
+    /**
+     * ゴミ箱を空にする（現在ゴミ箱にある全商品を完全削除）
+     */
+    suspend fun emptyTrash(): Int {
+        val trashed = dao.getTrashedItemsWithPhotosDirect()
+        for (item in trashed) {
+            permanentlyDeleteItem(item, recordTombstoneForSync = true)
+        }
+        return trashed.size
+    }
+
+    /**
+     * ゴミ箱投入から保持日数を超えた商品を自動完全削除
+     */
+    suspend fun purgeExpiredTrash(retentionDays: Int = 30): Int {
+        val cutoffMs = System.currentTimeMillis() - (retentionDays * 24L * 60L * 60L * 1000L)
+        val expired = dao.getExpiredTrashedItemsDirect(cutoffMs)
+        if (expired.isEmpty()) return 0
+
+        var purgedCount = 0
+        for (itemWithPhotos in expired.filter { it.item.mergedParentId == null }) {
+            if (dao.getItemWithPhotosById(itemWithPhotos.item.id) != null) {
+                permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
+                purgedCount++
+            }
+        }
+        for (itemWithPhotos in expired.filter { it.item.mergedParentId != null }) {
+            if (dao.getItemWithPhotosById(itemWithPhotos.item.id) != null) {
+                permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
+                purgedCount++
+            }
+        }
+        return purgedCount
     }
 
     /**

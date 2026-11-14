@@ -206,19 +206,70 @@ class PcServerClient(
         }
     }
 
-    suspend fun sendHeartbeat(baseUrl: String, token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
+    suspend fun sendHeartbeatWithRevision(
+        baseUrl: String,
+        token: String = getSavedAuthToken()
+    ): HeartbeatInfo = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext HeartbeatInfo(false)
             val url = "$cleanUrl/api/server/heartbeat"
             val reqBuilder = Request.Builder().url(url).get()
             if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
             client.newCall(reqBuilder.build()).execute().use { response ->
-                response.isSuccessful
+                if (!response.isSuccessful) return@withContext HeartbeatInfo(false)
+                val bodyStr = response.body?.string() ?: ""
+                if (bodyStr.isNotBlank()) {
+                    try {
+                        val json = JSONObject(bodyStr)
+                        return@withContext HeartbeatInfo(
+                            isConnected = true,
+                            dataRevision = json.optLong("dataRevision", 0L),
+                            settingsRevision = json.optLong("settingsRevision", 0L)
+                        )
+                    } catch (_: Exception) {
+                    }
+                }
+                HeartbeatInfo(isConnected = true)
             }
-        } catch (e: Exception) {
-            false
+        } catch (_: Exception) {
+            HeartbeatInfo(false)
         }
+    }
+
+    suspend fun sendHeartbeat(baseUrl: String, token: String = getSavedAuthToken()): Boolean {
+        return sendHeartbeatWithRevision(baseUrl, token).isConnected
+    }
+
+    suspend fun fetchPermanentlyDeletedUuids(
+        baseUrl: String,
+        token: String = getSavedAuthToken()
+    ): Set<String> = withContext(Dispatchers.IO) {
+        val result = mutableSetOf<String>()
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext result
+            val url = "$cleanUrl/api/server/status"
+            val reqBuilder = Request.Builder().url(url).get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: ""
+                    if (bodyStr.isNotBlank()) {
+                        val json = JSONObject(bodyStr)
+                        val arr = json.optJSONArray("permanentlyDeletedUuids")
+                        if (arr != null) {
+                            for (i in 0 until arr.length()) {
+                                val u = arr.optString(i, "").trim()
+                                if (u.isNotBlank()) result.add(u)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        }
+        result
     }
 
     suspend fun fetchServerHashes(baseUrl: String, token: String = getSavedAuthToken()): Set<String> = withContext(Dispatchers.IO) {
@@ -248,7 +299,7 @@ class PcServerClient(
     }
 
     /**
-     * プロトコル v3: JSON メタデータ送信 (POST /api/sync/items) と生バイト送信 (POST /api/sync/photo) による二段階同期
+     * プロトコル v4 syncUuid / deletedAt / tombstone / isDirty 保護付き差分双方向同期
      */
     suspend fun syncDeltaToPcServer(baseUrl: String, token: String = getSavedAuthToken()): PcSyncResult = withContext(Dispatchers.IO) {
         var syncedPhotoCount = 0
@@ -263,26 +314,17 @@ class PcServerClient(
         }
 
         try {
-            android.util.Log.i("PC_SYNC", "=== プロトコル v3 同期開始: $cleanUrl ===")
+            android.util.Log.i("PC_SYNC", "=== プロトコル v4 同期開始 ($cleanUrl) ===")
             val savedStoreId = getSavedStoreId()
+            val dao = repository.getDao()
 
-            // スマホ側の全商品・写真リストを取得（同期対象はまとめ内包中の子商品も含む全商品）
-            val itemsWithPhotos = repository.getDao().getAllItemsWithPhotosDirect()
-            // PC側の不要フォルダ削除から保護するフォルダ名一覧（まとめ済みMERGED子商品フォルダも含む全商品）
-            val allItemsForFolders = repository.getDao().getAllItemsWithPhotosDirect()
+            // まとめ子商品・ゴミ箱内商品を含む全商品を取得して状態伝播する
+            val itemsWithPhotos = dao.getAllItemsWithPhotosForSync()
+            val pushedUpdatedAtById = itemsWithPhotos.associate { it.item.id to it.item.updatedAt }
+            val idToUuidMap = itemsWithPhotos.associate { it.item.id to it.item.syncUuid }
+
             val dtoList = mutableListOf<SyncItemDto>()
             val activeFolderNames = mutableListOf<String>()
-
-            for (itemWithPhotos in allItemsForFolders) {
-                val item = itemWithPhotos.item
-                val safeTitle = item.title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
-                val itemFolderName = "${item.id}_$safeTitle"
-                if (!activeFolderNames.contains(itemFolderName)) {
-                    activeFolderNames.add(itemFolderName)
-                }
-            }
-
-            // 写真ID -> (File, MD5) のマッピング
             val photoFileMap = mutableMapOf<Int, Pair<File, String>>()
 
             for (itemWithPhotos in itemsWithPhotos) {
@@ -291,17 +333,18 @@ class PcServerClient(
 
                 val safeTitle = item.title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
                 val itemFolderName = "${item.id}_$safeTitle"
-                activeFolderNames.add(itemFolderName)
+                if (!activeFolderNames.contains(itemFolderName)) {
+                    activeFolderNames.add(itemFolderName)
+                }
 
                 val photoDtoList = mutableListOf<SyncPhotoDto>()
-
                 for (photo in photos) {
                     var md5 = photo.md5Hash
                     val file = File(photo.filePath)
                     if (md5.isBlank() && file.exists()) {
                         md5 = photoStorageManager.calculateMd5(file)
                         if (md5.isNotBlank()) {
-                            repository.getDao().updatePhotoMd5Hash(photo.id, md5)
+                            dao.updatePhotoMd5Hash(photo.id, md5)
                         }
                     }
 
@@ -315,20 +358,24 @@ class PcServerClient(
                 dtoList.add(
                     SyncItemDto(
                         id = item.id,
+                        syncUuid = item.syncUuid,
+                        deletedAt = item.deletedAt,
                         title = item.title,
                         description = item.description,
                         status = item.status,
                         price = item.price,
                         soldPrice = item.soldPrice,
                         profit = item.getCalculatedProfit(repository.defaultSettings.value),
-                        statusLabel = when (item.status) {
-                            "SOLD" -> "売却済み"
-                            "MERGED" -> "まとめ売却"
-                            "DRAFT" -> "未出品"
+                        statusLabel = when {
+                            item.deletedAt != null -> "ゴミ箱"
+                            item.status == "SOLD" -> "売却済み"
+                            item.status == "MERGED" -> "まとめ売却"
+                            item.status == "DRAFT" -> "未出品"
                             else -> "出品中"
                         },
                         photos = photoDtoList,
                         mergedParentId = item.mergedParentId,
+                        mergedParentSyncUuid = item.mergedParentId?.let { idToUuidMap[it] },
                         mergedChildCount = item.mergedChildCount,
                         bundleLevel = item.bundleLevel,
                         mergedChildTitles = item.mergedChildTitles,
@@ -345,15 +392,17 @@ class PcServerClient(
                 )
             }
 
-            // 1. POST /api/sync/items (基本費用設定・プリセット・テンプレートも同梱送信)
+            // 1. POST /api/sync/items (設定・プリセット・テンプレート・完全削除UUIDも同梱送信)
             val currentSettings = repository.defaultSettings.value
             val settingsDto = toSyncSettingsDto(currentSettings)
+            val pendingDeletedUuids = repository.getPendingDeletedUuids()
             val syncReq = SyncItemsRequest(
-                protocolVersion = 3,
+                protocolVersion = 4,
                 storeId = savedStoreId,
                 items = dtoList,
                 activeFolderNames = activeFolderNames,
-                defaultSettings = settingsDto
+                defaultSettings = settingsDto,
+                permanentlyDeletedUuids = pendingDeletedUuids.toList()
             )
 
             val reqJsonStr = syncItemsRequestAdapter.toJson(syncReq)
@@ -365,6 +414,7 @@ class PcServerClient(
             val respStoreId: String
             val syncedHashesSet = mutableSetOf<String>()
             val neededHashesSet = mutableSetOf<String>()
+            val serverDeletedUuids = mutableSetOf<String>()
 
             client.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -383,7 +433,7 @@ class PcServerClient(
 
                 respStoreId = respDto.storeId ?: ""
 
-                // 応答 storeId の一致検証 (記憶された storeId があり、不一致の場合は中止)
+                // 応答 storeId の一致検証
                 if (savedStoreId.isNotBlank() && respStoreId.isNotBlank() && !savedStoreId.equals(respStoreId, ignoreCase = true)) {
                     return@withContext PcSyncResult(
                         isSuccess = false,
@@ -397,6 +447,27 @@ class PcServerClient(
 
                 syncedHashesSet.addAll(respDto.syncedHashes)
                 neededHashesSet.addAll(respDto.neededHashes)
+                serverDeletedUuids.addAll(respDto.permanentlyDeletedUuids.map { it.trim() }.filter { it.isNotBlank() })
+            }
+
+            // PCへ正常に伝達済みの完全削除UUIDをローカル待機リストから除去
+            if (pendingDeletedUuids.isNotEmpty()) {
+                repository.removePendingDeletedUuids(pendingDeletedUuids)
+            }
+
+            // 送信時点と updatedAt が一致する商品の未同期フラグを解除
+            for ((itemId, pushedUpdatedAt) in pushedUpdatedAtById) {
+                dao.markItemSyncedIfUnchanged(itemId, pushedUpdatedAt)
+            }
+
+            // サーバー側から通知された完全削除済みUUIDがあればローカルからも物理削除
+            if (serverDeletedUuids.isNotEmpty()) {
+                for (delUuid in serverDeletedUuids) {
+                    val localTarget = dao.getItemWithPhotosBySyncUuid(delUuid)
+                    if (localTarget != null && !localTarget.item.isDirty) {
+                        repository.permanentlyDeleteItem(localTarget, recordTombstoneForSync = false)
+                    }
+                }
             }
 
             // 2. neededHashes のうち、元ファイルがあるものを POST /api/sync/photo で個別送信
@@ -426,22 +497,22 @@ class PcServerClient(
                                 newlyStoredHashes.add(photoRespDto.hash.lowercase())
                             }
                         } else {
-                            android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5: $md5): HTTP ${photoResp.code}")
+                            android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5 $md5): HTTP ${photoResp.code}")
                         }
                     }
                 }
             }
 
-            // 合体: 既存Synced + 今回新規Saved
             val allConfirmedHashes = syncedHashesSet + newlyStoredHashes
 
-            // 3. 高画質削除判定 (条件1: storeId一致, 条件2: allConfirmedHashesに含まれる, 条件3: サムネイル存在)
+            // 3. 高画質削除判定 (条件 storeId一致 & サーバー保存確認済み & サムネイル存在)
             val currentStoreId = getSavedStoreId()
             val isStoreIdValid = currentStoreId.isNotBlank() && currentStoreId.equals(respStoreId, ignoreCase = true)
 
             var missingOriginalCount = 0
 
             for (itemWithPhotos in itemsWithPhotos) {
+                if (itemWithPhotos.item.deletedAt != null) continue
                 for (photo in itemWithPhotos.photos) {
                     var md5 = photo.md5Hash
                     if (md5.isBlank()) {
@@ -452,7 +523,7 @@ class PcServerClient(
                     val isConfirmedOnServer = md5.isNotBlank() && allConfirmedHashes.contains(md5.lowercase())
 
                     if (isConfirmedOnServer) {
-                        repository.getDao().updatePhotoPcSynced(photo.id, true)
+                        dao.updatePhotoPcSynced(photo.id, true)
                     }
 
                     if (photo.isOriginalDeleted) {
@@ -472,7 +543,7 @@ class PcServerClient(
                                 if (file.delete()) {
                                     freedBytes += fileSize
                                     syncedPhotoCount++
-                                    repository.getDao().updatePhotoOriginalDeleted(photo.id, true, photo.thumbnailPath)
+                                    dao.updatePhotoOriginalDeleted(photo.id, true, photo.thumbnailPath)
                                 }
                             }
                         }
@@ -489,7 +560,7 @@ class PcServerClient(
                 storeId = respStoreId
             )
         } catch (e: Exception) {
-            android.util.Log.e("PC_SYNC", "プロトコル v3 同期例外: ${e.message}", e)
+            android.util.Log.e("PC_SYNC", "プロトコル v4 同期例外: ${e.message}", e)
             return@withContext PcSyncResult(
                 isSuccess = false,
                 errorMessage = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
@@ -501,6 +572,9 @@ class PcServerClient(
         try {
             val cleanUrl = baseUrl.trimEnd('/')
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+
+            val permanentlyDeletedUuids = fetchPermanentlyDeletedUuids(cleanUrl, token)
+
             val url = "$cleanUrl/api/items"
             val reqBuilder = Request.Builder()
                 .url(url)
@@ -511,226 +585,318 @@ class PcServerClient(
             client.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) return@withContext false
                 val bodyStr = response.body?.string() ?: return@withContext false
-
                 val jsonArray = org.json.JSONArray(bodyStr)
-                val dao = repository.getDao()
-                val allExistingPhotos = dao.getAllItemsWithPhotosDirect().flatMap { it.photos }
-
-                for (i in 0 until jsonArray.length()) {
-                    val obj = jsonArray.getJSONObject(i)
-                    val id = obj.optInt("id", 0)
-                    if (id <= 0) continue
-
-                    val isDeleted = obj.optBoolean("isDeleted", false)
-                    val existing = dao.getItemWithPhotosById(id)
-
-                    if (isDeleted) {
-                        if (existing != null) {
-                            // まとめ親商品が削除・解除された場合は、子商品のステータスを出品中に復元し、親の写真レコードのみDB削除（子写真の実ファイルは消さない）
-                            if (existing.item.mergedChildCount > 0) {
-                                dao.restoreMergedChildren(id)
-                                dao.deletePhotosByItemId(id)
-                                dao.deleteItem(existing.item)
-                            } else {
-                                repository.deleteItem(existing)
-                            }
-                        }
-                        continue
-                    }
-
-                    val title = obj.optString("title", "商品")
-                    val description = obj.optString("description", "")
-                    val status = obj.optString("status", "LISTED")
-                    val price = obj.optInt("price", 0)
-                    val soldPrice = obj.optInt("soldPrice", 0)
-
-                    val mergedParentId = if (obj.has("mergedParentId") && !obj.isNull("mergedParentId")) obj.getInt("mergedParentId") else null
-                    val mergedChildCount = obj.optInt("mergedChildCount", 0)
-                    val mergedChildTitles = obj.optString("mergedChildTitles", "")
-                    val originalTotalBundlePrice = obj.optInt("originalTotalBundlePrice", 0)
-                    val discountAmount = obj.optInt("discountAmount", 0)
-                    val bundleLevel = obj.optInt("bundleLevel", 0)
-
-                    val serverCreatedAt = if (obj.has("createdAt") && !obj.isNull("createdAt")) obj.optLong("createdAt", 0L).takeIf { it > 0L } else null
-                    val serverUpdatedAt = if (obj.has("updatedAt") && !obj.isNull("updatedAt")) obj.optLong("updatedAt", 0L).takeIf { it > 0L } else null
-                    val serverSoldAt = if (obj.has("soldAt") && !obj.isNull("soldAt")) obj.optLong("soldAt", 0L).takeIf { it > 0L } else null
-
-                    if (existing != null) {
-                        val resolvedCreatedAt = when {
-                            serverCreatedAt != null && existing.item.createdAt > 0L -> minOf(serverCreatedAt, existing.item.createdAt)
-                            serverCreatedAt != null -> serverCreatedAt
-                            else -> existing.item.createdAt
-                        }
-                        val resolvedUpdatedAt = serverUpdatedAt ?: existing.item.updatedAt
-                        val resolvedSoldAt = if (status == "SOLD") {
-                            serverSoldAt ?: existing.item.soldAt
-                        } else {
-                            null
-                        }
-                        val updated = existing.item.copy(
-                            title = title,
-                            description = description,
-                            status = status,
-                            price = price,
-                            soldPrice = soldPrice,
-                            mergedParentId = mergedParentId,
-                            mergedChildCount = mergedChildCount,
-                            mergedChildTitles = if (mergedChildTitles.isNotBlank()) mergedChildTitles else existing.item.mergedChildTitles,
-                            originalTotalBundlePrice = if (originalTotalBundlePrice > 0) originalTotalBundlePrice else existing.item.originalTotalBundlePrice,
-                            discountAmount = if (discountAmount > 0) discountAmount else existing.item.discountAmount,
-                            bundleLevel = if (bundleLevel > 0) bundleLevel else existing.item.bundleLevel,
-                            shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", existing.item.shippingCost) else existing.item.shippingCost,
-                            feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", existing.item.feeRatePercent) else existing.item.feeRatePercent,
-                            expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", existing.item.expenseCost) else existing.item.expenseCost,
-                            useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", existing.item.useCustomSettings) else existing.item.useCustomSettings,
-                            createdAt = resolvedCreatedAt,
-                            updatedAt = resolvedUpdatedAt,
-                            soldAt = resolvedSoldAt
-                        )
-                        dao.updateItem(updated)
-                    } else {
-                        val now = System.currentTimeMillis()
-                        val resolvedCreatedAt = serverCreatedAt ?: now
-                        val resolvedUpdatedAt = serverUpdatedAt ?: resolvedCreatedAt
-                        val resolvedSoldAt = if (status == "SOLD") serverSoldAt else null
-                        val newItem = com.example.myapplication.data.local.ItemEntity(
-                            id = id,
-                            title = title,
-                            description = description,
-                            status = status,
-                            price = price,
-                            soldPrice = soldPrice,
-                            shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", 210) else 210,
-                            feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", 5) else 5,
-                            expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", 55) else 55,
-                            useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", false) else false,
-                            mergedParentId = mergedParentId,
-                            mergedChildCount = mergedChildCount,
-                            mergedChildTitles = mergedChildTitles,
-                            originalTotalBundlePrice = originalTotalBundlePrice,
-                            discountAmount = discountAmount,
-                            bundleLevel = bundleLevel,
-                            isShared = true,
-                            createdAt = resolvedCreatedAt,
-                            updatedAt = resolvedUpdatedAt,
-                            soldAt = resolvedSoldAt
-                        )
-                        dao.insertItem(newItem)
-                    }
-
-                    // 写真情報の同期（PCでの追加・削除・0枚化にも追従し、ローカルファイルパス自動補完）
-                    val photosArray = obj.optJSONArray("photos")
-                    val currentPhotos = dao.getPhotosByItemId(id)
-                    val hasUnpushedLocalPhoto = currentPhotos.any {
-                        !it.isPcSynced && !it.isOriginalDeleted && java.io.File(it.filePath).exists()
-                    }
-                    val serverHashes = mutableListOf<String>()
-                    if (photosArray != null) {
-                        for (pIdx in 0 until photosArray.length()) {
-                            serverHashes.add(photosArray.getJSONObject(pIdx).optString("md5Hash", "").trim().lowercase())
-                        }
-                    }
-                    val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }
-                    val hashListDiffers = serverHashes != localHashes
-                    val hasInvalidDisplay = currentPhotos.any { it.displayFile == null }
-
-                    if (photosArray != null && photosArray.length() == 0) {
-                        if (currentPhotos.isNotEmpty() && !hasUnpushedLocalPhoto) {
-                            dao.deletePhotosByItemId(id)
-                        }
-                    } else if (photosArray != null && photosArray.length() > 0) {
-                        val shouldUpdatePhotos = (existing == null) ||
-                            (!hasUnpushedLocalPhoto && (hashListDiffers || hasInvalidDisplay))
-
-                        if (shouldUpdatePhotos) {
-                            val newPhotoEntities = mutableListOf<com.example.myapplication.data.local.PhotoEntity>()
-                            for (pIdx in 0 until photosArray.length()) {
-                                val pObj = photosArray.getJSONObject(pIdx)
-                                val md5 = pObj.optString("md5Hash", "").trim()
-                                val childId = pObj.optInt("childItemId", 0)
-                                var localFilePath = ""
-                                var localThumbPath: String? = null
-
-                                // 1. 同一商品既存写真 または 全既存写真から MD5 ハッシュで実ファイルが存在するものを検索
-                                if (md5.isNotBlank()) {
-                                    val matched = (currentPhotos + allExistingPhotos).firstOrNull {
-                                        it.md5Hash.equals(md5, ignoreCase = true) &&
-                                        (java.io.File(it.filePath).exists() || (!it.thumbnailPath.isNullOrBlank() && java.io.File(it.thumbnailPath).exists()))
-                                    }
-                                    if (matched != null) {
-                                        val origFile = if (matched.filePath.isNotBlank()) java.io.File(matched.filePath) else null
-                                        val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) java.io.File(matched.thumbnailPath) else null
-                                        if (origFile != null && origFile.exists()) {
-                                            localFilePath = matched.filePath
-                                            localThumbPath = matched.thumbnailPath
-                                        } else if (thumbFile != null && thumbFile.exists()) {
-                                            localFilePath = matched.thumbnailPath ?: ""
-                                            localThumbPath = matched.thumbnailPath
-                                        } else {
-                                            localFilePath = matched.filePath
-                                            localThumbPath = matched.thumbnailPath
-                                        }
-                                    }
-                                }
-
-                                // 2. MD5 で見つからず、childItemId が指定されている場合は元子商品の写真から引き当て
-                                if (localFilePath.isBlank() && childId > 0) {
-                                    val childPhotos = dao.getPhotosByItemId(childId)
-                                    val matchedChildPhoto = childPhotos.firstOrNull { cp ->
-                                        (md5.isNotBlank() && cp.md5Hash.equals(md5, ignoreCase = true)) ||
-                                        java.io.File(cp.filePath).exists() ||
-                                        (!cp.thumbnailPath.isNullOrBlank() && java.io.File(cp.thumbnailPath).exists())
-                                    } ?: childPhotos.getOrNull(pIdx) ?: childPhotos.firstOrNull()
-
-                                    if (matchedChildPhoto != null) {
-                                        val cOrig = java.io.File(matchedChildPhoto.filePath)
-                                        val cThumb = if (!matchedChildPhoto.thumbnailPath.isNullOrBlank()) java.io.File(matchedChildPhoto.thumbnailPath) else null
-                                        if (cOrig.exists()) {
-                                            localFilePath = matchedChildPhoto.filePath
-                                            localThumbPath = matchedChildPhoto.thumbnailPath
-                                        } else if (cThumb != null && cThumb.exists()) {
-                                            localFilePath = matchedChildPhoto.thumbnailPath ?: ""
-                                            localThumbPath = matchedChildPhoto.thumbnailPath
-                                        } else {
-                                            localFilePath = matchedChildPhoto.filePath
-                                            localThumbPath = matchedChildPhoto.thumbnailPath
-                                        }
-                                    }
-                                }
-
-                                newPhotoEntities.add(
-                                    com.example.myapplication.data.local.PhotoEntity(
-                                        itemId = id,
-                                        filePath = localFilePath,
-                                        thumbnailPath = localThumbPath,
-                                        isOriginalDeleted = localFilePath.isBlank() && !localThumbPath.isNullOrBlank(),
-                                        isPcSynced = true,
-                                        md5Hash = md5,
-                                        syncStatus = "SYNCED",
-                                        displayOrder = pIdx
-                                    )
-                                )
-                            }
-
-                            if (newPhotoEntities.isNotEmpty()) {
-                                dao.deletePhotosByItemId(id)
-                                dao.insertPhotos(newPhotoEntities)
-                            }
-                        }
-                    }
-
-                    // 欠損または破損サムネイル（PC追加写真含む）を検出した場合はサーバーから自動自己修復
-                    val syncedPhotos = dao.getPhotosByItemId(id)
-                    if (syncedPhotos.any { isPhotoThumbnailDamagedOrMissing(it) }) {
-                        repairMissingOrCorruptThumbnailsForItem(id, cleanUrl, token)
-                    }
-                }
-                true
+                mergeServerItemsFromJson(
+                    jsonArray = jsonArray,
+                    permanentlyDeletedUuids = permanentlyDeletedUuids,
+                    baseUrl = cleanUrl,
+                    token = token,
+                    repairThumbnails = true
+                )
             }
         } catch (e: Exception) {
             android.util.Log.e("PC_SYNC", "fetchServerItems 例外: ${e.message}", e)
             false
         }
+    }
+
+    /**
+     * サーバーJSON配列を syncUuid 基準・isDirty/updatedAt 保護・ID衝突回避でローカルRoomへマージする
+     */
+    internal suspend fun mergeServerItemsFromJson(
+        jsonArray: org.json.JSONArray,
+        permanentlyDeletedUuids: Set<String> = emptySet(),
+        baseUrl: String = "",
+        token: String = "",
+        repairThumbnails: Boolean = true
+    ): Boolean = withContext(Dispatchers.IO) {
+        val dao = repository.getDao()
+        val pendingDeletedUuids = repository.getPendingDeletedUuids()
+        val allExistingPhotos = dao.getAllItemsWithPhotosForSync().flatMap { it.photos }
+
+        // 1. サーバー側で完全削除されたUUIDをローカルからも物理削除（未送信ローカル変更がない場合）
+        if (permanentlyDeletedUuids.isNotEmpty()) {
+            for (delUuid in permanentlyDeletedUuids) {
+                val cleanUuid = delUuid.trim()
+                if (cleanUuid.isBlank()) continue
+                val existingByUuid = dao.getItemWithPhotosBySyncUuid(cleanUuid)
+                if (existingByUuid != null && !existingByUuid.item.isDirty) {
+                    repository.permanentlyDeleteItem(existingByUuid, recordTombstoneForSync = false)
+                }
+            }
+        }
+
+        // 2. JSONオブジェクトを抽出＆サーバーID -> syncUuid マップ構築
+        val rawObjects = mutableListOf<JSONObject>()
+        val serverIdToUuid = mutableMapOf<Int, String>()
+        for (i in 0 until jsonArray.length()) {
+            val obj = jsonArray.optJSONObject(i) ?: continue
+            rawObjects.add(obj)
+            val sId = obj.optInt("id", 0)
+            val sUuid = obj.optString("syncUuid", "").trim()
+            if (sId > 0 && sUuid.isNotBlank()) {
+                serverIdToUuid[sId] = sUuid
+            }
+        }
+
+        // 3. 親商品を先に処理して mergedParentId のローカルID引き当てを保証
+        val sortedObjects = rawObjects.sortedBy { obj ->
+            val hasParent = obj.has("mergedParentId") && !obj.isNull("mergedParentId") && obj.optInt("mergedParentId", 0) > 0
+            if (hasParent) 1 else 0
+        }
+
+        for (obj in sortedObjects) {
+            val serverId = obj.optInt("id", 0)
+            val serverSyncUuid = obj.optString("syncUuid", "").trim()
+            if (serverId <= 0 && serverSyncUuid.isBlank()) continue
+
+            if (serverSyncUuid.isNotBlank() &&
+                (permanentlyDeletedUuids.contains(serverSyncUuid) || pendingDeletedUuids.contains(serverSyncUuid))
+            ) {
+                continue
+            }
+
+            val byUuid = if (serverSyncUuid.isNotBlank()) dao.getItemWithPhotosBySyncUuid(serverSyncUuid) else null
+            val byId = if (serverId > 0) dao.getItemWithPhotosById(serverId) else null
+            val isIdCollision = (byUuid == null && byId != null && serverSyncUuid.isNotBlank() &&
+                byId.item.syncUuid.isNotBlank() && !byId.item.syncUuid.equals(serverSyncUuid, ignoreCase = true))
+
+            val existing = byUuid ?: if (!isIdCollision) byId else null
+
+            val serverUpdatedAt = if (obj.has("updatedAt") && !obj.isNull("updatedAt")) obj.optLong("updatedAt", 0L) else 0L
+
+            // isDirty 保護：ローカルに未送信の変更があり、ローカル updatedAt がサーバーより新しい／同等なら上書きしない
+            if (existing != null && existing.item.isDirty &&
+                (serverUpdatedAt <= 0L || existing.item.updatedAt >= serverUpdatedAt)
+            ) {
+                continue
+            }
+
+            val isLegacyDeleted = obj.optBoolean("isDeleted", false)
+            val rawDeletedAt = if (obj.has("deletedAt") && !obj.isNull("deletedAt")) obj.optLong("deletedAt", 0L).takeIf { it > 0L } else null
+            val serverDeletedAt = when {
+                rawDeletedAt != null -> rawDeletedAt
+                isLegacyDeleted -> existing?.item?.deletedAt ?: serverUpdatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
+                else -> null
+            }
+
+            val title = obj.optString("title", "商品")
+            val description = obj.optString("description", "")
+            val status = obj.optString("status", "LISTED")
+            val price = obj.optInt("price", 0)
+            val soldPrice = obj.optInt("soldPrice", 0)
+
+            val rawMergedParentId = if (obj.has("mergedParentId") && !obj.isNull("mergedParentId")) {
+                obj.optInt("mergedParentId", 0).takeIf { it > 0 }
+            } else {
+                null
+            }
+            val rawMergedParentUuid = obj.optString("mergedParentSyncUuid", "").trim()
+                .ifBlank { rawMergedParentId?.let { serverIdToUuid[it] } ?: "" }
+            val resolvedMergedParentId = when {
+                rawMergedParentUuid.isNotBlank() ->
+                    dao.getItemWithPhotosBySyncUuid(rawMergedParentUuid)?.item?.id ?: rawMergedParentId
+                else -> rawMergedParentId
+            }
+
+            val mergedChildCount = obj.optInt("mergedChildCount", 0)
+            val mergedChildTitles = obj.optString("mergedChildTitles", "")
+            val originalTotalBundlePrice = obj.optInt("originalTotalBundlePrice", 0)
+            val discountAmount = obj.optInt("discountAmount", 0)
+            val bundleLevel = obj.optInt("bundleLevel", 0)
+
+            val serverCreatedAt = if (obj.has("createdAt") && !obj.isNull("createdAt")) obj.optLong("createdAt", 0L).takeIf { it > 0L } else null
+            val serverSoldAt = if (obj.has("soldAt") && !obj.isNull("soldAt")) obj.optLong("soldAt", 0L).takeIf { it > 0L } else null
+
+            val resolvedUuid = serverSyncUuid.ifBlank {
+                existing?.item?.syncUuid?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
+            }
+
+            val targetItemId: Int
+            if (existing != null) {
+                targetItemId = existing.item.id
+                val resolvedCreatedAt = when {
+                    serverCreatedAt != null && existing.item.createdAt > 0L -> minOf(serverCreatedAt, existing.item.createdAt)
+                    serverCreatedAt != null -> serverCreatedAt
+                    else -> existing.item.createdAt
+                }
+                val resolvedUpdatedAt = if (serverUpdatedAt > 0L) serverUpdatedAt else existing.item.updatedAt
+                val resolvedSoldAt = if (status == "SOLD") {
+                    serverSoldAt ?: existing.item.soldAt
+                } else {
+                    null
+                }
+                val updated = existing.item.copy(
+                    title = title,
+                    description = description,
+                    status = status,
+                    price = price,
+                    soldPrice = soldPrice,
+                    mergedParentId = resolvedMergedParentId,
+                    mergedChildCount = mergedChildCount,
+                    mergedChildTitles = if (mergedChildTitles.isNotBlank()) mergedChildTitles else existing.item.mergedChildTitles,
+                    originalTotalBundlePrice = if (originalTotalBundlePrice > 0) originalTotalBundlePrice else existing.item.originalTotalBundlePrice,
+                    discountAmount = if (discountAmount > 0) discountAmount else existing.item.discountAmount,
+                    bundleLevel = if (bundleLevel > 0) bundleLevel else existing.item.bundleLevel,
+                    shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", existing.item.shippingCost) else existing.item.shippingCost,
+                    feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", existing.item.feeRatePercent) else existing.item.feeRatePercent,
+                    expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", existing.item.expenseCost) else existing.item.expenseCost,
+                    useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", existing.item.useCustomSettings) else existing.item.useCustomSettings,
+                    isShared = true,
+                    createdAt = resolvedCreatedAt,
+                    updatedAt = resolvedUpdatedAt,
+                    soldAt = resolvedSoldAt,
+                    syncUuid = resolvedUuid,
+                    deletedAt = serverDeletedAt,
+                    isDirty = false
+                )
+                dao.updateItem(updated)
+            } else {
+                val now = System.currentTimeMillis()
+                val resolvedCreatedAt = serverCreatedAt ?: now
+                val resolvedUpdatedAt = if (serverUpdatedAt > 0L) serverUpdatedAt else resolvedCreatedAt
+                val resolvedSoldAt = if (status == "SOLD") serverSoldAt else null
+                // ID衝突時は id = 0 で自動採番インサートして別レコードとして保持
+                val insertId = if (!isIdCollision && byId == null && serverId > 0) serverId else 0
+                val newItem = com.example.myapplication.data.local.ItemEntity(
+                    id = insertId,
+                    title = title,
+                    description = description,
+                    status = status,
+                    price = price,
+                    soldPrice = soldPrice,
+                    shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", 210) else 210,
+                    feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", 5) else 5,
+                    expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", 55) else 55,
+                    useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", false) else false,
+                    mergedParentId = resolvedMergedParentId,
+                    mergedChildCount = mergedChildCount,
+                    mergedChildTitles = mergedChildTitles,
+                    originalTotalBundlePrice = originalTotalBundlePrice,
+                    discountAmount = discountAmount,
+                    bundleLevel = bundleLevel,
+                    isShared = true,
+                    createdAt = resolvedCreatedAt,
+                    updatedAt = resolvedUpdatedAt,
+                    soldAt = resolvedSoldAt,
+                    syncUuid = resolvedUuid,
+                    deletedAt = serverDeletedAt,
+                    isDirty = false
+                )
+                targetItemId = dao.insertItem(newItem).toInt()
+            }
+
+            // 写真情報の同期
+            val photosArray = obj.optJSONArray("photos")
+            val currentPhotos = dao.getPhotosByItemId(targetItemId)
+            val hasUnpushedLocalPhoto = currentPhotos.any {
+                !it.isPcSynced && !it.isOriginalDeleted && it.filePath.isNotBlank() && File(it.filePath).exists()
+            }
+            val serverHashes = mutableListOf<String>()
+            if (photosArray != null) {
+                for (pIdx in 0 until photosArray.length()) {
+                    serverHashes.add(photosArray.getJSONObject(pIdx).optString("md5Hash", "").trim().lowercase())
+                }
+            }
+            val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }
+            val hashListDiffers = serverHashes != localHashes
+            val hasInvalidDisplay = currentPhotos.any { it.displayFile == null }
+
+            if (photosArray != null && photosArray.length() == 0) {
+                if (currentPhotos.isNotEmpty() && !hasUnpushedLocalPhoto) {
+                    dao.deletePhotosByItemId(targetItemId)
+                }
+            } else if (photosArray != null && photosArray.length() > 0) {
+                val shouldUpdatePhotos = (existing == null) ||
+                    (!hasUnpushedLocalPhoto && (hashListDiffers || hasInvalidDisplay))
+
+                if (shouldUpdatePhotos) {
+                    val newPhotoEntities = mutableListOf<PhotoEntity>()
+                    for (pIdx in 0 until photosArray.length()) {
+                        val pObj = photosArray.getJSONObject(pIdx)
+                        val md5 = pObj.optString("md5Hash", "").trim()
+                        val childId = pObj.optInt("childItemId", 0)
+                        var localFilePath = ""
+                        var localThumbPath: String? = null
+
+                        if (md5.isNotBlank()) {
+                            val matched = (currentPhotos + allExistingPhotos).firstOrNull {
+                                it.md5Hash.equals(md5, ignoreCase = true) &&
+                                    ((it.filePath.isNotBlank() && File(it.filePath).exists()) ||
+                                        (!it.thumbnailPath.isNullOrBlank() && File(it.thumbnailPath).exists()))
+                            }
+                            if (matched != null) {
+                                val origFile = if (matched.filePath.isNotBlank()) File(matched.filePath) else null
+                                val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) File(matched.thumbnailPath) else null
+                                if (origFile != null && origFile.exists()) {
+                                    localFilePath = matched.filePath
+                                    localThumbPath = matched.thumbnailPath
+                                } else if (thumbFile != null && thumbFile.exists()) {
+                                    localFilePath = matched.thumbnailPath ?: ""
+                                    localThumbPath = matched.thumbnailPath
+                                } else {
+                                    localFilePath = matched.filePath
+                                    localThumbPath = matched.thumbnailPath
+                                }
+                            }
+                        }
+
+                        if (localFilePath.isBlank() && childId > 0) {
+                            val resolvedChildId = serverIdToUuid[childId]?.let { childUuid ->
+                                dao.getItemWithPhotosBySyncUuid(childUuid)?.item?.id
+                            } ?: childId
+                            val childPhotos = dao.getPhotosByItemId(resolvedChildId)
+                            val matchedChildPhoto = childPhotos.firstOrNull { cp ->
+                                (md5.isNotBlank() && cp.md5Hash.equals(md5, ignoreCase = true)) ||
+                                    (cp.filePath.isNotBlank() && File(cp.filePath).exists()) ||
+                                    (!cp.thumbnailPath.isNullOrBlank() && File(cp.thumbnailPath).exists())
+                            } ?: childPhotos.getOrNull(pIdx) ?: childPhotos.firstOrNull()
+
+                            if (matchedChildPhoto != null) {
+                                val cOrig = if (matchedChildPhoto.filePath.isNotBlank()) File(matchedChildPhoto.filePath) else null
+                                val cThumb = if (!matchedChildPhoto.thumbnailPath.isNullOrBlank()) File(matchedChildPhoto.thumbnailPath) else null
+                                if (cOrig != null && cOrig.exists()) {
+                                    localFilePath = matchedChildPhoto.filePath
+                                    localThumbPath = matchedChildPhoto.thumbnailPath
+                                } else if (cThumb != null && cThumb.exists()) {
+                                    localFilePath = matchedChildPhoto.thumbnailPath ?: ""
+                                    localThumbPath = matchedChildPhoto.thumbnailPath
+                                } else {
+                                    localFilePath = matchedChildPhoto.filePath
+                                    localThumbPath = matchedChildPhoto.thumbnailPath
+                                }
+                            }
+                        }
+
+                        newPhotoEntities.add(
+                            PhotoEntity(
+                                itemId = targetItemId,
+                                filePath = localFilePath,
+                                thumbnailPath = localThumbPath,
+                                isOriginalDeleted = localFilePath.isBlank() && !localThumbPath.isNullOrBlank(),
+                                isPcSynced = true,
+                                md5Hash = md5,
+                                syncStatus = "SYNCED",
+                                displayOrder = pIdx
+                            )
+                        )
+                    }
+
+                    if (newPhotoEntities.isNotEmpty()) {
+                        dao.deletePhotosByItemId(targetItemId)
+                        dao.insertPhotos(newPhotoEntities)
+                    }
+                }
+            }
+
+            if (repairThumbnails && baseUrl.isNotBlank()) {
+                val syncedPhotos = dao.getPhotosByItemId(targetItemId)
+                if (syncedPhotos.any { isPhotoThumbnailDamagedOrMissing(it) }) {
+                    repairMissingOrCorruptThumbnailsForItem(targetItemId, baseUrl, token)
+                }
+            }
+        }
+        true
     }
 
     /**
