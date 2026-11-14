@@ -31,5 +31,6 @@ debug.keystore
 /tools/update_build_bat.ps1
 /.artifacts/
 /tools/cloudflared.exe
+/tools/server.log
 
 

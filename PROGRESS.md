@@ -35,7 +35,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 10)`** （PC母艦サーバー `/target:winexe` 化 ＆ トレイ終了時プロセス・フォルダロック完全解放修正）
+現在のバージョン：**`v1.0.0` (Build 100)** （正式リリース・フェーズ 3.2 全機能統合 ＆ PCサーバー `winexe`/終了時ロック解放 ＆ コンパイル修正完了）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -89,6 +89,13 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 正式リリース統合 バージョン 1.0.0 (Build 100)
+- **`feature/v1.0-updates` の不具合精査 ＆ クリーン統合**：
+  - `FurimaServerNative.cs` の `HandleBatchUpdateItems`（`商品情報_説明文.txt` 出力箇所）に残っていた C# 生改行コンパイルエラーを `\r\n` 連結へ修正（重複 `using` 混入を排除したクリーン状態で反映）。
+  - 巻き戻っていた `tools/DashboardHtml.cs` をフェーズ 3.2（出品前チェック・大型テンプレート編集＆変数展開・一括編集＆ゴミ箱一括操作）フル実装版へ復元し、バージョン表記のみ `v1.0.0` へ更新。
+  - 誤コミットされていた `tools/server.log` を追跡対象外（`.gitignore` に `/tools/server.log` を追加）とし、不要ブランチ `feature/v1.0-updates` を削除して `main` へ一本化。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 100`, `versionName = "1.0.0"`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0`** へ 3 箇所同時統一し、`compile_applet` で Android ビルド正常通過を確認。
 
 ### 2026/11/14 PC母艦サーバー winexe化 ＆ 完全終了修復 バージョン 0.9β (Build 10)
 - **CUIコンソール廃止 (`/target:winexe`) ＋ ログファイル出力 (`tools/build-exe.bat`, `FurimaServerNative.cs`, `TunnelQrForm.cs`)**：

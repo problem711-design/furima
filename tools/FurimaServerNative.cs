@@ -2248,14 +2248,12 @@ class FurimaServerNative
                         string description = item.ContainsKey("description") && item["description"] != null ? item["description"].ToString() : "";
                         string targetDir = ResolveOrCreateItemFolder(itemId, title);
                         string txtPath = Path.Combine(targetDir, "商品情報_説明文.txt");
-                        string txtContent = "【商品ID】 " + itemId + "
-【タイトル】 " + title + "
-【販売価格】 ¥" + nextPrice.ToString("N0") + "
-【純利益】 ¥" + profit.ToString("N0") + "
-【ステータス】 " + nextStatusLabel + "
-
---- 商品説明 ---
-" + description;
+                        string txtContent = "【商品ID】 " + itemId + "\r\n" +
+                            "【タイトル】 " + title + "\r\n" +
+                            "【販売価格】 ¥" + nextPrice.ToString("N0") + "\r\n" +
+                            "【純利益】 ¥" + profit.ToString("N0") + "\r\n" +
+                            "【ステータス】 " + nextStatusLabel + "\r\n\r\n" +
+                            "--- 商品説明 ---\r\n" + description;
                         File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
                     }
                     catch (Exception tex)
