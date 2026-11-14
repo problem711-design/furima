@@ -6,7 +6,7 @@
 > - 第1世代〜初期ログ: [PROGRESS_ARCHIVE_PHASE1.md](PROGRESS_ARCHIVE_PHASE1.md)
 > - フェーズ2.0〜2.11全詳細ログ・計画書: [PROGRESS_ARCHIVE_PHASE2.md](PROGRESS_ARCHIVE_PHASE2.md)
 > - フェーズ 2.12〜2.14 計画書: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
-> - **現行実装計画書 (フェーズ 2.15〜2.17 / 総点検修復)**: [PLAN_PHASE_2_15_TO_2_17.md](PLAN_PHASE_2_15_TO_2_17.md)
+> - **現行実装計画書 (フェーズ 3.1 / CameraX & プレビュー原本取得ボタン修復)**: [PLAN_CAMERA_AND_PREVIEW_FIX.md](PLAN_CAMERA_AND_PREVIEW_FIX.md)
 
 ---
 
