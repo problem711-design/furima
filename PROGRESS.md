@@ -6,7 +6,8 @@
 > - 第1世代〜初期ログ: [PROGRESS_ARCHIVE_PHASE1.md](PROGRESS_ARCHIVE_PHASE1.md)
 > - フェーズ2.0〜2.11全詳細ログ・計画書: [PROGRESS_ARCHIVE_PHASE2.md](PROGRESS_ARCHIVE_PHASE2.md)
 > - フェーズ 2.12〜2.14 計画書: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
-> - **現行実装計画書 (フェーズ 3.1 / CameraX & プレビュー原本取得ボタン修復)**: [PLAN_CAMERA_AND_PREVIEW_FIX.md](PLAN_CAMERA_AND_PREVIEW_FIX.md)
+> - フェーズ 3.1 計画書: [PLAN_CAMERA_AND_PREVIEW_FIX.md](PLAN_CAMERA_AND_PREVIEW_FIX.md)
+> - **現行実装計画書 (フェーズ 3.2 / UI改善・テンプレート拡張・一括削除＆一括編集)**: [PLAN_PHASE_3_2.md](PLAN_PHASE_3_2.md)
 
 ---
 
@@ -82,7 +83,7 @@
   - [x] `PhotoPreviewDialog.kt` 「PCから高画質原本を取得」ボタンの上部ヘッダーエリア移設 ＋ `Build 8` 統一
 
 ---
-
+amma
 ## 更新履歴 (Changelog)
 
 ### 2026/11/14 フェーズ 3.1 完了 バージョン 0.9β (Build 8)
