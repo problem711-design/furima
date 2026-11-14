@@ -13,6 +13,13 @@ public class FeePresetConfig
     public int expenseCost { get; set; }
 }
 
+public class TextTemplateConfig
+{
+    public string id { get; set; }
+    public string name { get; set; }
+    public string content { get; set; }
+}
+
 public class DefaultSettingsConfig
 {
     public int defaultFeeRatePercent { get; set; }
@@ -20,6 +27,9 @@ public class DefaultSettingsConfig
     public int defaultExpenseCost { get; set; }
     public string activePresetId { get; set; }
     public List<FeePresetConfig> presets { get; set; }
+    public List<TextTemplateConfig> titleTemplates { get; set; }
+    public List<TextTemplateConfig> descriptionTemplates { get; set; }
+    public long settingsUpdatedAt { get; set; }
 
     public static DefaultSettingsConfig CreateDefault()
     {
@@ -35,7 +45,10 @@ public class DefaultSettingsConfig
                 new FeePresetConfig { id = "mercari", name = "メルカリ (ネコポス/ゆうパケット)", feeRatePercent = 10, shippingCost = 210, expenseCost = 55 },
                 new FeePresetConfig { id = "rakuma", name = "楽天ラクマ (かんたんラクマパック)", feeRatePercent = 10, shippingCost = 180, expenseCost = 55 },
                 new FeePresetConfig { id = "yupaket_mini", name = "ゆうパケットポストmini", feeRatePercent = 5, shippingCost = 160, expenseCost = 20 }
-            }
+            },
+            titleTemplates = new List<TextTemplateConfig>(),
+            descriptionTemplates = new List<TextTemplateConfig>(),
+            settingsUpdatedAt = 0
         };
     }
 }
@@ -68,6 +81,18 @@ public static class SyncStore
         {
             if (_currentConfig != null && _currentConfig.defaultSettings != null)
             {
+                if (_currentConfig.defaultSettings.presets == null || _currentConfig.defaultSettings.presets.Count == 0)
+                {
+                    _currentConfig.defaultSettings.presets = DefaultSettingsConfig.CreateDefault().presets;
+                }
+                if (_currentConfig.defaultSettings.titleTemplates == null)
+                {
+                    _currentConfig.defaultSettings.titleTemplates = new List<TextTemplateConfig>();
+                }
+                if (_currentConfig.defaultSettings.descriptionTemplates == null)
+                {
+                    _currentConfig.defaultSettings.descriptionTemplates = new List<TextTemplateConfig>();
+                }
                 return _currentConfig.defaultSettings;
             }
             return DefaultSettingsConfig.CreateDefault();
@@ -92,6 +117,14 @@ public static class SyncStore
             if (settings.presets == null || settings.presets.Count == 0)
             {
                 settings.presets = DefaultSettingsConfig.CreateDefault().presets;
+            }
+            if (settings.titleTemplates == null)
+            {
+                settings.titleTemplates = new List<TextTemplateConfig>();
+            }
+            if (settings.descriptionTemplates == null)
+            {
+                settings.descriptionTemplates = new List<TextTemplateConfig>();
             }
             _currentConfig.defaultSettings = settings;
             if (!string.IsNullOrEmpty(_storeJsonPath))

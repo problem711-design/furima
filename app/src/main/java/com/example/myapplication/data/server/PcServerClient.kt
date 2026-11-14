@@ -4,7 +4,10 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.PhotoStorageManager
+import com.example.myapplication.data.local.DefaultSettings
+import com.example.myapplication.data.local.FeePreset
 import com.example.myapplication.data.local.PhotoEntity
+import com.example.myapplication.data.local.TextTemplate
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +50,122 @@ class PcServerClient(
     private val syncItemsRequestAdapter = moshi.adapter(SyncItemsRequest::class.java)
     private val syncItemsResponseAdapter = moshi.adapter(SyncItemsResponse::class.java)
     private val syncPhotoResponseAdapter = moshi.adapter(SyncPhotoResponse::class.java)
+    private val syncSettingsAdapter = moshi.adapter(SyncSettingsDto::class.java)
+
+    private fun toSyncSettingsDto(settings: DefaultSettings): SyncSettingsDto {
+        return SyncSettingsDto(
+            defaultFeeRatePercent = settings.defaultFeeRatePercent,
+            defaultShippingCost = settings.defaultShippingCost,
+            defaultExpenseCost = settings.defaultExpenseCost,
+            activePresetId = settings.activePresetId,
+            presets = settings.presets.map { p ->
+                SyncFeePresetDto(
+                    id = p.id,
+                    name = p.name,
+                    feeRatePercent = p.feeRatePercent,
+                    shippingCost = p.shippingCost,
+                    expenseCost = p.expenseCost
+                )
+            },
+            titleTemplates = settings.titleTemplates.map { t ->
+                SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
+            },
+            descriptionTemplates = settings.descriptionTemplates.map { t ->
+                SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
+            },
+            settingsUpdatedAt = settings.settingsUpdatedAt
+        )
+    }
+
+    private fun applyServerSettingsDto(dto: SyncSettingsDto, base: DefaultSettings): DefaultSettings {
+        val mergedPresets = dto.presets.map { p ->
+            FeePreset(
+                id = p.id,
+                name = p.name,
+                feeRatePercent = p.feeRatePercent.coerceAtLeast(0),
+                shippingCost = p.shippingCost.coerceAtLeast(0),
+                expenseCost = p.expenseCost.coerceAtLeast(0)
+            )
+        }.ifEmpty { base.presets }
+        val resolvedActiveId = if (mergedPresets.any { it.id == dto.activePresetId }) {
+            dto.activePresetId
+        } else {
+            mergedPresets.firstOrNull()?.id ?: base.activePresetId
+        }
+        return base.copy(
+            defaultFeeRatePercent = dto.defaultFeeRatePercent.coerceAtLeast(0),
+            defaultShippingCost = dto.defaultShippingCost.coerceAtLeast(0),
+            defaultExpenseCost = dto.defaultExpenseCost.coerceAtLeast(0),
+            activePresetId = resolvedActiveId,
+            presets = mergedPresets,
+            titleTemplates = dto.titleTemplates.map { t ->
+                TextTemplate(id = t.id, name = t.name, content = t.content)
+            },
+            descriptionTemplates = dto.descriptionTemplates.map { t ->
+                TextTemplate(id = t.id, name = t.name, content = t.content)
+            },
+            settingsUpdatedAt = dto.settingsUpdatedAt
+        )
+    }
+
+    suspend fun pushSettingsToServer(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val currentSettings = repository.defaultSettings.value
+            val jsonStr = syncSettingsAdapter.toJson(toSyncSettingsDto(currentSettings))
+            val body = jsonStr.toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/settings").put(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string()
+                if (!respStr.isNullOrBlank()) {
+                    val serverDto = syncSettingsAdapter.fromJson(respStr)
+                    if (serverDto != null && serverDto.settingsUpdatedAt > 0L) {
+                        repository.updateDefaultSettings(
+                            applyServerSettingsDto(serverDto, repository.defaultSettings.value),
+                            stampNow = false
+                        )
+                    }
+                }
+                true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "pushSettingsToServer 例外: ${e.message}", e)
+            false
+        }
+    }
+
+    suspend fun fetchAndSyncServerSettings(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/settings").get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string() ?: return@withContext false
+                val serverDto = syncSettingsAdapter.fromJson(respStr) ?: return@withContext false
+                val localSettings = repository.defaultSettings.value
+                when {
+                    serverDto.settingsUpdatedAt > localSettings.settingsUpdatedAt -> {
+                        repository.updateDefaultSettings(
+                            applyServerSettingsDto(serverDto, localSettings),
+                            stampNow = false
+                        )
+                    }
+                    localSettings.settingsUpdatedAt > serverDto.settingsUpdatedAt -> {
+                        pushSettingsToServer(cleanUrl, token)
+                    }
+                }
+                true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "fetchAndSyncServerSettings 例外: ${e.message}", e)
+            false
+        }
+    }
 
     fun getSavedStoreId(): String {
         return prefs.getString("pc_store_id", "") ?: ""
@@ -226,23 +345,9 @@ class PcServerClient(
                 )
             }
 
-            // 1. POST /api/sync/items (基本費用設定・プリセット一覧も同梱送信)
+            // 1. POST /api/sync/items (基本費用設定・プリセット・テンプレートも同梱送信)
             val currentSettings = repository.defaultSettings.value
-            val settingsDto = SyncSettingsDto(
-                defaultFeeRatePercent = currentSettings.defaultFeeRatePercent,
-                defaultShippingCost = currentSettings.defaultShippingCost,
-                defaultExpenseCost = currentSettings.defaultExpenseCost,
-                activePresetId = currentSettings.activePresetId,
-                presets = currentSettings.presets.map { p ->
-                    SyncFeePresetDto(
-                        id = p.id,
-                        name = p.name,
-                        feeRatePercent = p.feeRatePercent,
-                        shippingCost = p.shippingCost,
-                        expenseCost = p.expenseCost
-                    )
-                }
-            )
+            val settingsDto = toSyncSettingsDto(currentSettings)
             val syncReq = SyncItemsRequest(
                 protocolVersion = 3,
                 storeId = savedStoreId,

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MergeType
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -40,8 +41,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myapplication.data.local.DefaultSettings
@@ -73,8 +76,10 @@ fun MergeItemsDialog(
         appendLine("よろしくお願いいたします。")
     }
 
-    var title by remember { mutableStateOf(defaultTitle) }
-    var description by remember { mutableStateOf(defaultDesc) }
+    var titleFieldValue by remember { mutableStateOf(TextFieldValue(defaultTitle, TextRange(defaultTitle.length))) }
+    var descriptionFieldValue by remember { mutableStateOf(TextFieldValue(defaultDesc, TextRange(defaultDesc.length))) }
+    val title = titleFieldValue.text
+    val description = descriptionFieldValue.text
     var priceText by remember { mutableStateOf(totalOriginalPrice.toString()) }
     var shippingText by remember { mutableStateOf("750") } // まとめて箱で送る想定
     var feeRateText by remember { mutableStateOf(defaultSettings.defaultFeeRatePercent.toString()) }
@@ -159,24 +164,50 @@ fun MergeItemsDialog(
 
                 // まとめ商品名
                 OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
+                    value = titleFieldValue,
+                    onValueChange = { titleFieldValue = it },
                     label = { Text("まとめ出品タイトル (必須)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("merge_title_input")
                 )
 
+                if (defaultSettings.titleTemplates.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        defaultSettings.titleTemplates.forEach { tpl ->
+                            AssistChip(
+                                onClick = { titleFieldValue = insertMergeTemplateAtCursor(titleFieldValue, tpl.content) },
+                                label = { Text(tpl.name, fontSize = 11.sp) },
+                                modifier = Modifier.testTag("merge_insert_title_template_${tpl.id}")
+                            )
+                        }
+                    }
+                }
+
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // まとめ商品説明文（自動生成テンプレート・編集可能）
                 OutlinedTextField(
-                    value = description,
-                    onValueChange = { description = it },
+                    value = descriptionFieldValue,
+                    onValueChange = { descriptionFieldValue = it },
                     label = { Text("まとめ商品説明文 (任意・自動生成テンプレート)") },
                     minLines = 4,
                     maxLines = 8,
                     modifier = Modifier.fillMaxWidth().testTag("merge_description_input")
                 )
+
+                if (defaultSettings.descriptionTemplates.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        defaultSettings.descriptionTemplates.forEach { tpl ->
+                            AssistChip(
+                                onClick = { descriptionFieldValue = insertMergeTemplateAtCursor(descriptionFieldValue, tpl.content) },
+                                label = { Text(tpl.name, fontSize = 11.sp) },
+                                modifier = Modifier.testTag("merge_insert_desc_template_${tpl.id}")
+                            )
+                        }
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -313,4 +344,12 @@ fun MergeItemsDialog(
             }
         }
     )
+}
+
+private fun insertMergeTemplateAtCursor(current: TextFieldValue, insertText: String): TextFieldValue {
+    val start = current.selection.min.coerceIn(0, current.text.length)
+    val end = current.selection.max.coerceIn(0, current.text.length)
+    val updatedText = current.text.substring(0, start) + insertText + current.text.substring(end)
+    val newCursor = start + insertText.length
+    return TextFieldValue(text = updatedText, selection = TextRange(newCursor))
 }

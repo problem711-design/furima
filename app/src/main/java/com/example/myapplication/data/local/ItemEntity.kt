@@ -25,7 +25,10 @@ data class ItemEntity(
     val bundleLevel: Int = 0, // まとめ階層（0: 単品, 1: まとめ商品, 2: まとめのまとめ）
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(), // 最終更新日時タイムスタンプ
-    val soldAt: Long? = null // 売却成立日時
+    val soldAt: Long? = null, // 売却成立日時
+    val syncUuid: String = java.util.UUID.randomUUID().toString(), // 端末・PC共通の一意同期UUID
+    val deletedAt: Long? = null, // 非nullならゴミ箱入り日時 (論理削除)
+    val isDirty: Boolean = true // 未同期ローカル変更ありフラグ
 ) {
     fun getEffectiveFeeRatePercent(defaultSettings: DefaultSettings): Int =
         if (useCustomSettings) feeRatePercent else defaultSettings.defaultFeeRatePercent

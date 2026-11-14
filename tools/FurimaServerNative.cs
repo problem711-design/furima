@@ -496,6 +496,10 @@ class FurimaServerNative
             {
                 SendJson(res, SyncStore.GetDefaultSettings());
             }
+            else if (rawPath == "/api/settings" && req.HttpMethod == "PUT")
+            {
+                HandleUpdateSettings(req, res);
+            }
             else if (rawPath == "/api/sync/items" && req.HttpMethod == "POST")
             {
                 lastHeartbeat = DateTime.Now;
@@ -836,31 +840,12 @@ class FurimaServerNative
                     {
                         try
                         {
-                            var cfg = new DefaultSettingsConfig
+                            var incomingCfg = ParseDefaultSettingsConfig(dsObj);
+                            var currentCfg = SyncStore.GetDefaultSettings();
+                            if (incomingCfg.settingsUpdatedAt >= currentCfg.settingsUpdatedAt)
                             {
-                                defaultFeeRatePercent = Math.Max(0, ParseIntSafe(dsObj["defaultFeeRatePercent"], 5)),
-                                defaultShippingCost = Math.Max(0, ParseIntSafe(dsObj["defaultShippingCost"], 210)),
-                                defaultExpenseCost = Math.Max(0, ParseIntSafe(dsObj["defaultExpenseCost"], 55)),
-                                activePresetId = dsObj.Value<string>("activePresetId") ?? "yahoo_furima",
-                                presets = new List<FeePresetConfig>()
-                            };
-                            JArray presetsArr = dsObj["presets"] as JArray;
-                            if (presetsArr != null)
-                            {
-                                foreach (JObject pToken in presetsArr)
-                                {
-                                    if (pToken == null) continue;
-                                    cfg.presets.Add(new FeePresetConfig
-                                    {
-                                        id = pToken.Value<string>("id") ?? "",
-                                        name = pToken.Value<string>("name") ?? "",
-                                        feeRatePercent = Math.Max(0, ParseIntSafe(pToken["feeRatePercent"], 5)),
-                                        shippingCost = Math.Max(0, ParseIntSafe(pToken["shippingCost"], 210)),
-                                        expenseCost = Math.Max(0, ParseIntSafe(pToken["expenseCost"], 55))
-                                    });
-                                }
+                                SyncStore.SaveDefaultSettings(incomingCfg);
                             }
-                            SyncStore.SaveDefaultSettings(cfg);
                         }
                         catch (Exception ex)
                         {
@@ -1346,6 +1331,96 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("CreateItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static DefaultSettingsConfig ParseDefaultSettingsConfig(JObject dsObj)
+    {
+        var cfg = new DefaultSettingsConfig
+        {
+            defaultFeeRatePercent = Math.Max(0, ParseIntSafe(dsObj["defaultFeeRatePercent"], 5)),
+            defaultShippingCost = Math.Max(0, ParseIntSafe(dsObj["defaultShippingCost"], 210)),
+            defaultExpenseCost = Math.Max(0, ParseIntSafe(dsObj["defaultExpenseCost"], 55)),
+            activePresetId = dsObj.Value<string>("activePresetId") ?? "yahoo_furima",
+            presets = new List<FeePresetConfig>(),
+            titleTemplates = new List<TextTemplateConfig>(),
+            descriptionTemplates = new List<TextTemplateConfig>(),
+            settingsUpdatedAt = Math.Max(0, ParseLongSafe(dsObj["settingsUpdatedAt"], 0))
+        };
+
+        JArray presetsArr = dsObj["presets"] as JArray;
+        if (presetsArr != null)
+        {
+            foreach (JObject pToken in presetsArr)
+            {
+                if (pToken == null) continue;
+                cfg.presets.Add(new FeePresetConfig
+                {
+                    id = pToken.Value<string>("id") ?? "",
+                    name = pToken.Value<string>("name") ?? "",
+                    feeRatePercent = Math.Max(0, ParseIntSafe(pToken["feeRatePercent"], 5)),
+                    shippingCost = Math.Max(0, ParseIntSafe(pToken["shippingCost"], 210)),
+                    expenseCost = Math.Max(0, ParseIntSafe(pToken["expenseCost"], 55))
+                });
+            }
+        }
+        if (cfg.presets.Count == 0)
+        {
+            cfg.presets = DefaultSettingsConfig.CreateDefault().presets;
+        }
+
+        JArray titleTplArr = dsObj["titleTemplates"] as JArray;
+        if (titleTplArr != null)
+        {
+            foreach (JObject tToken in titleTplArr)
+            {
+                if (tToken == null) continue;
+                cfg.titleTemplates.Add(new TextTemplateConfig
+                {
+                    id = tToken.Value<string>("id") ?? "",
+                    name = tToken.Value<string>("name") ?? "",
+                    content = tToken.Value<string>("content") ?? ""
+                });
+            }
+        }
+
+        JArray descTplArr = dsObj["descriptionTemplates"] as JArray;
+        if (descTplArr != null)
+        {
+            foreach (JObject tToken in descTplArr)
+            {
+                if (tToken == null) continue;
+                cfg.descriptionTemplates.Add(new TextTemplateConfig
+                {
+                    id = tToken.Value<string>("id") ?? "",
+                    name = tToken.Value<string>("name") ?? "",
+                    content = tToken.Value<string>("content") ?? ""
+                });
+            }
+        }
+
+        return cfg;
+    }
+
+    private static void HandleUpdateSettings(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                string jsonStr = reader.ReadToEnd();
+                JObject json = JObject.Parse(jsonStr);
+                var cfg = ParseDefaultSettingsConfig(json);
+                cfg.settingsUpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                SyncStore.SaveDefaultSettings(cfg);
+                SendJson(res, SyncStore.GetDefaultSettings());
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("UpdateSettings エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

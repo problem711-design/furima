@@ -130,7 +130,10 @@ fun ItemListScreen(
             itemWithPhotos = itemWithPhotos,
             onDismiss = { quickActionItem = null },
             onToggleStatus = {
-                val newStatus = if (itemWithPhotos.item.status == "SOLD") "LISTED" else "SOLD"
+                val newStatus = when (itemWithPhotos.item.status) {
+                    "SOLD", "DRAFT" -> "LISTED"
+                    else -> "SOLD"
+                }
                 viewModel.updateItemStatus(itemWithPhotos.item, newStatus)
                 Toast.makeText(context, if (newStatus == "SOLD") "売却済みに変更しました" else "出品中に変更しました", Toast.LENGTH_SHORT).show()
             },
@@ -142,11 +145,13 @@ fun ItemListScreen(
                 viewModel.copyListingTemplate(context, itemWithPhotos)
             },
             onUnmerge = {
+                quickActionItem = null
                 viewModel.unmergeItem(itemWithPhotos.item.id) {
                     Toast.makeText(context, "まとめ買い出品を解除し、元の個別出品を復元しました", Toast.LENGTH_SHORT).show()
                 }
             },
             onDelete = {
+                quickActionItem = null
                 viewModel.deleteItem(itemWithPhotos) {
                     Toast.makeText(context, "商品を削除しました", Toast.LENGTH_SHORT).show()
                 }

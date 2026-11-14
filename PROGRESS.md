@@ -2,9 +2,10 @@
 
 このドキュメントは、第2世代アーキテクチャ（母艦PCマスターサーバー型 & MD5ハッシュ差分同期構成）における各実装フェーズの進捗状況、現状のギャップ調査結果、および修復記録を保持するためのものです。
 
-> **過去の開発進捗ログ・詳細計画書 アーカイブ**:
+> **過去の開発進捗ログ・詳細計画書 アーカイブ & 現行計画書**:
 > - 第1世代〜初期ログ: [PROGRESS_ARCHIVE_PHASE1.md](PROGRESS_ARCHIVE_PHASE1.md)
 > - フェーズ2.0〜2.11全詳細ログ・計画書: [PROGRESS_ARCHIVE_PHASE2.md](PROGRESS_ARCHIVE_PHASE2.md)
+> - **現行実装計画書 (フェーズ 2.12〜2.14)**: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
 
 ---
 
@@ -29,7 +30,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン: **`v0.9β (Build 1)`** （実運用可能状態達成に伴うバージョンリセット）
+現在のバージョン：**`v0.9β (Build 3)`** （Phase 2.13 設定双方向同期・デフォルトプリセット強化・テンプレート機能 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -47,9 +48,39 @@
 - [x] **実運用到達に伴うバージョン表記リセット (`v0.9β Build 1`)** 【完了】
   - アプリ・PC管理画面・Web画面すべてのバージョン表記を `v0.9β (Build 1)` に統一。
 
+### これからの実装予定マイルストーン (詳細仕様は `PLAN_PHASE_2_12_TO_2_14.md` を参照)
+- [x] **フェーズ 2.12 (`v0.9β Build 2`) — スマホUI不具合修正 ＋ 原本取得付き写真拡大プレビュー** 【完了】
+  - `2.12-A` 長押しメニュー (`ItemQuickActionDialog`) のステータス表示不一致修正（4ステータス統一・下書き切替対応）
+  - `2.12-B` 長押しメニューからの削除／まとめ解除実行後にメニューが閉じない不具合修正（二重送信防止ガード＋即時クローズ）
+  - `2.12-C` 詳細画面＆編集画面でのサムネイルタップ全画面拡大プレビュー（左右スワイプ・ピンチズーム・ダブルタップズーム ＋ PCサーバー接続中の高画質原本取得ボタン付き）
+- [x] **フェーズ 2.13 (`v0.9β Build 3`) — 設定双方向同期 ＋ デフォルトプリセット変更強化 ＋ テンプレート機能** 【完了】
+  - `2.13-A` `DefaultSettings` / `store.json` 拡張による設定双方向同期基盤（`PUT /api/settings` ＋ `settingsUpdatedAt` 新旧判定、Room DB 無変更）
+  - `2.13-B` デフォルトプリセットの切り替え・編集・即時同期（スマホ設定画面・編集画面チップ・PC管理画面モーダル）
+  - `2.13-C` タイトル／商品説明テンプレートの登録・編集・カーソル位置選択挿入（スマホ＆PC管理画面共通）
+- [ ] **フェーズ 2.14 (`v0.9β Build 4`) — 本命「ゴミ箱」機能 ＋ 一人利用最適・競合防止同期への刷新** 【計画策定済・未着手】
+  - `2.14-A` Room DB 拡張 (`syncUuid`, `deletedAt`, `isDirty`, `MIGRATION_5_6`) ＆ 論理削除/復元/30日超過完全削除リポジトリ
+  - `2.14-B` イベント駆動Push ＋ 軽量リビジョン検知 (`dataRevision`/`settingsRevision`) Pull ＋ `isDirty`/`updatedAt` 保護 ＋ UUID衝突防止同期エンジン
+  - `2.14-C` スマホ＆PC共通「ゴミ箱」UI実装（復元・完全削除・一括削除・30日保持カウント表示）
+
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/13 フェーズ 2.13 完了 バージョン 0.9β (Build 3)
+- **2.13-A (設定双方向同期基盤)**：`DefaultSettings` / `DefaultSettingsManager` / `SyncDtos` / `PcServerClient` / `FleaMarketViewModel` および PC側 `SyncStore.cs` / `FurimaServerNative.cs` を拡張し、`titleTemplates`・`descriptionTemplates`・`settingsUpdatedAt` を含む設定モデルを追加。`PUT /api/settings` の実装および `settingsUpdatedAt` 比較による古い設定の先祖返りガードを追加（Room DB 無変更）。
+- **2.13-B (デフォルトプリセット変更・編集強化)**：`SettingsStorageScreen.kt` にて初期・追加を含む全プリセットの編集・削除（最低1件ガード）・ワンタップ「標準にする」即時同期を実装。`ItemEditScreen.kt` の個別費用設定内にプリセット適用チップを追加し、PC管理画面 `DashboardHtml.cs` にも設定モーダルを追加。
+- **2.13-C (タイトル／商品説明テンプレート機能 ＋ Build 3 統一)**：スマホ設定画面＆PC設定モーダルにタイトル用・商品説明用テンプレートの追加・編集・削除UIを実装。`ItemEditScreen.kt`・`MergeItemsDialog.kt`（`TextFieldValue` カーソル位置挿入）および `DashboardHtml.cs`（`insertTextAtCursor` による新規・編集・まとめモーダル挿入）へ統合。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 3`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を `v0.9β (Build 3)` へ統一し、`compile_applet` 成功を確認。
+
+### 2026/11/13 フェーズ 2.12 完了 バージョン 0.9β (Build 2)
+- **2.12-A (長押しメニューのステータス表示不一致修正)**：`ItemQuickActionDialog.kt` のステータスバッジを一覧カードと同じ4種類（売却済・まとめ済・下書き・出品中）に統一し、下書き時の切替アクション（「出品中にする」）および `ItemListScreen.kt` の遷移処理を修正。
+- **2.12-B (長押しメニューの削除/解除後残留修正)**：`ItemQuickActionDialog.kt` の削除・まとめ解除確認ボタンに二重クリック防止ガードと即時 `onDismiss()` を追加し、`ItemListScreen.kt` 側でも即座に `quickActionItem = null` を適用。
+- **2.12-C (写真拡大プレビュー ＋ Build 2 統一)**：`PhotoPreviewDialog.kt` を新設（`HorizontalPager`、ピンチ拡大縮小、ダブルタップズーム、原本キャッシュ確認・PCサーバーからの「PCから高画質原本を取得」ボタン）し、`ItemDetailScreen.kt` および `ItemEditScreen.kt` のサムネイルタップへ連携。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 2`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を `v0.9β (Build 2)` へ統一し、`compile_applet` 成功を確認。
+
+### [2026-11-13] フェーズ 2.12〜2.14 詳細実装計画書 (`PLAN_PHASE_2_12_TO_2_14.md`) の策定・追記
+- スマホUIバグ2件（長押しステータス不一致・削除時メニュー残留）、原本取得ボタン付き拡大プレビュー、テンプレート＆デフォルトプリセット変更、および本命「ゴミ箱」＋一人利用最適のイベント駆動・競合防止同期設計の詳細仕様を `PLAN_PHASE_2_12_TO_2_14.md` に策定完了。
+- 本計画書および進捗ログをローカル Git リポジトリへ先行コミット（GitHub リモート同期はトークン再共有時に実施）。
 
 ### [2026-11-13] 実運用開始に伴うバージョンリセット (`v0.9β Build 1`) & 履歴ドキュメント整理完了
 - 全機能の安定動作および実運用到達を確認し、バージョン表記を `v0.9β (Build 1)` へ更新統一。

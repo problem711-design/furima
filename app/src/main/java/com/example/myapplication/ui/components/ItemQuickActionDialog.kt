@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,30 +69,53 @@ fun ItemQuickActionDialog(
     val firstPhoto = itemWithPhotos.photos.firstOrNull()
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
     val isSold = item.status == "SOLD"
+    val isDraft = item.status == "DRAFT"
     val isBundle = item.mergedChildCount > 0 || item.bundleLevel > 0
 
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var showUnmergeConfirm by remember { mutableStateOf(false) }
+    val statusBadgeColor = when (item.status) {
+        "SOLD" -> Color(0xFFC62828)
+        "MERGED" -> Color(0xFF6A1B9A)
+        "DRAFT" -> Color.Gray
+        else -> Color(0xFF2E7D32)
+    }
+    val statusBadgeLabel = when (item.status) {
+        "SOLD" -> "売却済"
+        "MERGED" -> "まとめ済"
+        "DRAFT" -> "下書き"
+        else -> "出品中"
+    }
+
+    var showDeleteConfirm by remember(item.id) { mutableStateOf(false) }
+    var showUnmergeConfirm by remember(item.id) { mutableStateOf(false) }
+    var isSubmitting by remember(item.id) { mutableStateOf(false) }
 
     if (showDeleteConfirm) {
         AlertDialog(
-            onDismissRequest = { showDeleteConfirm = false },
+            onDismissRequest = { if (!isSubmitting) showDeleteConfirm = false },
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
             title = { Text("商品を削除しますか？") },
             text = { Text("「${item.title}」を削除します。端末内の関連写真も削除されます。この操作は取り消せません。") },
             confirmButton = {
                 Button(
                     onClick = {
-                        showDeleteConfirm = false
-                        onDelete()
+                        if (!isSubmitting) {
+                            isSubmitting = true
+                            showDeleteConfirm = false
+                            onDismiss()
+                            onDelete()
+                        }
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("quick_action_confirm_delete")
                 ) {
                     Text("削除する")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
+                TextButton(
+                    onClick = { showDeleteConfirm = false },
+                    modifier = Modifier.testTag("quick_action_cancel_delete")
+                ) {
                     Text("キャンセル")
                 }
             }
@@ -101,22 +125,30 @@ fun ItemQuickActionDialog(
 
     if (showUnmergeConfirm) {
         AlertDialog(
-            onDismissRequest = { showUnmergeConfirm = false },
+            onDismissRequest = { if (!isSubmitting) showUnmergeConfirm = false },
             icon = { Icon(Icons.Default.CallSplit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
             title = { Text("まとめ買い出品を解除（バラす）") },
             text = { Text("このまとめ出品を解除し、内包されている元の商品（${item.mergedChildCount}点）をすべて個別の『出品中』出品に戻しますか？") },
             confirmButton = {
                 Button(
                     onClick = {
-                        showUnmergeConfirm = false
-                        onUnmerge()
-                    }
+                        if (!isSubmitting) {
+                            isSubmitting = true
+                            showUnmergeConfirm = false
+                            onDismiss()
+                            onUnmerge()
+                        }
+                    },
+                    modifier = Modifier.testTag("quick_action_confirm_unmerge")
                 ) {
                     Text("バラして復元する")
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showUnmergeConfirm = false }) {
+                TextButton(
+                    onClick = { showUnmergeConfirm = false },
+                    modifier = Modifier.testTag("quick_action_cancel_unmerge")
+                ) {
                     Text("キャンセル")
                 }
             }
@@ -173,11 +205,12 @@ fun ItemQuickActionDialog(
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(4.dp))
-                                .background(if (isSold) Color(0xFFC62828) else Color(0xFF2E7D32))
+                                .background(statusBadgeColor)
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .testTag("quick_action_status_badge")
                         ) {
                             Text(
-                                text = if (isSold) "売却済" else "出品中",
+                                text = statusBadgeLabel,
                                 color = Color.White,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -196,11 +229,31 @@ fun ItemQuickActionDialog(
                 Spacer(modifier = Modifier.height(4.dp))
 
                 // 1. ステータス切り替え
+                val toggleIcon = when {
+                    isSold || isDraft -> Icons.Default.PublishedWithChanges
+                    else -> Icons.Default.CheckCircle
+                }
+                val toggleLabel = when {
+                    isSold -> "出品中に戻す"
+                    isDraft -> "出品中にする"
+                    else -> "売却済みにする"
+                }
+                val toggleSubtitle = when {
+                    isSold -> "未売却として通常出品中へ戻します"
+                    isDraft -> "下書きから通常出品中へ公開します"
+                    else -> "売却完了として売上集計へ反映"
+                }
+                val toggleTint = when {
+                    isSold -> MaterialTheme.colorScheme.primary
+                    else -> Color(0xFF2E7D32)
+                }
+
                 QuickActionButton(
-                    icon = if (isSold) Icons.Default.PublishedWithChanges else Icons.Default.CheckCircle,
-                    label = if (isSold) "出品中に戻す" else "売却済みにする",
-                    subtitle = if (isSold) "未売却として通常出品中へ戻します" else "売却完了として売上集計へ反映",
-                    tint = if (isSold) MaterialTheme.colorScheme.primary else Color(0xFF2E7D32),
+                    icon = toggleIcon,
+                    label = toggleLabel,
+                    subtitle = toggleSubtitle,
+                    tint = toggleTint,
+                    testTagName = "quick_action_toggle_status",
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onToggleStatus()
@@ -214,6 +267,7 @@ fun ItemQuickActionDialog(
                     label = "商品情報を編集する",
                     subtitle = "写真・価格・説明文・個別費用の変更",
                     tint = MaterialTheme.colorScheme.primary,
+                    testTagName = "quick_action_edit",
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onDismiss()
@@ -227,6 +281,7 @@ fun ItemQuickActionDialog(
                     label = "出品用テキストをコピー",
                     subtitle = "メルカリ等の出品フォームへすぐ貼り付け",
                     tint = MaterialTheme.colorScheme.primary,
+                    testTagName = "quick_action_copy",
                     onClick = {
                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                         onCopyText()
@@ -241,6 +296,7 @@ fun ItemQuickActionDialog(
                         label = "まとめ買いを解除（バラす）",
                         subtitle = "内包する${item.mergedChildCount}点の商品を個別出品に復元",
                         tint = Color(0xFFE65100),
+                        testTagName = "quick_action_unmerge",
                         onClick = {
                             showUnmergeConfirm = true
                         }
@@ -253,6 +309,7 @@ fun ItemQuickActionDialog(
                     label = "商品を削除する",
                     subtitle = "端末の写真ファイルも含めて完全削除",
                     tint = MaterialTheme.colorScheme.error,
+                    testTagName = "quick_action_delete",
                     onClick = {
                         showDeleteConfirm = true
                     }
@@ -261,7 +318,10 @@ fun ItemQuickActionDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("quick_action_close")
+            ) {
                 Text("閉じる")
             }
         }
@@ -274,10 +334,13 @@ private fun QuickActionButton(
     label: String,
     subtitle: String,
     tint: Color,
+    testTagName: String,
     onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTagName),
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
         shape = RoundedCornerShape(10.dp)

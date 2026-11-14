@@ -226,7 +226,9 @@ class LocalWebServer(
 
                     var updatedItem = existing.item.copy(
                         status = newStatus,
-                        soldAt = if (newStatus == "SOLD") (existing.item.soldAt ?: System.currentTimeMillis()) else null
+                        soldAt = if (newStatus == "SOLD") (existing.item.soldAt ?: System.currentTimeMillis()) else null,
+                        updatedAt = System.currentTimeMillis(),
+                        isDirty = true
                     )
                     if (soldPrice != null && soldPrice > 0) {
                         updatedItem = updatedItem.copy(soldPrice = soldPrice)

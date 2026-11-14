@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 1)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 3)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -157,6 +157,9 @@ public static class DashboardHtml
                     <button onclick='openAddModal()' class='w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-plus text-xs'></i> 新規出品追加 (PC)
                     </button>
+                    <button onclick='openSettingsModal()' class='w-full bg-slate-700 hover:bg-slate-800 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-gear text-xs'></i> 設定・プリセット・テンプレート管理
+                    </button>
                     <button onclick='downloadPcCsv()' class='w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-file-csv text-xs'></i> 売上・全商品CSVダウンロード
                     </button>
@@ -194,9 +197,14 @@ public static class DashboardHtml
                 </div>
 
                 <div>
-                    <div class='flex justify-between items-center mb-1'>
+                    <div class='flex justify-between items-center mb-1 gap-2'>
                         <label class='font-bold text-slate-700'>まとめ商品タイトル (Yahoo!フリマ40文字以内)</label>
-                        <span id='merge-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                        <div class='flex items-center gap-2'>
+                            <select id='merge-title-tpl-select' onchange='applyTemplateSelect(""merge-title"", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
+                                <option value=''>定型文を挿入...</option>
+                            </select>
+                            <span id='merge-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                        </div>
                     </div>
                     <input type='text' id='merge-title' oninput='checkTitleLength(""merge"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500'>
                 </div>
@@ -233,7 +241,12 @@ public static class DashboardHtml
                 </div>
 
                 <div>
-                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
+                    <div class='flex justify-between items-center mb-1 gap-2'>
+                        <label class='font-bold text-slate-700'>商品説明文</label>
+                        <select id='merge-desc-tpl-select' onchange='applyTemplateSelect(""merge-description"", this, false)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[180px]'>
+                            <option value=''>説明定型文を挿入...</option>
+                        </select>
+                    </div>
                     <textarea id='merge-description' rows='6' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500 font-mono text-[11px]'></textarea>
                 </div>
             </div>
@@ -393,15 +406,25 @@ public static class DashboardHtml
 
                 <!-- ② 商品基本情報 -->
                 <div>
-                    <div class='flex justify-between items-center mb-1'>
+                    <div class='flex justify-between items-center mb-1 gap-2'>
                         <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
-                        <span id='add-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                        <div class='flex items-center gap-2'>
+                            <select id='add-title-tpl-select' onchange='applyTemplateSelect(""add-title"", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
+                                <option value=''>定型文を挿入...</option>
+                            </select>
+                            <span id='add-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                        </div>
                     </div>
                     <input type='text' id='add-title' oninput='checkTitleLength(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット Mサイズ'>
                 </div>
 
                 <div>
-                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
+                    <div class='flex justify-between items-center mb-1 gap-2'>
+                        <label class='font-bold text-slate-700'>商品説明文</label>
+                        <select id='add-desc-tpl-select' onchange='applyTemplateSelect(""add-description"", this, false)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[180px]'>
+                            <option value=''>説明定型文を挿入...</option>
+                        </select>
+                    </div>
                     <textarea id='add-description' rows='3' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
                 </div>
 
@@ -528,15 +551,25 @@ public static class DashboardHtml
 
                 <!-- ② 商品基本情報 -->
                 <div>
-                    <div class='flex justify-between items-center mb-1'>
+                    <div class='flex justify-between items-center mb-1 gap-2'>
                         <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
-                        <span id='edit-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                        <div class='flex items-center gap-2'>
+                            <select id='edit-title-tpl-select' onchange='applyTemplateSelect(""edit-title"", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
+                                <option value=''>定型文を挿入...</option>
+                            </select>
+                            <span id='edit-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                        </div>
                     </div>
                     <input type='text' id='edit-title' oninput='checkTitleLength(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
                 </div>
 
                 <div>
-                    <label class='block font-bold text-slate-700 mb-1'>商品説明文</label>
+                    <div class='flex justify-between items-center mb-1 gap-2'>
+                        <label class='font-bold text-slate-700'>商品説明文</label>
+                        <select id='edit-desc-tpl-select' onchange='applyTemplateSelect(""edit-description"", this, false)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[180px]'>
+                            <option value=''>説明定型文を挿入...</option>
+                        </select>
+                    </div>
                     <textarea id='edit-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
                 </div>
 
@@ -626,6 +659,95 @@ public static class DashboardHtml
         </div>
     </div>
 
+    <!-- 設定・プリセット・テンプレート管理モーダル -->
+    <div id='settings-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeSettingsModal()'>
+        <div class='bg-white rounded-xl max-w-2xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-slate-800 text-white px-5 py-3.5 flex items-center justify-between'>
+                <div class='flex items-center gap-2'>
+                    <i class='fa-solid fa-gear text-indigo-300 text-lg'></i>
+                    <h3 class='font-bold text-sm tracking-tight'>設定・プリセット・テンプレート管理 (双方向同期)</h3>
+                </div>
+                <button onclick='closeSettingsModal()' class='text-slate-300 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='p-5 space-y-5 text-xs max-h-[78vh] overflow-y-auto custom-scroll'>
+                <!-- 1. デフォルトプリセット管理 -->
+                <div class='space-y-3'>
+                    <div class='flex items-center justify-between border-b border-slate-200 pb-1.5'>
+                        <h4 class='font-bold text-slate-800 text-sm flex items-center gap-1.5'>
+                            <i class='fa-solid fa-coins text-amber-500'></i> 基本費用・デフォルトプリセット管理
+                        </h4>
+                        <span class='text-[10px] text-slate-500'>変更は即時保存・スマホと同期されます</span>
+                    </div>
+                    <div id='settings-presets-list' class='space-y-2'></div>
+                    <div class='bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2'>
+                        <p id='setting-preset-form-title' class='font-bold text-slate-700 text-[11px]'>＋ 新しいプリセットを追加</p>
+                        <input type='hidden' id='setting-preset-edit-id' value=''>
+                        <div class='grid grid-cols-1 sm:grid-cols-4 gap-2'>
+                            <input type='text' id='setting-preset-name' placeholder='プリセット名 (例: メルカリ大型)' class='sm:col-span-4 p-1.5 border border-slate-300 rounded bg-white'>
+                            <div>
+                                <label class='block text-[10px] text-slate-500 mb-0.5'>手数料 (%)</label>
+                                <input type='number' min='0' id='setting-preset-fee' value='10' class='w-full p-1.5 border border-slate-300 rounded bg-white'>
+                            </div>
+                            <div>
+                                <label class='block text-[10px] text-slate-500 mb-0.5'>送料 (円)</label>
+                                <input type='number' min='0' id='setting-preset-ship' value='210' class='w-full p-1.5 border border-slate-300 rounded bg-white'>
+                            </div>
+                            <div>
+                                <label class='block text-[10px] text-slate-500 mb-0.5'>経費 (円)</label>
+                                <input type='number' min='0' id='setting-preset-exp' value='55' class='w-full p-1.5 border border-slate-300 rounded bg-white'>
+                            </div>
+                            <div class='flex items-end gap-1'>
+                                <button type='button' onclick='savePresetFromForm()' class='flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1.5 px-2 rounded transition'>保存</button>
+                                <button type='button' onclick='resetPresetForm()' class='bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1.5 px-2 rounded transition'>クリア</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. タイトル用テンプレート -->
+                <div class='space-y-2.5'>
+                    <h4 class='font-bold text-slate-800 text-sm border-b border-slate-200 pb-1.5 flex items-center gap-1.5'>
+                        <i class='fa-solid fa-heading text-indigo-500'></i> タイトル用テンプレート
+                    </h4>
+                    <div id='settings-title-tpl-list' class='space-y-1.5'></div>
+                    <div class='bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2'>
+                        <p id='setting-title-tpl-form-title' class='font-bold text-slate-700 text-[11px]'>＋ タイトル定型文を追加</p>
+                        <input type='hidden' id='setting-title-tpl-edit-id' value=''>
+                        <div class='grid grid-cols-1 sm:grid-cols-2 gap-2'>
+                            <input type='text' id='setting-title-tpl-name' placeholder='表示名 (例: 美品タグ)' class='p-1.5 border border-slate-300 rounded bg-white'>
+                            <input type='text' id='setting-title-tpl-content' placeholder='挿入文字列 (例: 【美品】)' class='p-1.5 border border-slate-300 rounded bg-white'>
+                        </div>
+                        <div class='flex gap-2 justify-end'>
+                            <button type='button' onclick='resetTemplateForm(""title"")' class='bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded transition'>クリア</button>
+                            <button type='button' onclick='saveTemplateFromForm(""title"")' class='bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1 px-3 rounded transition'>保存</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. 商品説明用テンプレート -->
+                <div class='space-y-2.5'>
+                    <h4 class='font-bold text-slate-800 text-sm border-b border-slate-200 pb-1.5 flex items-center gap-1.5'>
+                        <i class='fa-solid fa-align-left text-emerald-600'></i> 商品説明用テンプレート
+                    </h4>
+                    <div id='settings-desc-tpl-list' class='space-y-1.5'></div>
+                    <div class='bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2'>
+                        <p id='setting-desc-tpl-form-title' class='font-bold text-slate-700 text-[11px]'>＋ 説明文定型文を追加</p>
+                        <input type='hidden' id='setting-desc-tpl-edit-id' value=''>
+                        <input type='text' id='setting-desc-tpl-name' placeholder='表示名 (例: 発送・ペットなし案内)' class='w-full p-1.5 border border-slate-300 rounded bg-white'>
+                        <textarea id='setting-desc-tpl-content' rows='3' placeholder='挿入する説明文本文...' class='w-full p-1.5 border border-slate-300 rounded bg-white'></textarea>
+                        <div class='flex gap-2 justify-end'>
+                            <button type='button' onclick='resetTemplateForm(""desc"")' class='bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded transition'>クリア</button>
+                            <button type='button' onclick='saveTemplateFromForm(""desc"")' class='bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1 px-3 rounded transition'>保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end'>
+                <button onclick='closeSettingsModal()' class='px-4 py-2 text-xs font-bold bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition'>閉じる</button>
+            </div>
+        </div>
+    </div>
+
     <!-- メインスクリプト -->
     <script>
         const AUTH_TOKEN = '"" + authToken + @""';
@@ -646,7 +768,10 @@ public static class DashboardHtml
                 { id: 'mercari', name: 'メルカリ (ネコポス/ゆうパケット)', feeRatePercent: 10, shippingCost: 210, expenseCost: 55 },
                 { id: 'rakuma', name: '楽天ラクマ (かんたんラクマパック)', feeRatePercent: 10, shippingCost: 180, expenseCost: 55 },
                 { id: 'yupaket_mini', name: 'ゆうパケットポストmini', feeRatePercent: 5, shippingCost: 160, expenseCost: 20 }
-            ]
+            ],
+            titleTemplates: [],
+            descriptionTemplates: [],
+            settingsUpdatedAt: 0
         };
 
         function parseNonNegInt(val, fallback) {
@@ -764,10 +889,315 @@ public static class DashboardHtml
                         defaultShippingCost: parseNonNegInt(data.defaultShippingCost, 210),
                         defaultExpenseCost: parseNonNegInt(data.defaultExpenseCost, 55),
                         activePresetId: data.activePresetId || 'yahoo_furima',
-                        presets: (Array.isArray(data.presets) && data.presets.length > 0) ? data.presets : pcSettings.presets
+                        presets: (Array.isArray(data.presets) && data.presets.length > 0) ? data.presets : pcSettings.presets,
+                        titleTemplates: Array.isArray(data.titleTemplates) ? data.titleTemplates : [],
+                        descriptionTemplates: Array.isArray(data.descriptionTemplates) ? data.descriptionTemplates : [],
+                        settingsUpdatedAt: data.settingsUpdatedAt || 0
                     };
+                    renderTemplateSelects();
                 }
             } catch (e) {}
+        }
+
+        function insertTextAtCursor(elementId, text) {
+            const el = document.getElementById(elementId);
+            if (!el || !text) return;
+            const val = el.value || '';
+            const start = (typeof el.selectionStart === 'number') ? el.selectionStart : val.length;
+            const end = (typeof el.selectionEnd === 'number') ? el.selectionEnd : val.length;
+            el.value = val.slice(0, start) + text + val.slice(end);
+            const newPos = start + text.length;
+            el.focus();
+            try { el.setSelectionRange(newPos, newPos); } catch (e) {}
+        }
+
+        function applyTemplateSelect(elementId, selectElem, isTitle) {
+            const idx = selectElem.selectedIndex;
+            if (idx <= 0) return;
+            const list = isTitle ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const tpl = list[idx - 1];
+            if (tpl && tpl.content) {
+                insertTextAtCursor(elementId, tpl.content);
+                if (isTitle) {
+                    const prefix = elementId.split('-')[0];
+                    checkTitleLength(prefix);
+                }
+            }
+            selectElem.selectedIndex = 0;
+        }
+
+        function renderTemplateSelects() {
+            const titleTpls = pcSettings.titleTemplates || [];
+            const descTpls = pcSettings.descriptionTemplates || [];
+            ['add-title-tpl-select', 'edit-title-tpl-select', 'merge-title-tpl-select'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.innerHTML = `<option value=''>タイトル定型文 (${titleTpls.length}件)...</option>` +
+                    titleTpls.map((t, i) => `<option value='${i}'>${escapeHtml(t.name)}</option>`).join('');
+            });
+            ['add-desc-tpl-select', 'edit-desc-tpl-select', 'merge-desc-tpl-select'].forEach(id => {
+                const sel = document.getElementById(id);
+                if (!sel) return;
+                sel.innerHTML = `<option value=''>説明定型文 (${descTpls.length}件)...</option>` +
+                    descTpls.map((t, i) => `<option value='${i}'>${escapeHtml(t.name)}</option>`).join('');
+            });
+        }
+
+        async function savePcSettingsPayload(nextSettings, toastMsg) {
+            try {
+                const res = await fetch('/api/settings', {
+                    method: 'PUT',
+                    headers: getHeaders(),
+                    body: JSON.stringify(nextSettings)
+                });
+                if (!res.ok) {
+                    alert('設定の保存に失敗しました (Status: ' + res.status + ')');
+                    return false;
+                }
+                const saved = await res.json();
+                pcSettings = {
+                    defaultFeeRatePercent: parseNonNegInt(saved.defaultFeeRatePercent, nextSettings.defaultFeeRatePercent),
+                    defaultShippingCost: parseNonNegInt(saved.defaultShippingCost, nextSettings.defaultShippingCost),
+                    defaultExpenseCost: parseNonNegInt(saved.defaultExpenseCost, nextSettings.defaultExpenseCost),
+                    activePresetId: saved.activePresetId || nextSettings.activePresetId,
+                    presets: (Array.isArray(saved.presets) && saved.presets.length > 0) ? saved.presets : nextSettings.presets,
+                    titleTemplates: Array.isArray(saved.titleTemplates) ? saved.titleTemplates : [],
+                    descriptionTemplates: Array.isArray(saved.descriptionTemplates) ? saved.descriptionTemplates : [],
+                    settingsUpdatedAt: saved.settingsUpdatedAt || Date.now()
+                };
+                renderSettingsModalLists();
+                renderTemplateSelects();
+                updateStats();
+                renderItems();
+                if (toastMsg) showToast(toastMsg);
+                return true;
+            } catch (e) {
+                alert('設定保存エラー: ' + e.message);
+                return false;
+            }
+        }
+
+        async function openSettingsModal() {
+            await fetchSettings();
+            resetPresetForm();
+            resetTemplateForm('title');
+            resetTemplateForm('desc');
+            renderSettingsModalLists();
+            document.getElementById('settings-modal').classList.remove('hidden');
+        }
+
+        function closeSettingsModal() {
+            document.getElementById('settings-modal').classList.add('hidden');
+        }
+
+        function renderSettingsModalLists() {
+            const pContainer = document.getElementById('settings-presets-list');
+            if (pContainer) {
+                const presets = pcSettings.presets || [];
+                pContainer.innerHTML = presets.map((p, idx) => {
+                    const isDef = p.id === pcSettings.activePresetId;
+                    return `<div class='flex items-center justify-between gap-2 p-2.5 rounded-lg border ${isDef ? 'bg-indigo-50 border-indigo-400' : 'bg-white border-slate-200'}'>
+                        <div class='min-w-0 flex-1'>
+                            <div class='flex items-center gap-1.5'>
+                                ${isDef ? `<span class='bg-indigo-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded'>★ デフォルト</span>` : ''}
+                                <span class='font-bold text-slate-800 truncate'>${escapeHtml(p.name)}</span>
+                            </div>
+                            <p class='text-[11px] text-slate-500 mt-0.5'>手数料 ${p.feeRatePercent}% / 送料 ¥${p.shippingCost} / 経費 ¥${p.expenseCost}</p>
+                        </div>
+                        <div class='flex items-center gap-1 shrink-0'>
+                            ${!isDef ? `<button type='button' onclick='setDefaultPresetByIndex(${idx})' class='px-2 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded text-[11px] font-bold transition'>標準にする</button>` : ''}
+                            <button type='button' onclick='editPresetByIndex(${idx})' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-bold transition' title='編集'><i class='fa-solid fa-pen'></i></button>
+                            ${presets.length > 1 ? `<button type='button' onclick='deletePresetByIndex(${idx})' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[11px] font-bold transition' title='削除'><i class='fa-solid fa-trash'></i></button>` : ''}
+                        </div>
+                    </div>`;
+                }).join('');
+            }
+
+            renderTemplateListHtml('settings-title-tpl-list', pcSettings.titleTemplates || [], 'title');
+            renderTemplateListHtml('settings-desc-tpl-list', pcSettings.descriptionTemplates || [], 'desc');
+        }
+
+        function renderTemplateListHtml(containerId, list, category) {
+            const el = document.getElementById(containerId);
+            if (!el) return;
+            if (!list || list.length === 0) {
+                el.innerHTML = `<p class='text-[11px] text-slate-400'>※ テンプレートはまだ登録されていません</p>`;
+                return;
+            }
+            el.innerHTML = list.map((t, idx) => `
+                <div class='flex items-center justify-between gap-2 p-2 rounded-lg border border-slate-200 bg-white'>
+                    <div class='min-w-0 flex-1'>
+                        <p class='font-bold text-slate-800 truncate'>${escapeHtml(t.name)}</p>
+                        <p class='text-[11px] text-slate-500 truncate'>${escapeHtml((t.content || '').replace(/\n/g, ' '))}</p>
+                    </div>
+                    <div class='flex items-center gap-1 shrink-0'>
+                        <button type='button' onclick='editTemplateByIndex(""${category}"", ${idx})' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[11px] font-bold transition'><i class='fa-solid fa-pen'></i></button>
+                        <button type='button' onclick='deleteTemplateByIndex(""${category}"", ${idx})' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[11px] font-bold transition'><i class='fa-solid fa-trash'></i></button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function setDefaultPresetByIndex(idx) {
+            const p = (pcSettings.presets || [])[idx];
+            if (!p) return;
+            const next = {
+                ...pcSettings,
+                activePresetId: p.id,
+                defaultFeeRatePercent: p.feeRatePercent,
+                defaultShippingCost: p.shippingCost,
+                defaultExpenseCost: p.expenseCost
+            };
+            await savePcSettingsPayload(next, '「' + p.name + '」をデフォルトに設定しました');
+        }
+
+        function editPresetByIndex(idx) {
+            const p = (pcSettings.presets || [])[idx];
+            if (!p) return;
+            document.getElementById('setting-preset-edit-id').value = p.id;
+            document.getElementById('setting-preset-name').value = p.name;
+            document.getElementById('setting-preset-fee').value = p.feeRatePercent;
+            document.getElementById('setting-preset-ship').value = p.shippingCost;
+            document.getElementById('setting-preset-exp').value = p.expenseCost;
+            document.getElementById('setting-preset-form-title').innerText = '✎ プリセットを編集中';
+        }
+
+        function resetPresetForm() {
+            document.getElementById('setting-preset-edit-id').value = '';
+            document.getElementById('setting-preset-name').value = '';
+            document.getElementById('setting-preset-fee').value = '10';
+            document.getElementById('setting-preset-ship').value = '210';
+            document.getElementById('setting-preset-exp').value = '55';
+            document.getElementById('setting-preset-form-title').innerText = '＋ 新しいプリセットを追加';
+        }
+
+        async function savePresetFromForm() {
+            const editId = document.getElementById('setting-preset-edit-id').value.trim();
+            const name = document.getElementById('setting-preset-name').value.trim();
+            const fee = parseNonNegInt(document.getElementById('setting-preset-fee').value, 5);
+            const ship = parseNonNegInt(document.getElementById('setting-preset-ship').value, 210);
+            const exp = parseNonNegInt(document.getElementById('setting-preset-exp').value, 55);
+            if (!name) {
+                alert('プリセット名を入力してください');
+                return;
+            }
+            const nextPresets = (pcSettings.presets || []).map(p => ({ ...p }));
+            let nextActiveId = pcSettings.activePresetId;
+            let defFee = pcSettings.defaultFeeRatePercent;
+            let defShip = pcSettings.defaultShippingCost;
+            let defExp = pcSettings.defaultExpenseCost;
+
+            if (editId) {
+                const idx = nextPresets.findIndex(p => p.id === editId);
+                if (idx >= 0) {
+                    nextPresets[idx] = { id: editId, name, feeRatePercent: fee, shippingCost: ship, expenseCost: exp };
+                }
+                if (nextActiveId === editId) {
+                    defFee = fee;
+                    defShip = ship;
+                    defExp = exp;
+                }
+            } else {
+                const newId = 'custom_' + Date.now();
+                nextPresets.push({ id: newId, name, feeRatePercent: fee, shippingCost: ship, expenseCost: exp });
+                nextActiveId = newId;
+                defFee = fee;
+                defShip = ship;
+                defExp = exp;
+            }
+            const ok = await savePcSettingsPayload({
+                ...pcSettings,
+                activePresetId: nextActiveId,
+                defaultFeeRatePercent: defFee,
+                defaultShippingCost: defShip,
+                defaultExpenseCost: defExp,
+                presets: nextPresets
+            }, editId ? 'プリセットを更新しました' : 'プリセットを追加しデフォルトに設定しました');
+            if (ok) resetPresetForm();
+        }
+
+        async function deletePresetByIndex(idx) {
+            const presets = pcSettings.presets || [];
+            if (presets.length <= 1) {
+                alert('最低1件のプリセットを残す必要があります');
+                return;
+            }
+            const target = presets[idx];
+            if (!target || !confirm('プリセット「' + target.name + '」を削除しますか？')) return;
+            const nextPresets = presets.filter((_, i) => i !== idx);
+            let nextActiveId = pcSettings.activePresetId;
+            let defFee = pcSettings.defaultFeeRatePercent;
+            let defShip = pcSettings.defaultShippingCost;
+            let defExp = pcSettings.defaultExpenseCost;
+            if (target.id === nextActiveId) {
+                nextActiveId = nextPresets[0].id;
+                defFee = nextPresets[0].feeRatePercent;
+                defShip = nextPresets[0].shippingCost;
+                defExp = nextPresets[0].expenseCost;
+            }
+            await savePcSettingsPayload({
+                ...pcSettings,
+                activePresetId: nextActiveId,
+                defaultFeeRatePercent: defFee,
+                defaultShippingCost: defShip,
+                defaultExpenseCost: defExp,
+                presets: nextPresets
+            }, 'プリセットを削除しました');
+        }
+
+        function editTemplateByIndex(category, idx) {
+            const list = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const tpl = list[idx];
+            if (!tpl) return;
+            document.getElementById('setting-' + category + '-tpl-edit-id').value = tpl.id;
+            document.getElementById('setting-' + category + '-tpl-name').value = tpl.name;
+            document.getElementById('setting-' + category + '-tpl-content').value = tpl.content;
+            document.getElementById('setting-' + category + '-tpl-form-title').innerText = '✎ 定型文を編集中';
+        }
+
+        function resetTemplateForm(category) {
+            document.getElementById('setting-' + category + '-tpl-edit-id').value = '';
+            document.getElementById('setting-' + category + '-tpl-name').value = '';
+            document.getElementById('setting-' + category + '-tpl-content').value = '';
+            document.getElementById('setting-' + category + '-tpl-form-title').innerText = category === 'title' ? '＋ タイトル定型文を追加' : '＋ 説明文定型文を追加';
+        }
+
+        async function saveTemplateFromForm(category) {
+            const editId = document.getElementById('setting-' + category + '-tpl-edit-id').value.trim();
+            const name = document.getElementById('setting-' + category + '-tpl-name').value.trim();
+            const content = document.getElementById('setting-' + category + '-tpl-content').value;
+            if (!name || !content) {
+                alert('表示名と挿入テキストを入力してください');
+                return;
+            }
+            const currentList = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const nextList = currentList.map(t => ({ ...t }));
+            if (editId) {
+                const idx = nextList.findIndex(t => t.id === editId);
+                if (idx >= 0) nextList[idx] = { id: editId, name, content };
+            } else {
+                nextList.push({ id: 'tpl_' + Date.now(), name, content });
+            }
+            const next = {
+                ...pcSettings,
+                titleTemplates: category === 'title' ? nextList : (pcSettings.titleTemplates || []),
+                descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || [])
+            };
+            const ok = await savePcSettingsPayload(next, 'テンプレートを保存しました');
+            if (ok) resetTemplateForm(category);
+        }
+
+        async function deleteTemplateByIndex(category, idx) {
+            const currentList = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const target = currentList[idx];
+            if (!target || !confirm('テンプレート「' + target.name + '」を削除しますか？')) return;
+            const nextList = currentList.filter((_, i) => i !== idx);
+            const next = {
+                ...pcSettings,
+                titleTemplates: category === 'title' ? nextList : (pcSettings.titleTemplates || []),
+                descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || [])
+            };
+            await savePcSettingsPayload(next, 'テンプレートを削除しました');
         }
 
         async function fetchItems() {
@@ -1214,7 +1644,8 @@ public static class DashboardHtml
             renderViewerPhotos();
         }
 
-        function openMergeModal() {
+        async function openMergeModal() {
+            await fetchSettings();
             if (selectedItemIds.size < 2) {
                 alert('まとめ出品を作成するには、2点以上の商品を選択してください。');
                 return;
@@ -1235,6 +1666,7 @@ public static class DashboardHtml
             const breakdown = selectedItems.map(i => '- ' + i.title + ' (¥' + (i.price || 0).toLocaleString() + ')').join('\n');
             document.getElementById('merge-description').value = '【まとめ買い対象商品 (' + totalSubItems + '点)】\n' + breakdown + '\n\n--- 商品説明 ---\nそれぞれの商品の状態は個別写真をご確認ください。個別でのご購入よりお安く設定しております。';
 
+            renderTemplateSelects();
             updateMergeCalculations();
             document.getElementById('merge-modal').classList.remove('hidden');
         }

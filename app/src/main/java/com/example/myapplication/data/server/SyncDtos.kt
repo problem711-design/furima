@@ -45,12 +45,22 @@ data class SyncFeePresetDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class SyncTextTemplateDto(
+    @param:Json(name = "id") val id: String,
+    @param:Json(name = "name") val name: String,
+    @param:Json(name = "content") val content: String
+)
+
+@JsonClass(generateAdapter = true)
 data class SyncSettingsDto(
     @param:Json(name = "defaultFeeRatePercent") val defaultFeeRatePercent: Int,
     @param:Json(name = "defaultShippingCost") val defaultShippingCost: Int,
     @param:Json(name = "defaultExpenseCost") val defaultExpenseCost: Int,
     @param:Json(name = "activePresetId") val activePresetId: String,
-    @param:Json(name = "presets") val presets: List<SyncFeePresetDto>
+    @param:Json(name = "presets") val presets: List<SyncFeePresetDto>,
+    @param:Json(name = "titleTemplates") val titleTemplates: List<SyncTextTemplateDto> = emptyList(),
+    @param:Json(name = "descriptionTemplates") val descriptionTemplates: List<SyncTextTemplateDto> = emptyList(),
+    @param:Json(name = "settingsUpdatedAt") val settingsUpdatedAt: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)

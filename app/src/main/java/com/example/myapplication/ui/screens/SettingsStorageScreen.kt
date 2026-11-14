@@ -1,8 +1,7 @@
 package com.example.myapplication.ui.screens
 
-import android.os.Build
 import android.widget.Toast
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,14 +21,14 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CleaningServices
-import androidx.compose.material.icons.filled.DeleteSweep
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -62,6 +61,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myapplication.BuildConfig
@@ -70,10 +70,13 @@ import com.example.myapplication.data.ThumbnailCompressionEstimate
 import com.example.myapplication.data.ThumbnailStorageStats
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.FeePreset
+import com.example.myapplication.data.local.TextTemplate
 import com.example.myapplication.ui.FleaMarketViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
+
+private enum class TemplateCategory { TITLE, DESCRIPTION }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -89,6 +92,12 @@ fun SettingsStorageScreen(
     val presetsList = remember(currentSettings) {
         mutableStateListOf<FeePreset>().apply { addAll(currentSettings.presets) }
     }
+    val titleTemplatesList = remember(currentSettings) {
+        mutableStateListOf<TextTemplate>().apply { addAll(currentSettings.titleTemplates) }
+    }
+    val descriptionTemplatesList = remember(currentSettings) {
+        mutableStateListOf<TextTemplate>().apply { addAll(currentSettings.descriptionTemplates) }
+    }
 
     var feeRateText by remember(currentSettings) { mutableStateOf(currentSettings.defaultFeeRatePercent.toString()) }
     var shippingCostText by remember(currentSettings) { mutableStateOf(currentSettings.defaultShippingCost.toString()) }
@@ -102,7 +111,48 @@ fun SettingsStorageScreen(
     var compressionEstimate by remember { mutableStateOf(ThumbnailCompressionEstimate()) }
 
     var showAddPresetDialog by remember { mutableStateOf(false) }
+    var presetToEdit by remember { mutableStateOf<FeePreset?>(null) }
     var presetToDelete by remember { mutableStateOf<FeePreset?>(null) }
+
+    var editingTemplateCategory by remember { mutableStateOf<TemplateCategory?>(null) }
+    var templateToEdit by remember { mutableStateOf<TextTemplate?>(null) }
+    var templateToDelete by remember { mutableStateOf<Pair<TemplateCategory, TextTemplate>?>(null) }
+
+    fun persistSettingsNow(
+        targetPresets: List<FeePreset> = presetsList.toList(),
+        targetActiveId: String = activePresetId,
+        targetFee: Int = feeRateText.toIntOrNull() ?: currentSettings.defaultFeeRatePercent,
+        targetShipping: Int = shippingCostText.toIntOrNull() ?: currentSettings.defaultShippingCost,
+        targetExpense: Int = expenseCostText.toIntOrNull() ?: currentSettings.defaultExpenseCost,
+        targetTitleTemplates: List<TextTemplate> = titleTemplatesList.toList(),
+        targetDescTemplates: List<TextTemplate> = descriptionTemplatesList.toList()
+    ) {
+        val safeFee = targetFee.coerceAtLeast(0)
+        val safeShip = targetShipping.coerceAtLeast(0)
+        val safeExp = targetExpense.coerceAtLeast(0)
+        val syncedPresets = targetPresets.map { p ->
+            if (p.id == targetActiveId) {
+                p.copy(feeRatePercent = safeFee, shippingCost = safeShip, expenseCost = safeExp)
+            } else {
+                p
+            }
+        }.ifEmpty { DefaultSettings.defaultPresets }
+
+        viewModel.updateDefaultSettings(
+            DefaultSettings(
+                defaultFeeRatePercent = safeFee,
+                defaultShippingCost = safeShip,
+                defaultExpenseCost = safeExp,
+                thumbnailQuality = thumbQuality.toInt(),
+                thumbnailMaxDimension = thumbDim,
+                autoCleanupSoldDays = cleanupDays,
+                activePresetId = targetActiveId,
+                presets = syncedPresets,
+                titleTemplates = targetTitleTemplates,
+                descriptionTemplates = targetDescTemplates
+            )
+        )
+    }
 
     // アプリバージョン情報の取得 (BuildConfig優先)
     val versionName = remember { BuildConfig.VERSION_NAME }
@@ -128,6 +178,7 @@ fun SettingsStorageScreen(
         }
     }
 
+    // プリセット追加ダイアログ
     if (showAddPresetDialog) {
         var newName by remember { mutableStateOf("") }
         var newFeeText by remember { mutableStateOf("10") }
@@ -144,7 +195,7 @@ fun SettingsStorageScreen(
                         onValueChange = { newName = it },
                         label = { Text("プリセット名 (例: メルカリ大型)") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("preset_add_name_input")
                     )
                     OutlinedTextField(
                         value = newFeeText,
@@ -152,7 +203,7 @@ fun SettingsStorageScreen(
                         label = { Text("販売手数料率 (%)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("preset_add_fee_input")
                     )
                     OutlinedTextField(
                         value = newShippingText,
@@ -160,7 +211,7 @@ fun SettingsStorageScreen(
                         label = { Text("送料 (円)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("preset_add_shipping_input")
                     )
                     OutlinedTextField(
                         value = newExpenseText,
@@ -168,7 +219,7 @@ fun SettingsStorageScreen(
                         label = { Text("梱包資材費・経費 (円)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().testTag("preset_add_expense_input")
                     )
                 }
             },
@@ -179,9 +230,9 @@ fun SettingsStorageScreen(
                             val newPreset = FeePreset(
                                 id = "custom_${System.currentTimeMillis()}",
                                 name = newName.trim(),
-                                feeRatePercent = newFeeText.toIntOrNull() ?: 10,
-                                shippingCost = newShippingText.toIntOrNull() ?: 210,
-                                expenseCost = newExpenseText.toIntOrNull() ?: 55
+                                feeRatePercent = (newFeeText.toIntOrNull() ?: 10).coerceAtLeast(0),
+                                shippingCost = (newShippingText.toIntOrNull() ?: 210).coerceAtLeast(0),
+                                expenseCost = (newExpenseText.toIntOrNull() ?: 55).coerceAtLeast(0)
                             )
                             presetsList.add(newPreset)
                             activePresetId = newPreset.id
@@ -189,11 +240,20 @@ fun SettingsStorageScreen(
                             shippingCostText = newPreset.shippingCost.toString()
                             expenseCostText = newPreset.expenseCost.toString()
                             showAddPresetDialog = false
-                            Toast.makeText(context, "「${newPreset.name}」プリセットを追加しました", Toast.LENGTH_SHORT).show()
+                            persistSettingsNow(
+                                targetPresets = presetsList.toList(),
+                                targetActiveId = newPreset.id,
+                                targetFee = newPreset.feeRatePercent,
+                                targetShipping = newPreset.shippingCost,
+                                targetExpense = newPreset.expenseCost
+                            )
+                            Toast.makeText(context, "「${newPreset.name}」を追加しデフォルトに設定しました", Toast.LENGTH_SHORT).show()
                         }
-                    }
+                    },
+                    enabled = newName.isNotBlank(),
+                    modifier = Modifier.testTag("confirm_add_preset_button")
                 ) {
-                    Text("追加する")
+                    Text("追加してデフォルトにする")
                 }
             },
             dismissButton = {
@@ -204,10 +264,90 @@ fun SettingsStorageScreen(
         )
     }
 
+    // プリセット編集ダイアログ
+    presetToEdit?.let { target ->
+        var editName by remember(target.id) { mutableStateOf(target.name) }
+        var editFeeText by remember(target.id) { mutableStateOf(target.feeRatePercent.toString()) }
+        var editShippingText by remember(target.id) { mutableStateOf(target.shippingCost.toString()) }
+        var editExpenseText by remember(target.id) { mutableStateOf(target.expenseCost.toString()) }
 
+        AlertDialog(
+            onDismissRequest = { presetToEdit = null },
+            title = { Text("プリセットを編集") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = editName,
+                        onValueChange = { editName = it },
+                        label = { Text("プリセット名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("preset_edit_name_input")
+                    )
+                    OutlinedTextField(
+                        value = editFeeText,
+                        onValueChange = { editFeeText = it },
+                        label = { Text("販売手数料率 (%)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("preset_edit_fee_input")
+                    )
+                    OutlinedTextField(
+                        value = editShippingText,
+                        onValueChange = { editShippingText = it },
+                        label = { Text("送料 (円)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("preset_edit_shipping_input")
+                    )
+                    OutlinedTextField(
+                        value = editExpenseText,
+                        onValueChange = { editExpenseText = it },
+                        label = { Text("梱包資材費・経費 (円)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("preset_edit_expense_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editName.isNotBlank()) {
+                            val updatedPreset = target.copy(
+                                name = editName.trim(),
+                                feeRatePercent = (editFeeText.toIntOrNull() ?: target.feeRatePercent).coerceAtLeast(0),
+                                shippingCost = (editShippingText.toIntOrNull() ?: target.shippingCost).coerceAtLeast(0),
+                                expenseCost = (editExpenseText.toIntOrNull() ?: target.expenseCost).coerceAtLeast(0)
+                            )
+                            val idx = presetsList.indexOfFirst { it.id == target.id }
+                            if (idx >= 0) {
+                                presetsList[idx] = updatedPreset
+                            }
+                            if (activePresetId == target.id) {
+                                feeRateText = updatedPreset.feeRatePercent.toString()
+                                shippingCostText = updatedPreset.shippingCost.toString()
+                                expenseCostText = updatedPreset.expenseCost.toString()
+                            }
+                            presetToEdit = null
+                            persistSettingsNow(targetPresets = presetsList.toList())
+                            Toast.makeText(context, "プリセットを更新しました", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = editName.isNotBlank(),
+                    modifier = Modifier.testTag("confirm_edit_preset_button")
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { presetToEdit = null }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
 
-
-
+    // プリセット削除ダイアログ
     presetToDelete?.let { preset ->
         AlertDialog(
             onDismissRequest = { presetToDelete = null },
@@ -217,23 +357,149 @@ fun SettingsStorageScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        presetsList.remove(preset)
-                        if (activePresetId == preset.id) {
-                            val fallback = presetsList.firstOrNull() ?: DefaultSettings.defaultPresets.first()
-                            activePresetId = fallback.id
-                            feeRateText = fallback.feeRatePercent.toString()
-                            shippingCostText = fallback.shippingCost.toString()
-                            expenseCostText = fallback.expenseCost.toString()
+                        if (presetsList.size > 1) {
+                            presetsList.removeAll { it.id == preset.id }
+                            if (activePresetId == preset.id) {
+                                val fallback = presetsList.first()
+                                activePresetId = fallback.id
+                                feeRateText = fallback.feeRatePercent.toString()
+                                shippingCostText = fallback.shippingCost.toString()
+                                expenseCostText = fallback.expenseCost.toString()
+                            }
+                            persistSettingsNow(targetPresets = presetsList.toList())
+                            Toast.makeText(context, "プリセットを削除しました", Toast.LENGTH_SHORT).show()
                         }
                         presetToDelete = null
-                        Toast.makeText(context, "プリセットを削除しました", Toast.LENGTH_SHORT).show()
-                    }
+                    },
+                    modifier = Modifier.testTag("confirm_delete_preset_button")
                 ) {
                     Text("削除する")
                 }
             },
             dismissButton = {
                 TextButton(onClick = { presetToDelete = null }) { Text("キャンセル") }
+            }
+        )
+    }
+
+    // テンプレート追加・編集ダイアログ
+    val activeTplCategory = editingTemplateCategory
+    if (activeTplCategory != null) {
+        val editing = templateToEdit
+        var tplName by remember(activeTplCategory, editing?.id) { mutableStateOf(editing?.name ?: "") }
+        var tplContent by remember(activeTplCategory, editing?.id) { mutableStateOf(editing?.content ?: "") }
+        val isTitleCategory = (activeTplCategory == TemplateCategory.TITLE)
+
+        AlertDialog(
+            onDismissRequest = {
+                editingTemplateCategory = null
+                templateToEdit = null
+            },
+            title = {
+                Text(
+                    when {
+                        editing != null && isTitleCategory -> "タイトルテンプレートを編集"
+                        editing != null -> "商品説明テンプレートを編集"
+                        isTitleCategory -> "タイトルテンプレートを追加"
+                        else -> "商品説明テンプレートを追加"
+                    }
+                )
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = tplName,
+                        onValueChange = { tplName = it },
+                        label = { Text("表示名 (例: 美品タグ / 発送定型文)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("template_name_input")
+                    )
+                    OutlinedTextField(
+                        value = tplContent,
+                        onValueChange = { tplContent = it },
+                        label = { Text(if (isTitleCategory) "挿入するタイトル文字列" else "挿入する説明文本文") },
+                        singleLine = isTitleCategory,
+                        minLines = if (isTitleCategory) 1 else 3,
+                        maxLines = if (isTitleCategory) 2 else 8,
+                        modifier = Modifier.fillMaxWidth().testTag("template_content_input")
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (tplName.isNotBlank() && tplContent.isNotEmpty()) {
+                            val targetList = if (isTitleCategory) titleTemplatesList else descriptionTemplatesList
+                            if (editing != null) {
+                                val updated = editing.copy(name = tplName.trim(), content = tplContent)
+                                val idx = targetList.indexOfFirst { it.id == editing.id }
+                                if (idx >= 0) targetList[idx] = updated
+                            } else {
+                                targetList.add(
+                                    TextTemplate(
+                                        id = "tpl_${System.currentTimeMillis()}",
+                                        name = tplName.trim(),
+                                        content = tplContent
+                                    )
+                                )
+                            }
+                            editingTemplateCategory = null
+                            templateToEdit = null
+                            persistSettingsNow(
+                                targetTitleTemplates = titleTemplatesList.toList(),
+                                targetDescTemplates = descriptionTemplatesList.toList()
+                            )
+                            Toast.makeText(context, "テンプレートを保存・同期しました", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    enabled = tplName.isNotBlank() && tplContent.isNotEmpty(),
+                    modifier = Modifier.testTag("confirm_save_template_button")
+                ) {
+                    Text("保存")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        editingTemplateCategory = null
+                        templateToEdit = null
+                    }
+                ) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
+    // テンプレート削除ダイアログ
+    templateToDelete?.let { (category, tpl) ->
+        AlertDialog(
+            onDismissRequest = { templateToDelete = null },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red) },
+            title = { Text("テンプレートの削除") },
+            text = { Text("「${tpl.name}」を削除しますか？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (category == TemplateCategory.TITLE) {
+                            titleTemplatesList.removeAll { it.id == tpl.id }
+                        } else {
+                            descriptionTemplatesList.removeAll { it.id == tpl.id }
+                        }
+                        templateToDelete = null
+                        persistSettingsNow(
+                            targetTitleTemplates = titleTemplatesList.toList(),
+                            targetDescTemplates = descriptionTemplatesList.toList()
+                        )
+                        Toast.makeText(context, "テンプレートを削除しました", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.testTag("confirm_delete_template_button")
+                ) {
+                    Text("削除する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { templateToDelete = null }) { Text("キャンセル") }
             }
         )
     }
@@ -268,7 +534,7 @@ fun SettingsStorageScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. 基本費用設定 ＆ プリセット機能
+            // 1. 基本費用設定 ＆ デフォルトプリセット管理
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -280,59 +546,136 @@ fun SettingsStorageScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             Icon(imageVector = Icons.Default.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("⚙️ 基本費用設定 & プリセット", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            Text("基本費用設定 & プリセット", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
 
-                        IconButton(
+                        OutlinedButton(
                             onClick = { showAddPresetDialog = true },
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.testTag("add_preset_button")
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = "プリセット追加", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("追加", fontSize = 12.sp)
                         }
                     }
 
                     Text(
-                        text = "出品モール（Yahoo!フリマ、メルカリ、ラクマ等）に応じた手数料・送料プリセットを選択できます。",
+                        text = "新規出品時に標準適用されるデフォルトプリセットの選択・値編集・削除が行えます（変更すると即座にPCへ同期されます）。",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                        modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                        modifier = Modifier.padding(top = 4.dp, bottom = 10.dp)
                     )
 
-                    // プリセット切り替えチップ
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         presetsList.forEach { preset ->
                             val isSelected = (activePresetId == preset.id)
-                            val isDefault = DefaultSettings.defaultPresets.any { it.id == preset.id }
-                            FilterChip(
-                                selected = isSelected,
-                                onClick = {
-                                    activePresetId = preset.id
-                                    feeRateText = preset.feeRatePercent.toString()
-                                    shippingCostText = preset.shippingCost.toString()
-                                    expenseCostText = preset.expenseCost.toString()
-                                },
-                                label = { Text(preset.name, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) },
-                                leadingIcon = if (isSelected) {
-                                    { Icon(Icons.Default.Bookmark, contentDescription = null, modifier = Modifier.size(12.dp)) }
-                                } else null,
-                                trailingIcon = if (!isDefault) {
-                                    {
-                                        IconButton(
-                                            onClick = { presetToDelete = preset },
-                                            modifier = Modifier.size(16.dp)
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(
+                                    width = if (isSelected) 1.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                )
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            if (isSelected) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Star,
+                                                    contentDescription = "現在のデフォルト",
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                            }
+                                            Text(
+                                                text = preset.name,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Text(
+                                            text = "手数料 ${preset.feeRatePercent}% / 送料 ¥${preset.shippingCost} / 経費 ¥${preset.expenseCost}",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (!isSelected) {
+                                        TextButton(
+                                            onClick = {
+                                                activePresetId = preset.id
+                                                feeRateText = preset.feeRatePercent.toString()
+                                                shippingCostText = preset.shippingCost.toString()
+                                                expenseCostText = preset.expenseCost.toString()
+                                                persistSettingsNow(
+                                                    targetActiveId = preset.id,
+                                                    targetFee = preset.feeRatePercent,
+                                                    targetShipping = preset.shippingCost,
+                                                    targetExpense = preset.expenseCost
+                                                )
+                                                Toast.makeText(context, "「${preset.name}」をデフォルトに変更しました", Toast.LENGTH_SHORT).show()
+                                            },
+                                            modifier = Modifier.testTag("set_default_preset_${preset.id}")
                                         ) {
-                                            Icon(Icons.Default.Close, contentDescription = "削除", modifier = Modifier.size(12.dp))
+                                            Text("標準にする", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    } else {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primary,
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = "デフォルト",
+                                                color = MaterialTheme.colorScheme.onPrimary,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                                            )
                                         }
                                     }
-                                } else null
-                            )
+
+                                    IconButton(
+                                        onClick = { presetToEdit = preset },
+                                        modifier = Modifier.testTag("edit_preset_${preset.id}")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "プリセットを編集",
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+
+                                    if (presetsList.size > 1) {
+                                        IconButton(
+                                            onClick = { presetToDelete = preset },
+                                            modifier = Modifier.testTag("delete_preset_${preset.id}")
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Delete,
+                                                contentDescription = "プリセットを削除",
+                                                tint = MaterialTheme.colorScheme.error,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
@@ -363,7 +706,113 @@ fun SettingsStorageScreen(
                 }
             }
 
-            // 2. 売上データのエクスポート (PC連携から移設)
+            // 2. タイトル・商品説明テンプレート管理
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(imageVector = Icons.Default.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("タイトル・商品説明テンプレート", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    }
+                    Text(
+                        text = "出品編集画面やまとめ買い作成画面でカーソル位置へワンタップ挿入できる定型文を管理します（PC管理画面とも自動同期）。",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                    )
+
+                    // タイトル用テンプレート
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("タイトル用テンプレート (${titleTemplatesList.size}件)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        OutlinedButton(
+                            onClick = {
+                                templateToEdit = null
+                                editingTemplateCategory = TemplateCategory.TITLE
+                            },
+                            modifier = Modifier.testTag("add_title_template_button")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("追加", fontSize = 12.sp)
+                        }
+                    }
+
+                    if (titleTemplatesList.isEmpty()) {
+                        Text(
+                            text = "※ 未登録です（例：【美品】【即購入OK】など）",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            titleTemplatesList.forEach { tpl ->
+                                TemplateRowItem(
+                                    template = tpl,
+                                    onEdit = {
+                                        templateToEdit = tpl
+                                        editingTemplateCategory = TemplateCategory.TITLE
+                                    },
+                                    onDelete = {
+                                        templateToDelete = Pair(TemplateCategory.TITLE, tpl)
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // 商品説明用テンプレート
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("商品説明用テンプレート (${descriptionTemplatesList.size}件)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        OutlinedButton(
+                            onClick = {
+                                templateToEdit = null
+                                editingTemplateCategory = TemplateCategory.DESCRIPTION
+                            },
+                            modifier = Modifier.testTag("add_desc_template_button")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("追加", fontSize = 12.sp)
+                        }
+                    }
+
+                    if (descriptionTemplatesList.isEmpty()) {
+                        Text(
+                            text = "※ 未登録です（例：ペット・喫煙者なし / 防水梱包発送など）",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            descriptionTemplatesList.forEach { tpl ->
+                                TemplateRowItem(
+                                    template = tpl,
+                                    onEdit = {
+                                        templateToEdit = tpl
+                                        editingTemplateCategory = TemplateCategory.DESCRIPTION
+                                    },
+                                    onDelete = {
+                                        templateToDelete = Pair(TemplateCategory.DESCRIPTION, tpl)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. 売上データのエクスポート
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -373,7 +822,7 @@ fun SettingsStorageScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(imageVector = Icons.Default.FileDownload, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("📊 売上データのCSVエクスポート", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("売上データのCSVエクスポート", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                     Text(
                         text = "出品商品・売却履歴・利益計算の全データをCSV形式で出力し、ExcelやGoogleスプレッドシート等で管理できます。",
@@ -393,7 +842,7 @@ fun SettingsStorageScreen(
                 }
             }
 
-            // 3. 写真ストレージ管理（PC母艦同期連携）
+            // 4. 写真ストレージ管理（PC母艦同期連携）
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -403,7 +852,7 @@ fun SettingsStorageScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(imageVector = Icons.Default.CleaningServices, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("📷 写真ストレージ管理方針", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("写真ストレージ管理方針", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                     Text(
                         text = "PCへ同期が完了した出品写真は、スマホ端末内では自動的に軽量サムネイルに切り替わり、スマホの空き容量を最大化します。高画質原本の長期保存や売却済み写真のデータクリーンアップは、PC母艦ブラウザ管理画面からワンクリックで安全に実行できます。",
@@ -414,7 +863,7 @@ fun SettingsStorageScreen(
                 }
             }
 
-            // 4. サムネイル圧縮率・画質設定
+            // 5. サムネイル圧縮率・画質設定
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
@@ -424,7 +873,7 @@ fun SettingsStorageScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(imageVector = Icons.Default.PhotoSizeSelectLarge, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("🖼 サムネイル保存画質設定", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                        Text("サムネイル保存画質設定", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     }
                     Text(
                         text = "一覧表示用サムネイルの保存品質を調整できます。スマホの容量やカメラ性能に合わせて選択してください。",
@@ -469,7 +918,7 @@ fun SettingsStorageScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             Text(
-                                text = "💾 容量シミュレーション & 端末内使用量",
+                                text = "容量シミュレーション & 端末内使用量",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.primary
@@ -502,32 +951,25 @@ fun SettingsStorageScreen(
             // 設定保存ボタン
             Button(
                 onClick = {
-                    val fee = feeRateText.toIntOrNull() ?: 5
-                    val shipping = shippingCostText.toIntOrNull() ?: 210
-                    val expense = expenseCostText.toIntOrNull() ?: 55
+                    val fee = (feeRateText.toIntOrNull() ?: 5).coerceAtLeast(0)
+                    val shipping = (shippingCostText.toIntOrNull() ?: 210).coerceAtLeast(0)
+                    val expense = (expenseCostText.toIntOrNull() ?: 55).coerceAtLeast(0)
 
-                    // アクティブプリセットの値を同期更新
-                    val updatedPresets = presetsList.map { p ->
-                        if (p.id == activePresetId) {
-                            p.copy(feeRatePercent = fee, shippingCost = shipping, expenseCost = expense)
-                        } else p
-                    }
-
-                    viewModel.updateDefaultSettings(
-                        DefaultSettings(
-                            defaultFeeRatePercent = fee.coerceAtLeast(0),
-                            defaultShippingCost = shipping.coerceAtLeast(0),
-                            defaultExpenseCost = expense.coerceAtLeast(0),
-                            thumbnailQuality = thumbQuality.toInt(),
-                            thumbnailMaxDimension = thumbDim,
-                            autoCleanupSoldDays = cleanupDays,
-                            activePresetId = activePresetId,
-                            presets = updatedPresets
-                        )
+                    persistSettingsNow(
+                        targetPresets = presetsList.toList(),
+                        targetActiveId = activePresetId,
+                        targetFee = fee,
+                        targetShipping = shipping,
+                        targetExpense = expense,
+                        targetTitleTemplates = titleTemplatesList.toList(),
+                        targetDescTemplates = descriptionTemplatesList.toList()
                     )
                     Toast.makeText(context, "設定を保存しました", Toast.LENGTH_SHORT).show()
                 },
-                modifier = Modifier.fillMaxWidth().height(48.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("save_settings_button"),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Text("設定を保存する", fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -553,6 +995,65 @@ fun SettingsStorageScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TemplateRowItem(
+    template: TextTemplate,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = template.name,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = template.content.replace("\n", " "),
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onEdit,
+                modifier = Modifier.testTag("edit_template_${template.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Edit,
+                    contentDescription = "テンプレートを編集",
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            IconButton(
+                onClick = onDelete,
+                modifier = Modifier.testTag("delete_template_${template.id}")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "テンプレートを削除",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

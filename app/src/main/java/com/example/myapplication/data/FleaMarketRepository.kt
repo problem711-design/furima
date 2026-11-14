@@ -22,8 +22,8 @@ class FleaMarketRepository(private val context: Context) {
 
     val defaultSettings: StateFlow<DefaultSettings> = defaultSettingsManager.settings
 
-    fun updateDefaultSettings(newSettings: DefaultSettings) {
-        defaultSettingsManager.updateSettings(newSettings)
+    fun updateDefaultSettings(newSettings: DefaultSettings, stampNow: Boolean = true) {
+        defaultSettingsManager.updateSettings(newSettings, stampNow)
     }
 
     fun getAllActiveItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getAllActiveItemsWithPhotos()

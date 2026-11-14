@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -54,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,13 +67,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.myapplication.data.PhotoStorageManager
+import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
+import com.example.myapplication.ui.components.PhotoPreviewDialog
+import com.example.myapplication.ui.components.PreviewPhotoItem
+import com.example.myapplication.ui.components.toPreviewPhotoItem
 import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
@@ -84,9 +93,12 @@ fun ItemEditScreen(
 ) {
     val context = LocalContext.current
     val defaultSettings by viewModel.defaultSettings.collectAsState()
+    val isPcServerConnected by viewModel.isPcServerConnected.collectAsState()
 
-    var title by remember { mutableStateOf("") }
-    var description by remember { mutableStateOf("") }
+    var titleFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    var descriptionFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    val title = titleFieldValue.text
+    val description = descriptionFieldValue.text
     var priceText by remember { mutableStateOf("") }
     var soldPriceText by remember { mutableStateOf("") }
     var status by remember { mutableStateOf("DRAFT") }
@@ -114,6 +126,8 @@ fun ItemEditScreen(
     var initialShippingCostText by remember(itemId) { mutableStateOf("") }
     var initialExpenseCostText by remember(itemId) { mutableStateOf("") }
     var initialExistingFilePaths by remember(itemId) { mutableStateOf<List<String>>(emptyList()) }
+    val loadedPhotosByPath = remember(itemId) { mutableStateMapOf<String, PhotoEntity>() }
+    var previewStartIndex by remember(itemId) { mutableStateOf<Int?>(null) }
     var isInitialized by remember(itemId) { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
 
@@ -143,8 +157,8 @@ fun ItemEditScreen(
             val itemWithPhotos = viewModel.getItemById(itemId)
             if (itemWithPhotos != null) {
                 val item = itemWithPhotos.item
-                title = item.title
-                description = item.description
+                titleFieldValue = TextFieldValue(item.title, TextRange(item.title.length))
+                descriptionFieldValue = TextFieldValue(item.description, TextRange(item.description.length))
                 priceText = if (item.price > 0) item.price.toString() else ""
                 soldPriceText = if (item.soldPrice > 0) item.soldPrice.toString() else ""
                 status = item.status
@@ -153,15 +167,23 @@ fun ItemEditScreen(
                 shippingCostText = item.shippingCost.toString()
                 expenseCostText = item.expenseCost.toString()
                 existingFilePaths.clear()
-                existingFilePaths.addAll(itemWithPhotos.photos.map { it.filePath })
+                loadedPhotosByPath.clear()
+                itemWithPhotos.photos.forEach { photo ->
+                    val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
+                    val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
+                    if (targetPath.isNotBlank()) {
+                        existingFilePaths.add(targetPath)
+                        loadedPhotosByPath[targetPath] = photo
+                    }
+                }
             }
         } else {
             feeRatePercentText = defaultSettings.defaultFeeRatePercent.toString()
             shippingCostText = defaultSettings.defaultShippingCost.toString()
             expenseCostText = defaultSettings.defaultExpenseCost.toString()
         }
-        initialTitle = title
-        initialDescription = description
+        initialTitle = titleFieldValue.text
+        initialDescription = descriptionFieldValue.text
         initialPriceText = priceText
         initialSoldPriceText = soldPriceText
         initialStatus = status
@@ -260,6 +282,33 @@ fun ItemEditScreen(
     val calculatedFee = (basePrice * effectiveFeePercent) / 100
     val estimatedProfit = (basePrice - calculatedFee - effectiveShipping - effectiveExpense).coerceAtLeast(0)
 
+    val startPreviewIdx = previewStartIndex
+    if (startPreviewIdx != null) {
+        val previewItems = buildList {
+            existingFilePaths.forEach { path ->
+                val entity = loadedPhotosByPath[path]
+                if (entity != null) {
+                    add(entity.toPreviewPhotoItem())
+                } else {
+                    add(PreviewPhotoItem(model = File(path), hasLocalOriginal = true))
+                }
+            }
+            newImageUris.forEach { uri ->
+                add(PreviewPhotoItem(model = uri, hasLocalOriginal = true))
+            }
+        }
+        if (previewItems.isNotEmpty()) {
+            PhotoPreviewDialog(
+                photos = previewItems,
+                initialIndex = startPreviewIdx,
+                isPcServerConnected = isPcServerConnected,
+                onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },
+                onFetchOriginal = { hash -> viewModel.fetchOriginalPhotoCacheFile(hash) },
+                onDismiss = { previewStartIndex = null }
+            )
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -343,59 +392,71 @@ fun ItemEditScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(existingFilePaths) { path ->
+                    itemsIndexed(existingFilePaths) { index, path ->
+                        val photoEntity = loadedPhotosByPath[path]
+                        val displayModel = photoEntity?.displayFile ?: File(path)
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
                                 .clip(RoundedCornerShape(8.dp))
+                                .clickable { previewStartIndex = index }
+                                .testTag("edit_existing_photo_$index")
                         ) {
                             AsyncImage(
-                                model = File(path),
-                                contentDescription = null,
+                                model = displayModel,
+                                contentDescription = "商品写真 ${index + 1}",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                             Box(
                                 modifier = Modifier
-                                    .size(24.dp)
-                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .size(26.dp)
+                                    .background(Color.Black.copy(alpha = 0.65f))
                                     .clickable { existingFilePaths.remove(path) }
                                     .align(Alignment.TopEnd)
+                                    .testTag("remove_existing_photo_$index")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "削除",
+                                    contentDescription = "写真を削除",
                                     tint = Color.White,
-                                    modifier = Modifier.fillMaxSize()
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(2.dp)
                                 )
                             }
                         }
                     }
 
-                    items(newImageUris) { uri ->
+                    itemsIndexed(newImageUris) { index, uri ->
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
                                 .clip(RoundedCornerShape(8.dp))
+                                .clickable { previewStartIndex = existingFilePaths.size + index }
+                                .testTag("edit_new_photo_$index")
                         ) {
                             AsyncImage(
                                 model = uri,
-                                contentDescription = null,
+                                contentDescription = "追加写真 ${index + 1}",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
                             Box(
                                 modifier = Modifier
-                                    .size(24.dp)
-                                    .background(Color.Black.copy(alpha = 0.6f))
+                                    .size(26.dp)
+                                    .background(Color.Black.copy(alpha = 0.65f))
                                     .clickable { newImageUris.remove(uri) }
                                     .align(Alignment.TopEnd)
+                                    .testTag("remove_new_photo_$index")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.Close,
-                                    contentDescription = "削除",
+                                    contentDescription = "写真を削除",
                                     tint = Color.White,
-                                    modifier = Modifier.fillMaxSize()
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(2.dp)
                                 )
                             }
                         }
@@ -420,8 +481,8 @@ fun ItemEditScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
+                value = titleFieldValue,
+                onValueChange = { titleFieldValue = it },
                 label = { Text("商品名・出品フォルダ名 (必須)") },
                 singleLine = true,
                 modifier = Modifier
@@ -429,12 +490,30 @@ fun ItemEditScreen(
                     .testTag("item_title_input")
             )
 
+            if (defaultSettings.titleTemplates.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "タイトル定型文をカーソル位置へ挿入：",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    defaultSettings.titleTemplates.forEach { tpl ->
+                        AssistChip(
+                            onClick = { titleFieldValue = insertTemplateAtCursor(titleFieldValue, tpl.content) },
+                            label = { Text(tpl.name, fontSize = 11.sp) },
+                            modifier = Modifier.testTag("insert_title_template_${tpl.id}")
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(10.dp))
 
             // 商品説明文（任意入力・PC送信ZIPに同梱）
             OutlinedTextField(
-                value = description,
-                onValueChange = { description = it },
+                value = descriptionFieldValue,
+                onValueChange = { descriptionFieldValue = it },
                 label = { Text("商品説明文 (任意・PC送信時にテキスト同梱)") },
                 placeholder = { Text("商品の状態、サイズ、購入時期、注意事項など\n記述がある場合、PC送信時に『商品説明.txt』としてZIPに同梱されます") },
                 minLines = 3,
@@ -443,6 +522,24 @@ fun ItemEditScreen(
                     .fillMaxWidth()
                     .testTag("item_description_input")
             )
+
+            if (defaultSettings.descriptionTemplates.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "説明文定型文をカーソル位置へ挿入：",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    defaultSettings.descriptionTemplates.forEach { tpl ->
+                        AssistChip(
+                            onClick = { descriptionFieldValue = insertTemplateAtCursor(descriptionFieldValue, tpl.content) },
+                            label = { Text(tpl.name, fontSize = 11.sp) },
+                            modifier = Modifier.testTag("insert_desc_template_${tpl.id}")
+                        )
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(14.dp))
 
@@ -531,6 +628,39 @@ fun ItemEditScreen(
 
                     if (useCustomSettings) {
                         Spacer(modifier = Modifier.height(12.dp))
+
+                        if (defaultSettings.presets.isNotEmpty()) {
+                            Text(
+                                text = "プリセットから一括反映",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                defaultSettings.presets.forEach { preset ->
+                                    val matchesPreset = feeRatePercentText == preset.feeRatePercent.toString() &&
+                                        shippingCostText == preset.shippingCost.toString() &&
+                                        expenseCostText == preset.expenseCost.toString()
+                                    FilterChip(
+                                        selected = matchesPreset,
+                                        onClick = {
+                                            feeRatePercentText = preset.feeRatePercent.toString()
+                                            shippingCostText = preset.shippingCost.toString()
+                                            expenseCostText = preset.expenseCost.toString()
+                                        },
+                                        label = {
+                                            Text(
+                                                "${preset.name} (${preset.feeRatePercent}%/¥${preset.shippingCost})",
+                                                fontSize = 11.sp
+                                            )
+                                        },
+                                        modifier = Modifier.testTag("edit_apply_preset_${preset.id}")
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(10.dp))
+                        }
 
                         OutlinedTextField(
                             value = feeRatePercentText,
@@ -658,4 +788,12 @@ fun ItemEditScreen(
             }
         }
     }
+}
+
+private fun insertTemplateAtCursor(current: TextFieldValue, insertText: String): TextFieldValue {
+    val start = current.selection.min.coerceIn(0, current.text.length)
+    val end = current.selection.max.coerceIn(0, current.text.length)
+    val updatedText = current.text.substring(0, start) + insertText + current.text.substring(end)
+    val newCursor = start + insertText.length
+    return TextFieldValue(text = updatedText, selection = TextRange(newCursor))
 }

@@ -8,6 +8,12 @@ data class FeePreset(
     val expenseCost: Int
 )
 
+data class TextTemplate(
+    val id: String,
+    val name: String,
+    val content: String
+)
+
 data class DefaultSettings(
     val defaultFeeRatePercent: Int = 5,
     val defaultShippingCost: Int = 210,
@@ -16,7 +22,10 @@ data class DefaultSettings(
     val thumbnailMaxDimension: Int = 480, // サムネイル最大解像度 (320, 480, 640px)
     val autoCleanupSoldDays: Int = 30, // 売却済みから写真削除までの日数
     val activePresetId: String = "yahoo_furima",
-    val presets: List<FeePreset> = defaultPresets
+    val presets: List<FeePreset> = defaultPresets,
+    val titleTemplates: List<TextTemplate> = emptyList(),
+    val descriptionTemplates: List<TextTemplate> = emptyList(),
+    val settingsUpdatedAt: Long = 0L
 ) {
     companion object {
         val defaultPresets = listOf(

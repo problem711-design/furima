@@ -337,7 +337,16 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun updateDefaultSettings(newSettings: DefaultSettings) {
-        repository.updateDefaultSettings(newSettings)
+        repository.updateDefaultSettings(newSettings, stampNow = true)
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isNotBlank() && _isPcServerConnected.value) {
+            viewModelScope.launch(Dispatchers.IO) {
+                syncMutex.withLock {
+                    pcServerClient.pushSettingsToServer(url, token)
+                }
+            }
+        }
     }
 
     suspend fun getItemById(id: Int): ItemWithPhotos? {
@@ -419,7 +428,6 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     fun unmergeItem(parentId: Int, onSuccess: () -> Unit = {}) {
         viewModelScope.launch {
             repository.unmergeItem(parentId)
-            pcServerClient.unmergeOnPcServer(parentId)
             triggerAutoSync()
             onSuccess()
         }
@@ -441,6 +449,36 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             repository.deleteItem(itemWithPhotos)
             triggerAutoSync()
             onSuccess()
+        }
+    }
+
+    fun findCachedOriginalPhotoFile(md5Hash: String): File? {
+        val cleanHash = md5Hash.trim().lowercase()
+        if (cleanHash.isBlank()) return null
+        val cacheDir = File(getApplication<Application>().cacheDir, "preview_originals")
+        val target = File(cacheDir, "$cleanHash.jpg")
+        return target.takeIf { it.exists() && it.length() > 0L }
+    }
+
+    suspend fun fetchOriginalPhotoCacheFile(md5Hash: String): File? = withContext(Dispatchers.IO) {
+        val cleanHash = md5Hash.trim().lowercase()
+        if (cleanHash.isBlank()) return@withContext null
+        val existing = findCachedOriginalPhotoFile(cleanHash)
+        if (existing != null) return@withContext existing
+
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank() || !_isPcServerConnected.value) return@withContext null
+
+        val bytes = pcServerClient.downloadPhotoByHash(url, token, cleanHash, verifyMd5 = true)
+            ?: return@withContext null
+        val cacheDir = File(getApplication<Application>().cacheDir, "preview_originals").apply { mkdirs() }
+        val outFile = File(cacheDir, "$cleanHash.jpg")
+        try {
+            outFile.writeBytes(bytes)
+            outFile.takeIf { it.exists() && it.length() > 0L }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -679,10 +717,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 if (url.isNotBlank()) {
                     val connected = pcServerClient.sendHeartbeat(url, token)
                     _isPcServerConnected.value = connected
-                    // 定期自動同期: 接続中は約12秒ごと (3ループに1回) にPC側の変更や削除を自動取得
+                    // 定期自動同期: 接続中は約12秒ごと (3ループに1回) にPC側の変更や削除・設定を自動取得
                     if (connected && loopCount % 3 == 0) {
                         if (syncMutex.tryLock()) {
                             try {
+                                pcServerClient.fetchAndSyncServerSettings(url, token)
                                 pcServerClient.fetchServerItems(url, token)
                             } catch (_: Exception) {
                             } finally {
@@ -712,6 +751,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             delay(500)
             syncMutex.withLock {
                 try {
+                    pcServerClient.fetchAndSyncServerSettings(url, token)
                     val result = pcServerClient.syncDeltaToPcServer(url, token)
                     if (result.isSuccess) {
                         pcServerClient.fetchServerItems(url, token)
@@ -770,6 +810,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             val url = _pcServerUrl.value
             val token = _pcAuthToken.value
             val result = syncMutex.withLock {
+                pcServerClient.fetchAndSyncServerSettings(url, token)
                 val pushRes = pcServerClient.syncDeltaToPcServer(url, token)
                 if (pushRes.isSuccess) {
                     pcServerClient.fetchServerItems(url, token)

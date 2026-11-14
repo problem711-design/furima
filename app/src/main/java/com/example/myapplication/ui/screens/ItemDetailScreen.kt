@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -68,6 +69,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.ui.FleaMarketViewModel
+import com.example.myapplication.ui.components.PhotoPreviewDialog
+import com.example.myapplication.ui.components.toPreviewPhotoItem
 import java.io.File
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -92,6 +95,7 @@ fun ItemDetailScreen(
     var showPcOriginalConfirmDialog by remember { mutableStateOf(false) }
     var selectedPhotoIdsForGallery by remember(itemId) { mutableStateOf<Set<Int>>(emptySet()) }
     var isExportingGallery by remember { mutableStateOf(false) }
+    var previewStartIndex by remember { mutableStateOf<Int?>(null) }
 
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
     val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN)
@@ -123,6 +127,18 @@ fun ItemDetailScreen(
     val basePrice = if (currentItem.status == "SOLD" && currentItem.soldPrice > 0) currentItem.soldPrice else currentItem.price
     val calculatedFee = (basePrice * effectiveFeePercent) / 100
     val calculatedProfit = currentItem.getCalculatedProfit(defaultSettings)
+
+    val startIdx = previewStartIndex
+    if (startIdx != null && photos.isNotEmpty()) {
+        PhotoPreviewDialog(
+            photos = photos.map { it.toPreviewPhotoItem() },
+            initialIndex = startIdx,
+            isPcServerConnected = isPcServerConnected,
+            onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },
+            onFetchOriginal = { hash -> viewModel.fetchOriginalPhotoCacheFile(hash) },
+            onDismiss = { previewStartIndex = null }
+        )
+    }
 
     if (showDeleteDialog) {
         AlertDialog(
@@ -613,17 +629,19 @@ fun ItemDetailScreen(
                         .fillMaxWidth()
                         .height(300.dp)
                 ) {
-                    items(photos, key = { it.id }) { photo ->
+                    itemsIndexed(photos, key = { _, photo -> photo.id }) { index, photo ->
                         val displayFile = photo.displayFile
                         Box(
                             modifier = Modifier
                                 .aspectRatio(1f)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color.LightGray)
+                                .clickable { previewStartIndex = index }
+                                .testTag("detail_photo_${photo.id}")
                         ) {
                             AsyncImage(
                                 model = displayFile,
-                                contentDescription = null,
+                                contentDescription = "商品写真 ${index + 1}",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )

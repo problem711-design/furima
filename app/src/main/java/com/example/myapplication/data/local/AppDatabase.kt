@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [ItemEntity::class, PhotoEntity::class], version = 5, exportSchema = false)
+@Database(entities = [ItemEntity::class, PhotoEntity::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun itemDao(): ItemDao
 
@@ -27,6 +27,26 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE items ADD COLUMN syncUuid TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE items ADD COLUMN deletedAt INTEGER DEFAULT NULL")
+                db.execSQL("ALTER TABLE items ADD COLUMN isDirty INTEGER NOT NULL DEFAULT 1")
+
+                val cursor = db.query("SELECT id, syncUuid FROM items")
+                cursor.use { c ->
+                    while (c.moveToNext()) {
+                        val rowId = c.getInt(0)
+                        val existingUuid = if (c.isNull(1)) "" else c.getString(1)
+                        if (existingUuid.isBlank()) {
+                            val newUuid = java.util.UUID.randomUUID().toString()
+                            db.execSQL("UPDATE items SET syncUuid = ? WHERE id = ?", arrayOf<Any>(newUuid, rowId))
+                        }
+                    }
+                }
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -34,7 +54,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "flea_market_database"
                 )
-                    .addMigrations(MIGRATION_4_5)
+                    .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
                     .build()
                 INSTANCE = instance
                 instance
