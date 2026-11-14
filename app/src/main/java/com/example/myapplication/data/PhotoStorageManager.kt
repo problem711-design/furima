@@ -239,10 +239,18 @@ class PhotoStorageManager(private val context: Context) {
             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
             val originalFile = File(dir, "IMG_$timeStamp.jpg")
 
-            context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            val inputStream = context.contentResolver.openInputStream(sourceUri) ?: return null
+            inputStream.use { input ->
                 FileOutputStream(originalFile).use { output ->
                     input.copyTo(output)
                 }
+            }
+            if (!originalFile.exists() || originalFile.length() <= 0L) {
+                try {
+                    if (originalFile.exists()) originalFile.delete()
+                } catch (_: Exception) {
+                }
+                return null
             }
 
             // 端末ギャラリーにも自動同期（外部アプリから参照可能）

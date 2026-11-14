@@ -129,7 +129,7 @@
 目標バージョン：**`v0.9β (Build 7)`**
 
 ### 4.1 サブフェーズ 2.17-A — PC管理画面ポーリング最適化＆サーバーI/O・スレッド安全性強化
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `tools/DashboardHtml.cs`
   * `tools/FurimaServerNative.cs`
@@ -139,7 +139,7 @@
   3. `HandleSyncPhoto` 1150行目の未使用 `byte[] buffer` 確保を削除し、`hashToFilePathMap.Count` / `itemsDb.Count`（215, 635行目等）の参照をすべて `lock (lockObj)` 内に収める。
 
 ### 4.2 サブフェーズ 2.17-B — Androidストレージ・エラーハンドリング強化＆デッドコード／不要資産整理 ＋ Build 7 統一
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `app/src/main/java/com/example/myapplication/data/PhotoStorageManager.kt`
   * `app/src/main/java/com/example/myapplication/data/FleaMarketRepository.kt`

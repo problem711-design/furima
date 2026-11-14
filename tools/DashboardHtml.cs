@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）。スマホアプリの「PC連携」画面から接続できます。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 6)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 7)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -755,6 +755,8 @@ public static class DashboardHtml
         let allItems = [];
         let currentFilter = 'ALL';
         let selectedItemIds = new Set();
+        let lastKnownDataRevision = null;
+        let lastKnownSettingsRevision = null;
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
         let pendingAddPhotoFiles = [];
@@ -899,7 +901,12 @@ public static class DashboardHtml
         document.addEventListener('DOMContentLoaded', () => {
             fetchSettings();
             fetchItems();
-            setInterval(fetchItems, 3000);
+            setInterval(pollServerRevisions, 3000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    pollServerRevisions();
+                }
+            });
 
             // ドラッグ＆ドロップ写真アップロードの初期化 (ギャラリー・新規追加・編集モーダル)
             setupDropZone();
@@ -1229,34 +1236,68 @@ public static class DashboardHtml
             await savePcSettingsPayload(next, 'テンプレートを削除しました');
         }
 
-        async function fetchItems() {
+        function updateStatusBannerFromData(statusData) {
+            if (!statusData) return;
+            const banner = document.getElementById('status-banner');
+            const statusText = document.getElementById('status-text');
+            const statusIcon = document.getElementById('status-icon');
+            const missingCount = statusData.missingFileCount || 0;
+            const missingBadge = missingCount > 0 ? ' | 原本なし: ' + missingCount + '件' : '';
+            if (statusData.appConnected) {
+                banner.className = 'bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
+                statusIcon.className = 'fa-solid fa-circle-check text-base';
+                statusText.innerText = 'スマホアプリ接続中 (' + statusData.indexedPhotosCount + '枚の写真インデックス完了' + missingBadge + ')';
+            } else {
+                banner.className = 'bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
+                statusIcon.className = 'fa-solid fa-triangle-exclamation text-base animate-bounce';
+                statusText.innerText = 'スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）' + missingBadge;
+            }
+        }
+
+        async function fetchItemsOnly() {
             try {
-                fetchSettings();
                 const res = await fetch('/api/items', { headers: getHeaders() });
                 if (!res.ok) return;
                 allItems = await res.json();
                 updateStats();
                 renderItems();
             } catch (e) {}
+        }
+
+        async function pollServerRevisions() {
+            if (document.hidden) return;
+            try {
+                const statusRes = await fetch('/api/server/status', { headers: getHeaders() });
+                if (!statusRes.ok) return;
+                const statusData = await statusRes.json();
+                updateStatusBannerFromData(statusData);
+
+                const srvDataRev = typeof statusData.dataRevision === 'number' ? statusData.dataRevision : null;
+                const srvSettingsRev = typeof statusData.settingsRevision === 'number' ? statusData.settingsRevision : null;
+
+                if (srvSettingsRev !== null && srvSettingsRev !== lastKnownSettingsRevision) {
+                    lastKnownSettingsRevision = srvSettingsRev;
+                    fetchSettings();
+                }
+                if (srvDataRev === null || srvDataRev !== lastKnownDataRevision) {
+                    lastKnownDataRevision = srvDataRev;
+                    await fetchItemsOnly();
+                    fetchCleanupPreview();
+                }
+            } catch (e) {}
+        }
+
+        async function fetchItems() {
+            fetchSettings();
+            await fetchItemsOnly();
 
             try {
                 const statusRes = await fetch('/api/server/status', { headers: getHeaders() });
                 if (statusRes.ok) {
                     const statusData = await statusRes.json();
-                    const banner = document.getElementById('status-banner');
-                    const statusText = document.getElementById('status-text');
-                    const statusIcon = document.getElementById('status-icon');
-                    const missingCount = statusData.missingFileCount || 0;
-                    const missingBadge = missingCount > 0 ? ' | 原本なし: ' + missingCount + '件' : '';
-                    if (statusData.appConnected) {
-                        banner.className = 'bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
-                        statusIcon.className = 'fa-solid fa-circle-check text-base';
-                        statusText.innerText = 'スマホアプリ接続中 (' + statusData.indexedPhotosCount + '枚の写真インデックス完了' + missingBadge + ')';
-                    } else {
-                        banner.className = 'bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
-                        statusIcon.className = 'fa-solid fa-triangle-exclamation text-base animate-bounce';
-                        statusText.innerText = 'スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）' + missingBadge;
-                    }
+                    updateStatusBannerFromData(statusData);
+                    if (typeof statusData.dataRevision === 'number') lastKnownDataRevision = statusData.dataRevision;
+                    if (typeof statusData.settingsRevision === 'number') lastKnownSettingsRevision = statusData.settingsRevision;
                 }
             } catch (e) {}
 

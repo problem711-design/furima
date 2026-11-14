@@ -668,12 +668,15 @@ class FurimaServerNative
             }
             else if (rawPath == "/api/server/status")
             {
-                // 10秒から25秒に緩和（トンネル通信レイテンシやモバイル通信の揺らぎを許容）
                 bool isConnected = (DateTime.Now - lastHeartbeat).TotalSeconds < 25;
                 int missingCount;
                 int trashCount = 0;
+                int indexedPhotosCount = 0;
+                int totalItemsCount = 0;
                 lock (lockObj)
                 {
+                    indexedPhotosCount = hashToFilePathMap.Count;
+                    totalItemsCount = itemsDb.Count;
                     missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
                     foreach (var item in itemsDb)
                     {
@@ -686,11 +689,11 @@ class FurimaServerNative
                     { "status", "ok" },
                     { "appConnected", isConnected },
                     { "lastHeartbeatSec", lastHeartbeat == DateTime.MinValue ? -1 : (int)(DateTime.Now - lastHeartbeat).TotalSeconds },
-                    { "indexedPhotosCount", hashToFilePathMap.Count },
+                    { "indexedPhotosCount", indexedPhotosCount },
                     { "missingFileCount", missingCount },
                     { "storeId", SyncStore.StoreId },
                     { "syncDir", SyncStore.SyncDir },
-                    { "totalItemsCount", itemsDb.Count },
+                    { "totalItemsCount", totalItemsCount },
                     { "trashCount", trashCount },
                     { "dataRevision", GetDataRevision() },
                     { "settingsRevision", GetSettingsRevision() },
@@ -1143,8 +1146,8 @@ class FurimaServerNative
                 if (dataChanged)
                 {
                     BumpDataRevision();
+                    SaveItemsDbToDisk();
                 }
-                SaveItemsDbToDisk();
 
                 JObject dsObj = json["defaultSettings"] as JObject;
                 if (dsObj != null)
@@ -1200,7 +1203,6 @@ class FurimaServerNative
                 return;
             }
 
-            byte[] buffer = new byte[req.ContentLength64 > 0 ? req.ContentLength64 : 1024 * 1024];
             using (MemoryStream ms = new MemoryStream())
             {
                 req.InputStream.CopyTo(ms);
@@ -1314,8 +1316,13 @@ class FurimaServerNative
 
             if (qrForm != null)
             {
-                int indexedCount = hashToFilePathMap.Count;
-                int missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+                int indexedCount;
+                int missingCount;
+                lock (lockObj)
+                {
+                    indexedCount = hashToFilePathMap.Count;
+                    missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+                }
                 qrForm.UpdateStatusInfo(indexedCount, missingCount);
             }
 

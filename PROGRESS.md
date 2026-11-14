@@ -34,7 +34,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 6)`** （Phase 2.16 重大度「警告」修復：PC単独編集案内・画像形式/EXIF回転・UTF-8/Null安全性・Build 6 反映）
+現在のバージョン：**`v0.9β (Build 7)`** （Phase 2.15〜2.17 総点検修復完了：重大度「致命的」「警告」「提案」全項目対応・Build 7 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -73,13 +73,17 @@
   - [x] `2.16-A` デバッグ残骸 `#18` 撤去 ＋ まとめ買い子ステータス適正化＆30日クリーンアップ安全化
   - [x] `2.16-B` PC単独編集向け案内文言刷新（ロック表記撤廃）・`lastHeartbeatSec` / `HandleRequest` / `JValue(null)` / UTF-8安全性・フォルダ分断解消・`soldPrice` / 復元パス修復
   - [x] `2.16-C` 画像形式マジックバイト判定・Canvas経由クリップボードコピー・EXIF回転補正・旧モーダル整理 ＋ `Build 6` 統一
-- [ ] **フェーズ 2.17 (`v0.9β Build 7`) — 重大度「提案」改善（ポーリング最適化・孤立ファイル掃除・資産整理）** 【計画策定済・未着手】
-  - `2.17-A` `DashboardHtml.cs` リビジョン検知ポーリング一本化・`SaveItemsDbToDisk` 条件付き保存・ロック保護＆未使用バッファ削除
-  - `2.17-B` `savePhotoFromUri` 失敗時null保証・`saveItem` 孤立ファイル掃除・デッドコード/旧スクリプト/未使用依存整理 ＋ `Build 7` 統一
+- [x] **フェーズ 2.17 (`v0.9β Build 7`) — 重大度「提案」改善（ポーリング最適化・孤立ファイル掃除・資産整理）** 【完了】
+  - [x] `2.17-A` `DashboardHtml.cs` リビジョン検知ポーリング一本化・`SaveItemsDbToDisk` 条件付き保存・ロック保護＆未使用バッファ削除
+  - [x] `2.17-B` `savePhotoFromUri` 失敗時null保証・`saveItem` 孤立ファイル掃除・デッドコード/旧スクリプト/未使用依存整理 ＋ `Build 7` 統一
 
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 2.17 完了 バージョン 0.9β (Build 7)
+- **2.17-A (ポーリング最適化・ディスクI/O削減・ロック安全化)**：`DashboardHtml.cs` の3秒ポーリングを軽量な `/api/server/status` のみへ一本化（`document.hidden` 時は自動停止・復帰時即時確認）し、`dataRevision` / `settingsRevision` 変化時のみ `/api/items`・`/api/cleanup/preview`・`/api/settings` を取得するよう最適化。`FurimaServerNative.cs` では `HandleSyncItems` の `SaveItemsDbToDisk()` を `dataChanged` 時のみ実行へ限定し、`HandleSyncPhoto` の未使用 `byte[] buffer` 確保を削除し、`hashToFilePathMap.Count` / `itemsDb.Count` 参照をすべて `lock (lockObj)` 内に保護。
+- **2.17-B (ストレージ安全性・孤立ファイル掃除・不要資産/依存整理・Build 7 統一)**：`PhotoStorageManager.savePhotoFromUri` で `openInputStream` が `null` または書き出しサイズ `<= 0` 時に `null` を返却するよう保護。`FleaMarketRepository.saveItem` で編集時に外された写真について他商品未参照の端末ファイルを削除する孤立ファイル掃除を追加し、未実装スタブ `cleanupSharedPhotos()` と旧補助スクリプト (`tools/furima-sync.bat`, `tools/furima-sync.ps1`) を削除。`app/build.gradle.kts` から未使用依存（`retrofit`, `converter-moshi`, `logging-interceptor`, 未使用 `firebase-*`）をコメントアウト整理し、`v0.9β (Build 7)` (`versionCode = 7`) へ3箇所同時統一・APK更新・全ユニットテスト通過を確認。
 
 ### 2026/11/14 フェーズ 2.16 完了 バージョン 0.9β (Build 6)
 - **2.16-A (デバッグ残骸撤去・まとめ買い子ステータス・クリーンアップ安全化)**：`DashboardHtml.cs` (`item.id === 18`) と `FurimaServerNative.cs` (`parentId == 18`) のテスト用ハードコードを撤去。`HandleMergeItems` の子 `statusLabel` を `asStatus` に応じて `"まとめ売却済"` / `"まとめ出品中"` へ適正化し、`SyncStore.GetCleanupCandidates` を `status == "SOLD"` のみに限定＋アクティブ他商品（`LISTED` / `DRAFT` / 未売却親に属する `MERGED` 子）が参照中のハッシュ・ファイル除外ガードを追加。

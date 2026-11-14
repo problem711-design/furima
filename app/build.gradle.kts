@@ -14,7 +14,7 @@ android {
     applicationId = "com.example.myapplication"
     minSdk = 24
     targetSdk = 35
-    versionCode = 6
+    versionCode = 7
     versionName = "0.9β"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -78,7 +78,7 @@ googleServices {
 
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
+  // implementation(platform(libs.firebase.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)
   implementation(libs.androidx.compose.material.icons.extended)
@@ -94,10 +94,10 @@ dependencies {
   implementation(libs.androidx.room.ktx)
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
+  // implementation(libs.converter.moshi)
+  // implementation(libs.firebase.ai)
+  // implementation(libs.firebase.appcheck.recaptcha)
+  // implementation(libs.firebase.appcheck.debug)
   implementation(libs.ktor.server.core)
   implementation(libs.ktor.server.cio)
   implementation(libs.ktor.server.content.negotiation)
@@ -105,11 +105,11 @@ dependencies {
   implementation(libs.ktor.server.cors)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
+  // implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
-  implementation(libs.retrofit)
+  // implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
