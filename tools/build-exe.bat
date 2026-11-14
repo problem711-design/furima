@@ -3,7 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 echo ===================================================
 echo  FurimaServerNative / FurimaSyncNative ビルドスクリプト
-echo  ※ 動作・ビルド要件: .NET Framework 4.6 以上 (Win10/11 標準)
+echo  ※ 動作・ビルド要件：.NET Framework 4.6 以上 (Win10/11 標準)
 echo ===================================================
 
 set CSC="%SystemRoot%\Microsoft.NET\Framework\v4.0.30319\csc.exe"
@@ -15,8 +15,8 @@ if not exist %CSC% (
 )
 
 echo.
-echo [1/2] FurimaServerNative.exe をビルド中...
-%CSC% /nologo /out:furima-server.exe /target:exe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
+echo [1/2] FurimaServerNative.exe をビルド中 (/target:winexe)...
+%CSC% /nologo /out:furima-server.exe /target:winexe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
 
 if %ERRORLEVEL% neq 0 (
     echo [失敗] furima-server.exe のビルドエラー。

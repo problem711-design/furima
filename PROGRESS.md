@@ -35,7 +35,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 9)`** （Phase 3.2 完了：UI改善・テンプレートフルウィンドウ化＆変数展開・一括操作・出品前チェック・Build 9 反映）
+現在のバージョン：**`v0.9β (Build 10)`** （PC母艦サーバー `/target:winexe` 化 ＆ トレイ終了時プロセス・フォルダロック完全解放修正）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -89,6 +89,16 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 PC母艦サーバー winexe化 ＆ 完全終了修復 バージョン 0.9β (Build 10)
+- **CUIコンソール廃止 (`/target:winexe`) ＋ ログファイル出力 (`tools/build-exe.bat`, `FurimaServerNative.cs`, `TunnelQrForm.cs`)**：
+  - `build-exe.bat` の `furima-server.exe` ビルドターゲットを `/target:winexe` へ変更し、起動時の CUI コンソール画面を廃止（Windows 11 ターミナル環境でも完全にタスクトレイ常駐のみ）。
+  - `FurimaServerNative.cs` にスレッドセーフな `ServerLogWriter`（`server.log` 自動書き出し・2MB 超過時ローテーション・共有削除許可モード）を実装し、トレイ右クリックメニューに「サーバーログを開く(&L)」を追加。
+- **タスクトレイ終了後のプロセス残留・フォルダロック根絶 (`FurimaServerNative.cs`, `TunnelQrForm.cs`)**：
+  - サーバー初期化直後に `Environment.CurrentDirectory` および `cloudflared.exe` / 補助プロセスの `WorkingDirectory` を `Path.GetTempPath()` へ退避し、サーバー本体フォルダおよび `syncDir` のディレクトリハンドルロックを防止。
+  - `ShutdownServerResources()` を新設して `HttpListener` の `Stop()` + `Close()` + `Abort()`、`cloudflared` の非同期出力キャンセル (`CancelOutputRead`/`CancelErrorRead`) ＋ `taskkill /F /T` によるプロセスツリー強制終了・`Dispose()`、`Mutex` 解放、`ServerLogWriter` 破棄を一元実行し、最後に `Environment.Exit(0)` で確実にプロセス終了。
+  - `TunnelQrForm.cs` のバックグラウンド呼び出しをすべて非ブロッキング `SafeBeginInvoke`（`IsDisposed`/`isExiting` ガード付き）へ統一し、終了時の `BrowserSelectDialog` モーダル強制クローズと `Application.Exit()` を追加。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 10`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v0.9β (Build 10)`** へ 3 箇所同時統一（※Windows 上で `tools/build-exe.bat` の再実行が必要）。
 
 ### 2026/11/14 フェーズ 3.2 完了 バージョン 0.9β (Build 9)
 - **3.2-C (選択モード拡張・ゴミ箱一括操作・一括ゴミ箱移動＆部分一括編集・Build 9統一)**：

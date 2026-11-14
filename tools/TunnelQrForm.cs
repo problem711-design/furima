@@ -26,6 +26,7 @@ public class TunnelQrForm : Form
     private bool isPhoneConnected = false;
     private int heartbeatCount = 0;
     private System.Windows.Forms.Timer browserPromptTimer;
+    private BrowserSelectDialog activeBrowserDialog = null;
 
     private string currentStoreId;
     private string currentSyncDir;
@@ -155,6 +156,7 @@ public class TunnelQrForm : Form
         trayMenu.Items.Add("PC管理画面を開く (Chrome)", null, (s, e) => { LaunchBrowser("chrome"); });
         trayMenu.Items.Add("PC管理画面を開く (デフォルト)", null, (s, e) => { LaunchBrowser("default"); });
         trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add("サーバーログを開く(&L)", null, (s, e) => { OpenServerLog(); });
         trayMenu.Items.Add("母艦サーバーを終了(&X)", null, (s, e) => { ExitApp(); });
 
         notifyIcon = new NotifyIcon();
@@ -163,6 +165,52 @@ public class TunnelQrForm : Form
         notifyIcon.ContextMenuStrip = trayMenu;
         notifyIcon.Visible = true;
         notifyIcon.DoubleClick += (s, e) => { RestoreFromTray(); };
+    }
+
+    private void SafeBeginInvoke(Action action)
+    {
+        if (isExiting || this.IsDisposed || this.Disposing || !this.IsHandleCreated) return;
+        try
+        {
+            this.BeginInvoke(action);
+        }
+        catch (ObjectDisposedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    private void CleanupTrayAndImages()
+    {
+        if (notifyIcon != null)
+        {
+            try { notifyIcon.Visible = false; } catch { }
+            try { notifyIcon.Dispose(); } catch { }
+            notifyIcon = null;
+        }
+        if (trayMenu != null)
+        {
+            try { trayMenu.Dispose(); } catch { }
+            trayMenu = null;
+        }
+        if (picQrCode != null && picQrCode.Image != null)
+        {
+            try { picQrCode.Image.Dispose(); } catch { }
+            picQrCode.Image = null;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            if (browserPromptTimer != null)
+            {
+                try { browserPromptTimer.Stop(); } catch { }
+                try { browserPromptTimer.Dispose(); } catch { }
+                browserPromptTimer = null;
+            }
+            CleanupTrayAndImages();
+        }
+        base.Dispose(disposing);
     }
 
     private void TunnelQrForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -176,21 +224,30 @@ public class TunnelQrForm : Form
 
     public void MinimizeToTray()
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         if (this.InvokeRequired)
         {
-            this.Invoke(new Action(MinimizeToTray));
+            SafeBeginInvoke(new Action(MinimizeToTray));
             return;
         }
 
         this.Hide();
-        notifyIcon.ShowBalloonTip(2000, "フリマ母艦サーバー", "バックグラウンドで動作中です。トレイアイコンのダブルクリックで再表示できます。", ToolTipIcon.Info);
+        if (notifyIcon != null)
+        {
+            try
+            {
+                notifyIcon.ShowBalloonTip(2000, "フリマ母艦サーバー", "バックグラウンドで動作中です。トレイアイコンのダブルクリックで再表示できます。", ToolTipIcon.Info);
+            }
+            catch { }
+        }
     }
 
     public void RestoreFromTray()
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         if (this.InvokeRequired)
         {
-            this.Invoke(new Action(RestoreFromTray));
+            SafeBeginInvoke(new Action(RestoreFromTray));
             return;
         }
 
@@ -199,21 +256,56 @@ public class TunnelQrForm : Form
         this.Activate();
     }
 
+    public void OpenServerLog()
+    {
+        try
+        {
+            string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "server.log");
+            if (!File.Exists(logPath))
+            {
+                MessageBox.Show("ログファイル (server.log) はまだ作成されていません。", "情報", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            ProcessStartInfo psi = new ProcessStartInfo();
+            psi.FileName = logPath;
+            psi.UseShellExecute = true;
+            psi.WorkingDirectory = Path.GetTempPath();
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("ログファイルを開けませんでした：" + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     public void ExitApp()
     {
+        if (this.IsDisposed || this.Disposing) return;
+        if (this.InvokeRequired)
+        {
+            SafeBeginInvoke(new Action(ExitApp));
+            return;
+        }
+
         isExiting = true;
         if (browserPromptTimer != null)
         {
-            browserPromptTimer.Stop();
-            browserPromptTimer.Dispose();
+            try { browserPromptTimer.Stop(); } catch { }
+            try { browserPromptTimer.Dispose(); } catch { }
             browserPromptTimer = null;
         }
-        if (notifyIcon != null)
+        if (activeBrowserDialog != null && !activeBrowserDialog.IsDisposed)
         {
-            notifyIcon.Visible = false;
-            notifyIcon.Dispose();
+            try
+            {
+                activeBrowserDialog.DialogResult = DialogResult.Cancel;
+                activeBrowserDialog.Close();
+            }
+            catch { }
         }
-        this.Close();
+        CleanupTrayAndImages();
+        try { this.Close(); } catch { }
+        try { Application.Exit(); } catch { }
     }
 
     /// <summary>
@@ -222,9 +314,10 @@ public class TunnelQrForm : Form
     /// </summary>
     public void OnHeartbeatReceived()
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         if (this.InvokeRequired)
         {
-            this.BeginInvoke(new Action(OnHeartbeatReceived));
+            SafeBeginInvoke(new Action(OnHeartbeatReceived));
             return;
         }
 
@@ -245,9 +338,10 @@ public class TunnelQrForm : Form
     /// </summary>
     public void OnAppConnected()
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         if (this.InvokeRequired)
         {
-            this.BeginInvoke(new Action(OnAppConnected));
+            SafeBeginInvoke(new Action(OnAppConnected));
             return;
         }
 
@@ -275,7 +369,7 @@ public class TunnelQrForm : Form
                 browserPromptTimer.Dispose();
                 browserPromptTimer = null;
             }
-            if (hasPromptedBrowser || !isPhoneConnected) return;
+            if (isExiting || this.IsDisposed || this.Disposing || hasPromptedBrowser || !isPhoneConnected) return;
             hasPromptedBrowser = true;
             RestoreFromTray();
             ShowBrowserSelectionDialog();
@@ -285,9 +379,20 @@ public class TunnelQrForm : Form
 
     public void ShowBrowserSelectionDialog()
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         using (BrowserSelectDialog dlg = new BrowserSelectDialog())
         {
-            if (dlg.ShowDialog(this) == DialogResult.OK)
+            activeBrowserDialog = dlg;
+            DialogResult dr = DialogResult.Cancel;
+            try
+            {
+                dr = dlg.ShowDialog(this);
+            }
+            finally
+            {
+                if (activeBrowserDialog == dlg) activeBrowserDialog = null;
+            }
+            if (!isExiting && dr == DialogResult.OK)
             {
                 LaunchBrowser(dlg.SelectedBrowser);
                 MinimizeToTray();
@@ -302,25 +407,45 @@ public class TunnelQrForm : Form
         {
             if (browserType == "edge")
             {
-                try { Process.Start("msedge.exe", url); return; } catch { }
+                try
+                {
+                    ProcessStartInfo psiEdge = new ProcessStartInfo("msedge.exe", url);
+                    psiEdge.UseShellExecute = true;
+                    psiEdge.WorkingDirectory = Path.GetTempPath();
+                    Process.Start(psiEdge);
+                    return;
+                }
+                catch { }
             }
             else if (browserType == "chrome")
             {
-                try { Process.Start("chrome.exe", url); return; } catch { }
+                try
+                {
+                    ProcessStartInfo psiChrome = new ProcessStartInfo("chrome.exe", url);
+                    psiChrome.UseShellExecute = true;
+                    psiChrome.WorkingDirectory = Path.GetTempPath();
+                    Process.Start(psiChrome);
+                    return;
+                }
+                catch { }
             }
-            Process.Start(url);
+            ProcessStartInfo psiDefault = new ProcessStartInfo(url);
+            psiDefault.UseShellExecute = true;
+            psiDefault.WorkingDirectory = Path.GetTempPath();
+            Process.Start(psiDefault);
         }
         catch (Exception ex)
         {
-            MessageBox.Show("ブラウザ起動に失敗しました: " + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show("ブラウザ起動に失敗しました：" + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
     public void UpdateTunnelUrl(string tunnelUrl)
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         if (this.InvokeRequired)
         {
-            this.Invoke(new Action<string>(UpdateTunnelUrl), tunnelUrl);
+            SafeBeginInvoke(new Action(() => UpdateTunnelUrl(tunnelUrl)));
             return;
         }
 
@@ -349,9 +474,10 @@ public class TunnelQrForm : Form
 
     public void UpdateStatusInfo(int indexedCount, int missingCount)
     {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
         if (this.InvokeRequired)
         {
-            this.Invoke(new Action<int, int>(UpdateStatusInfo), indexedCount, missingCount);
+            SafeBeginInvoke(new Action(() => UpdateStatusInfo(indexedCount, missingCount)));
             return;
         }
 

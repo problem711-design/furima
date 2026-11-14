@@ -27,8 +27,105 @@ class FurimaServerNative
     private static string tunnelUrl = "";
     private static TunnelQrForm qrForm = null;
     private static Process cloudflaredProcess = null;
+    private static HttpListener activeListener = null;
+    private static volatile bool isShuttingDown = false;
+    private static int cleanupExecuted = 0;
+    private static ServerLogWriter logWriter = null;
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
+
+    private class ServerLogWriter : TextWriter
+    {
+        private readonly object writeLock = new object();
+        private StreamWriter fileWriter;
+        private readonly StringBuilder lineBuffer = new StringBuilder();
+
+        public ServerLogWriter(string logPath)
+        {
+            try
+            {
+                if (File.Exists(logPath))
+                {
+                    FileInfo fi = new FileInfo(logPath);
+                    if (fi.Length > 2 * 1024 * 1024)
+                    {
+                        try { File.Delete(logPath); } catch { }
+                    }
+                }
+                FileStream fs = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+                fileWriter = new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
+            }
+            catch
+            {
+                fileWriter = null;
+            }
+        }
+
+        public override Encoding Encoding { get { return Encoding.UTF8; } }
+
+        public override void Write(char value)
+        {
+            lock (writeLock)
+            {
+                if (fileWriter == null) return;
+                if (value == '\r') return;
+                if (value == '\n')
+                {
+                    FlushLineLocked();
+                }
+                else
+                {
+                    lineBuffer.Append(value);
+                }
+            }
+        }
+
+        public override void WriteLine(string value)
+        {
+            lock (writeLock)
+            {
+                if (fileWriter == null) return;
+                if (lineBuffer.Length > 0)
+                {
+                    lineBuffer.Append(value ?? "");
+                    FlushLineLocked();
+                }
+                else
+                {
+                    try
+                    {
+                        fileWriter.WriteLine(DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss] ") + (value ?? ""));
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        private void FlushLineLocked()
+        {
+            try
+            {
+                fileWriter.WriteLine(DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss] ") + lineBuffer.ToString());
+            }
+            catch { }
+            lineBuffer.Length = 0;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            lock (writeLock)
+            {
+                if (disposing && fileWriter != null)
+                {
+                    if (lineBuffer.Length > 0) FlushLineLocked();
+                    try { fileWriter.Flush(); } catch { }
+                    try { fileWriter.Dispose(); } catch { }
+                    fileWriter = null;
+                }
+            }
+            base.Dispose(disposing);
+        }
+    }
 
     private static long BumpDataRevision()
     {
@@ -179,12 +276,19 @@ class FurimaServerNative
         mutex = new Mutex(true, "FurimaServerNative_SingleInstance_Mutex", out createdNew);
         if (!createdNew)
         {
+            try { mutex.Close(); } catch { }
+            mutex = null;
             MessageBox.Show("母艦サーバーは既に起動しています。二重起動を防止するため終了します。", "エラー", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
         try
         {
+            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            logWriter = new ServerLogWriter(Path.Combine(baseDir, "server.log"));
+            Console.SetOut(logWriter);
+            Console.SetError(logWriter);
+
             Console.WriteLine("=================================================");
             Console.WriteLine("  フリマ出品・商品PC母艦サーバー (v2.1 Native) ");
             Console.WriteLine("=================================================");
@@ -197,8 +301,9 @@ class FurimaServerNative
             }
 
             // 保存先と store.json の初期化（永続化された authToken を取得）
-            string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             SyncStore.Initialize(baseDir, ref authToken);
+            // プロセスがサーバーフォルダのディレクトリハンドルをロックし続けないようカレントディレクトリを退避
+            try { Environment.CurrentDirectory = Path.GetTempPath(); } catch { }
             syncDir = SyncStore.SyncDir;
             itemsJsonFile = Path.Combine(syncDir, "items_data.json");
 
@@ -243,16 +348,26 @@ class FurimaServerNative
             Console.WriteLine(" サーバーが正常起動しました: " + boundUrl);
             Console.WriteLine("-------------------------------------------------");
 
+            activeListener = listener;
+
             ThreadPool.QueueUserWorkItem((o) =>
             {
-                while (listener != null && listener.IsListening)
+                while (!isShuttingDown && listener != null && listener.IsListening)
                 {
                     try
                     {
                         var ctx = listener.GetContext();
+                        if (isShuttingDown)
+                        {
+                            try { ctx.Response.Abort(); } catch { }
+                            break;
+                        }
                         ThreadPool.QueueUserWorkItem((state) => HandleRequest(ctx));
                     }
-                    catch { }
+                    catch
+                    {
+                        if (isShuttingDown) break;
+                    }
                 }
             });
 
@@ -270,8 +385,7 @@ class FurimaServerNative
 
             qrForm.FormClosed += (s, e) =>
             {
-                try { if (listener != null && listener.IsListening) listener.Stop(); } catch { }
-                try { if (cloudflaredProcess != null && !cloudflaredProcess.HasExited) cloudflaredProcess.Kill(); } catch { }
+                ShutdownServerResources();
             };
 
             Application.Run(qrForm);
@@ -284,28 +398,106 @@ class FurimaServerNative
         }
         finally
         {
-            if (cloudflaredProcess != null && !cloudflaredProcess.HasExited)
-            {
-                try { cloudflaredProcess.Kill(); } catch { }
-            }
-            if (mutex != null)
-            {
-                try { mutex.ReleaseMutex(); } catch { }
-            }
+            ShutdownServerResources();
         }
+        Environment.Exit(0);
+    }
+
+    private static void ShutdownServerResources()
+    {
+        isShuttingDown = true;
+        if (Interlocked.Exchange(ref cleanupExecuted, 1) != 0) return;
+
+        HttpListener l = activeListener;
+        activeListener = null;
+        if (l != null)
+        {
+            try { if (l.IsListening) l.Stop(); } catch { }
+            try { l.Close(); } catch { }
+            try { l.Abort(); } catch { }
+        }
+
+        KillCloudflaredProcessTree();
+
+        if (mutex != null)
+        {
+            try { mutex.ReleaseMutex(); } catch { }
+            try { mutex.Dispose(); } catch { }
+            mutex = null;
+        }
+
+        if (logWriter != null)
+        {
+            try { Console.WriteLine("[INFO] サーバーを正常終了しました。"); } catch { }
+            try { Console.SetOut(TextWriter.Null); Console.SetError(TextWriter.Null); } catch { }
+            try { logWriter.Dispose(); } catch { }
+            logWriter = null;
+        }
+    }
+
+    private static void KillCloudflaredProcessTree()
+    {
+        Process proc = cloudflaredProcess;
+        cloudflaredProcess = null;
+        if (proc == null) return;
+
+        try { proc.CancelOutputRead(); } catch { }
+        try { proc.CancelErrorRead(); } catch { }
+
+        int pid = 0;
+        bool alive = false;
+        try
+        {
+            alive = !proc.HasExited;
+            if (alive) pid = proc.Id;
+        }
+        catch { }
+
+        if (alive && pid > 0)
+        {
+            try
+            {
+                ProcessStartInfo tkPsi = new ProcessStartInfo
+                {
+                    FileName = "taskkill.exe",
+                    Arguments = "/F /T /PID " + pid,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WorkingDirectory = Path.GetTempPath()
+                };
+                using (Process tk = Process.Start(tkPsi))
+                {
+                    if (tk != null) tk.WaitForExit(1500);
+                }
+            }
+            catch { }
+
+            try
+            {
+                if (!proc.HasExited)
+                {
+                    proc.Kill();
+                    proc.WaitForExit(1500);
+                }
+            }
+            catch { }
+        }
+
+        try { proc.Dispose(); } catch { }
     }
 
     private static void StartCloudflared(int port)
     {
         ThreadPool.QueueUserWorkItem((o) =>
         {
+            if (isShuttingDown) return;
             try
             {
                 string exePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "cloudflared.exe");
                 if (!File.Exists(exePath))
                 {
                     Console.WriteLine("[cloudflared] cloudflared.exe が見つかりません。");
-                    if (qrForm != null) qrForm.UpdateTunnelUrl("");
+                    if (!isShuttingDown && qrForm != null) qrForm.UpdateTunnelUrl("");
                     return;
                 }
 
@@ -316,38 +508,43 @@ class FurimaServerNative
                     UseShellExecute = false,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
-                    CreateNoWindow = true
+                    CreateNoWindow = true,
+                    WorkingDirectory = Path.GetTempPath()
                 };
 
-                cloudflaredProcess = new Process { StartInfo = psi };
+                Process proc = new Process { StartInfo = psi };
                 DataReceivedEventHandler handler = (sender, e) =>
                 {
-                    if (!string.IsNullOrEmpty(e.Data))
+                    if (isShuttingDown || string.IsNullOrEmpty(e.Data)) return;
+                    if (e.Data.Contains("trycloudflare.com"))
                     {
-                        if (e.Data.Contains("trycloudflare.com"))
+                        var match = Regex.Match(e.Data, @"https://[a-zA-Z0-9\-]+\.trycloudflare\.com");
+                        if (match.Success)
                         {
-                            var match = Regex.Match(e.Data, @"https://[a-zA-Z0-9\-]+\.trycloudflare\.com");
-                            if (match.Success)
-                            {
-                                tunnelUrl = match.Value;
-                                Console.WriteLine("[cloudflared] トンネルURL発行完了: " + tunnelUrl);
-                                if (qrForm != null) qrForm.UpdateTunnelUrl(tunnelUrl);
-                            }
+                            tunnelUrl = match.Value;
+                            Console.WriteLine("[cloudflared] トンネルURL発行完了: " + tunnelUrl);
+                            if (!isShuttingDown && qrForm != null) qrForm.UpdateTunnelUrl(tunnelUrl);
                         }
                     }
                 };
 
-                cloudflaredProcess.OutputDataReceived += handler;
-                cloudflaredProcess.ErrorDataReceived += handler;
+                proc.OutputDataReceived += handler;
+                proc.ErrorDataReceived += handler;
 
-                cloudflaredProcess.Start();
-                cloudflaredProcess.BeginOutputReadLine();
-                cloudflaredProcess.BeginErrorReadLine();
+                cloudflaredProcess = proc;
+                proc.Start();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+
+                if (isShuttingDown)
+                {
+                    KillCloudflaredProcessTree();
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("[cloudflared] 起動エラー: " + ex.Message);
-                if (qrForm != null) qrForm.UpdateTunnelUrl("");
+                if (!isShuttingDown && qrForm != null) qrForm.UpdateTunnelUrl("");
             }
         });
     }
@@ -399,6 +596,7 @@ class FurimaServerNative
             p.StartInfo.UseShellExecute = false;
             p.StartInfo.RedirectStandardOutput = true;
             p.StartInfo.CreateNoWindow = true;
+            p.StartInfo.WorkingDirectory = Path.GetTempPath();
             p.Start();
             string output = p.StandardOutput.ReadToEnd();
             p.WaitForExit();
