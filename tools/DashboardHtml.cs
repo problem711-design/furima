@@ -1242,6 +1242,10 @@ public static class DashboardHtml
             document.getElementById('setting-preset-form-title').innerText = '＋ 新しいプリセットを追加';
         }
 
+        function resetTemplateForm(category) {
+            // テンプレートフォーム初期化用プレースホルダー
+        }
+
         async function savePresetFromForm() {
             const editId = document.getElementById('setting-preset-edit-id').value.trim();
             const name = document.getElementById('setting-preset-name').value.trim();
@@ -1772,19 +1776,6 @@ public static class DashboardHtml
             const isTrashView = currentFilter === 'TRASH';
             let items = allItems.filter(item => {
                 const trashed = isItemTrashed(item);
-                const itemWarnings = (!trashed && item.status !== 'SOLD' && item.status !== 'MERGED')
-                    ? evaluateListingWarningsObj({
-                        title: item.title || '',
-                        description: item.description || '',
-                        photoCount: Array.isArray(item.photos) ? item.photos.length : 0,
-                        price: item.price || 0,
-                        profit: (item.profit != null) ? item.profit : ((item.price || 0) - Math.floor((item.price || 0) * ((item.useCustomSettings && item.feeRatePercent != null) ? item.feeRatePercent : pcSettings.defaultFeeRatePercent) / 100) - ((item.useCustomSettings && item.shippingCost != null) ? item.shippingCost : pcSettings.defaultShippingCost) - ((item.useCustomSettings && item.expenseCost != null) ? item.expenseCost : pcSettings.defaultExpenseCost)),
-                        status: item.status || 'LISTED'
-                    })
-                    : [];
-                const itemWarningsCritical = itemWarnings.filter(w => w.critical);
-                const itemWarningsCriticalCount = itemWarningsCritical.length;
-                const itemWarningsTitle = itemWarningsCritical.map(w => w.text).join(' / ');
                 if (isTrashView) {
                     if (!trashed) return false;
                     if (item.status === 'MERGED' && item.mergedParentId && item.mergedParentId > 0) return false;
@@ -1853,6 +1844,20 @@ public static class DashboardHtml
                 const profitText = item.profit != null ? ' (利益 ¥' + item.profit.toLocaleString() + ')' : '';
                 const titleLen = (item.title || '').length;
                 const isChecked = selectedItemIds.has(item.id);
+
+                const itemWarnings = (!trashed && !isSold && !isMergedChild)
+                    ? evaluateListingWarningsObj({
+                        title: item.title || '',
+                        description: item.description || '',
+                        photoCount: photos.length,
+                        price: item.price || 0,
+                        profit: (item.profit != null) ? item.profit : ((item.price || 0) - Math.floor((item.price || 0) * ((item.useCustomSettings && item.feeRatePercent != null) ? item.feeRatePercent : pcSettings.defaultFeeRatePercent) / 100) - ((item.useCustomSettings && item.shippingCost != null) ? item.shippingCost : pcSettings.defaultShippingCost) - ((item.useCustomSettings && item.expenseCost != null) ? item.expenseCost : pcSettings.defaultExpenseCost)),
+                        status: item.status || 'LISTED'
+                    })
+                    : [];
+                const itemWarningsCritical = itemWarnings.filter(w => w.critical);
+                const itemWarningsCriticalCount = itemWarningsCritical.length;
+                const itemWarningsTitle = itemWarningsCritical.map(w => w.text).join(' / ');
 
                 return `<div class='bg-white rounded-lg border ${trashed ? 'border-rose-200 bg-rose-50/20' : (isChecked ? 'border-indigo-500 ring-2 ring-indigo-300' : 'border-slate-200')} overflow-hidden shadow-sm hover:shadow-md transition flex flex-col'>
                     <!-- サムネイル外の選択チェックボックスバー -->

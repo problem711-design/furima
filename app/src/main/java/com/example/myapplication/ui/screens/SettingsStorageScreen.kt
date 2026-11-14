@@ -53,6 +53,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -126,6 +129,13 @@ fun SettingsStorageScreen(
     var editingTemplateCategory by remember { mutableStateOf<TemplateCategory?>(null) }
     var templateToEdit by remember { mutableStateOf<TextTemplate?>(null) }
     var templateToDelete by remember { mutableStateOf<Pair<TemplateCategory, TextTemplate>?>(null) }
+
+    var selectedTitleTemplateId by remember(titleTemplatesList) {
+        mutableStateOf(titleTemplatesList.firstOrNull()?.id)
+    }
+    var selectedDescTemplateId by remember(descriptionTemplatesList) {
+        mutableStateOf(descriptionTemplatesList.firstOrNull()?.id)
+    }
 
     fun persistSettingsNow(
         targetPresets: List<FeePreset> = presetsList.toList(),
@@ -481,7 +491,8 @@ fun SettingsStorageScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(innerPadding)
-                        .padding(16.dp),
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedTextField(
@@ -519,9 +530,10 @@ fun SettingsStorageScreen(
                         onValueChange = { tplContent = it },
                         label = { Text(if (isTitleCategory) "挿入するタイトル文字列" else "挿入する説明文本文 (${tplContent.length}文字)") },
                         singleLine = false,
+                        minLines = 8,
+                        maxLines = 20,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f)
                             .testTag("template_content_input")
                     )
                 }
@@ -782,91 +794,45 @@ fun SettingsStorageScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
                     )
 
-                    // タイトル用テンプレート
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("タイトル用テンプレート (${titleTemplatesList.size}件)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        OutlinedButton(
-                            onClick = {
-                                templateToEdit = null
-                                editingTemplateCategory = TemplateCategory.TITLE
-                            },
-                            modifier = Modifier.testTag("add_title_template_button")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("追加", fontSize = 12.sp)
+                    // タイトル用テンプレート（プルダウン式）
+                    val selectedTitleTemplate = titleTemplatesList.find { it.id == selectedTitleTemplateId } ?: titleTemplatesList.firstOrNull()
+                    SectionTemplateDropdown(
+                        title = "タイトル用テンプレート",
+                        templates = titleTemplatesList,
+                        selectedTemplate = selectedTitleTemplate,
+                        onSelectTemplate = { selectedTitleTemplateId = it?.id },
+                        onAddClick = {
+                            templateToEdit = null
+                            editingTemplateCategory = TemplateCategory.TITLE
+                        },
+                        onEditClick = { tpl ->
+                            templateToEdit = tpl
+                            editingTemplateCategory = TemplateCategory.TITLE
+                        },
+                        onDeleteClick = { tpl ->
+                            templateToDelete = Pair(TemplateCategory.TITLE, tpl)
                         }
-                    }
+                    )
 
-                    if (titleTemplatesList.isEmpty()) {
-                        Text(
-                            text = "※ 未登録です（例：【美品】【即購入OK】など）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            titleTemplatesList.forEach { tpl ->
-                                TemplateRowItem(
-                                    template = tpl,
-                                    onEdit = {
-                                        templateToEdit = tpl
-                                        editingTemplateCategory = TemplateCategory.TITLE
-                                    },
-                                    onDelete = {
-                                        templateToDelete = Pair(TemplateCategory.TITLE, tpl)
-                                    }
-                                )
-                            }
+                    // 商品説明用テンプレート（プルダウン式）
+                    val selectedDescTemplate = descriptionTemplatesList.find { it.id == selectedDescTemplateId } ?: descriptionTemplatesList.firstOrNull()
+                    SectionTemplateDropdown(
+                        title = "商品説明用テンプレート",
+                        templates = descriptionTemplatesList,
+                        selectedTemplate = selectedDescTemplate,
+                        onSelectTemplate = { selectedDescTemplateId = it?.id },
+                        onAddClick = {
+                            templateToEdit = null
+                            editingTemplateCategory = TemplateCategory.DESCRIPTION
+                        },
+                        onEditClick = { tpl ->
+                            templateToEdit = tpl
+                            editingTemplateCategory = TemplateCategory.DESCRIPTION
+                        },
+                        onDeleteClick = { tpl ->
+                            templateToDelete = Pair(TemplateCategory.DESCRIPTION, tpl)
                         }
-                    }
-
-                    // 商品説明用テンプレート
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("商品説明用テンプレート (${descriptionTemplatesList.size}件)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                        OutlinedButton(
-                            onClick = {
-                                templateToEdit = null
-                                editingTemplateCategory = TemplateCategory.DESCRIPTION
-                            },
-                            modifier = Modifier.testTag("add_desc_template_button")
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("追加", fontSize = 12.sp)
-                        }
-                    }
-
-                    if (descriptionTemplatesList.isEmpty()) {
-                        Text(
-                            text = "※ 未登録です（例：ペット・喫煙者なし / 防水梱包発送など）",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                    } else {
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            descriptionTemplatesList.forEach { tpl ->
-                                TemplateRowItem(
-                                    template = tpl,
-                                    onEdit = {
-                                        templateToEdit = tpl
-                                        editingTemplateCategory = TemplateCategory.DESCRIPTION
-                                    },
-                                    onDelete = {
-                                        templateToDelete = Pair(TemplateCategory.DESCRIPTION, tpl)
-                                    }
-                                )
-                            }
-                        }
-                    }
+                    )
                 }
             }
 
@@ -1058,60 +1024,114 @@ fun SettingsStorageScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TemplateRowItem(
-    template: TextTemplate,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+private fun SectionTemplateDropdown(
+    title: String,
+    templates: List<TextTemplate>,
+    selectedTemplate: TextTemplate?,
+    onSelectTemplate: (TextTemplate?) -> Unit,
+    onAddClick: () -> Unit,
+    onEditClick: (TextTemplate) -> Unit,
+    onDeleteClick: (TextTemplate) -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = template.name,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = template.content.replace("\n", " "),
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(
-                onClick = onEdit,
-                modifier = Modifier.testTag("edit_template_${template.id}")
+            Text("$title (${templates.size}件)", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            OutlinedButton(
+                onClick = onAddClick,
+                modifier = Modifier.testTag("add_${title}_button")
             ) {
-                Icon(
-                    imageVector = Icons.Default.Edit,
-                    contentDescription = "テンプレートを編集",
-                    modifier = Modifier.size(18.dp)
-                )
+                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("追加", fontSize = 12.sp)
             }
-            IconButton(
-                onClick = onDelete,
-                modifier = Modifier.testTag("delete_template_${template.id}")
+        }
+
+        if (templates.isEmpty()) {
+            Text(
+                text = "※ 未登録です",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+            )
+        } else {
+            ExposedDropdownMenuBox(
+                expanded = expanded,
+                onExpandedChange = { expanded = !expanded },
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "テンプレートを削除",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(18.dp)
+                OutlinedTextField(
+                    value = selectedTemplate?.name ?: "テンプレートを選択...",
+                    onValueChange = {},
+                    readOnly = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .menuAnchor()
                 )
+                ExposedDropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { expanded = false }
+                ) {
+                    templates.forEach { tpl ->
+                        DropdownMenuItem(
+                            text = { Text(tpl.name) },
+                            onClick = {
+                                onSelectTemplate(tpl)
+                                expanded = false
+                            }
+                        )
+                    }
+                }
+            }
+
+            if (selectedTemplate != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = selectedTemplate.content,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 4,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { onEditClick(selectedTemplate) }) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("編集", fontSize = 11.sp)
+                            }
+                            TextButton(
+                                onClick = { onDeleteClick(selectedTemplate) },
+                                colors = androidx.compose.material3.ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(2.dp))
+                                Text("削除", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
             }
         }
     }
