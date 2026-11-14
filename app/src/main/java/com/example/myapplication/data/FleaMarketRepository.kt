@@ -411,7 +411,7 @@ class FleaMarketRepository(private val context: Context) {
     suspend fun moveItemsToTrash(itemIds: List<Int>): Int {
         var count = 0
         for (id in itemIds.distinct()) {
-            val itemWithPhotos = dao.getItemById(id) ?: continue
+            val itemWithPhotos = dao.getItemWithPhotosById(id) ?: continue
             moveToTrash(itemWithPhotos)
             count++
         }
@@ -430,7 +430,7 @@ class FleaMarketRepository(private val context: Context) {
     suspend fun permanentlyDeleteItemsFromTrash(itemIds: List<Int>): Int {
         var count = 0
         for (id in itemIds.distinct()) {
-            val itemWithPhotos = dao.getItemById(id) ?: continue
+            val itemWithPhotos = dao.getItemWithPhotosById(id) ?: continue
             permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
             count++
         }
@@ -441,7 +441,7 @@ class FleaMarketRepository(private val context: Context) {
         val now = System.currentTimeMillis()
         var updatedCount = 0
         for (id in itemIds.distinct()) {
-            val existing = dao.getItemById(id)?.item ?: continue
+            val existing = dao.getItemWithPhotosById(id)?.item ?: continue
             if (existing.deletedAt != null || existing.status == "MERGED") continue
 
             val nextPrice = when (spec.priceMode) {

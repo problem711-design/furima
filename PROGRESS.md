@@ -87,7 +87,7 @@
   - [x] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
 
 ---
-amma
+
 ## 更新履歴 (Changelog)
 
 ### 2026/11/14 フェーズ 3.2 完了 バージョン 0.9β (Build 9)
@@ -95,7 +95,7 @@ amma
   - `ItemListScreen.kt` / `FleaMarketViewModel.kt` / `DashboardHtml.cs`：選択モードの `SOLD` 選択禁止を解除（非削除・非内包商品は全ステータス選択可）し、1件選択から一括操作バーを表示。「まとめ買い」ボタンのみ `2件以上かつ未売却のみ` で有効化する安全ガードを追加。
   - `BatchEditDialog.kt` / `FleaMarketRepository.kt` / `DashboardHtml.cs`：ステータス変更（`soldAt`/`soldPrice`・まとめ子 `statusLabel` 連動）、費用プリセット適用（`基本設定に従う` 含む）、価格変更（固定額/±円/±%、**0円未満クランプ**）を個別ON/OFFできる部分一括編集 ＋ 変更サンプルプレビューを実装。
   - `TrashScreen.kt` / `FurimaServerNative.cs` / `DashboardHtml.cs`：ゴミ箱画面での複数選択一括復元・一括完全削除を追加し、PCサーバーに `POST /api/items/batch-trash`、`POST /api/items/batch-restore`、`DELETE /api/items/batch-permanent`、`POST /api/items/batch-update` を新設（バッチ毎に1回のみ `BumpDataRevision()` / `SaveItemsDbToDisk()` を実行）。
-  - **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 9`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v0.9β (Build 9)`** へ3箇所同時統一（※Windows向け `.exe` および実機配布用 `.apk` のバイナリ再ビルドは各自環境で実行可能）。
+  - **コンパイル検証 ＆ バージョン統一更新**：`FleaMarketRepository.kt`（`getItemWithPhotosById` 参照修正）・`ItemEditScreen.kt`（`FlowRow` インポート/OptIn復元）・`ItemListScreen.kt`（`AlertDialog` インポート追加）・`SettingsStorageScreen.kt`（`ExperimentalMaterial3Api` OptIn追加・重複インポート整理）の4箇所を修復し、`compile_applet` で Android ビルド正常通過を確認。`app/build.gradle.kts` (`versionCode = 9`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v0.9β (Build 9)`** へ3箇所同時統一（※Windows向け `.exe` および実機配布用 `.apk` のバイナリ再ビルドは各自環境で実行可能）。
 
 ### 2026/11/14 フェーズ 3.2-B 完了 (進行中 ➔ 目標 v0.9β Build 9)
 - **3.2-B (テンプレートUI刷新・フルウィンドウ編集・変数展開・PCワンクリックコピー)**：
