@@ -77,7 +77,7 @@
 目標バージョン：**`v0.9β (Build 6)`**
 
 ### 3.1 サブフェーズ 2.16-A — デバッグ残骸 `#18` 撤去 ＋ まとめ買いステータス＆30日クリーンアップ安全化
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `tools/DashboardHtml.cs`
   * `tools/FurimaServerNative.cs`
@@ -88,7 +88,7 @@
   3. `SyncStore.GetCleanupCandidates()`（523〜525行目）では `status == "SOLD"` の商品のみをクリーンアップ判定対象とし（`MERGED` 単体で削除対象にしない）、かつアクティブな他商品（`LISTED` / `DRAFT` 等）が参照中のハッシュ・ファイルは削除対象から除外する安全ガードを追加する。
 
 ### 3.2 サブフェーズ 2.16-B — PC単独編集・双方向同期・フォルダ整合・UTF-8/Null安全性修復
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `tools/DashboardHtml.cs`
   * `tools/FurimaServerNative.cs`
@@ -109,7 +109,7 @@
      - `LocalWebServer.kt` の `/api/photos/{photoId}/restore`（520行目）で、原本削除後に `filePath` がサムネイルパスへ切り替わっていてもサムネイルを上書きしないよう、新規の原本パスを生成して書き戻しDBを更新する。
 
 ### 3.3 サブフェーズ 2.16-C — 画像形式（PNG/WebP/EXIF回転）・クリップボード・旧モーダル整理 ＋ Build 6 統一
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `tools/FurimaServerNative.cs`
   * `tools/DashboardHtml.cs`

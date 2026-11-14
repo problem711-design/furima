@@ -119,6 +119,58 @@ class FurimaServerNative
         catch { }
     }
 
+    private static string ResolveOrCreateItemFolder(int itemId, string title)
+    {
+        string safeTitle = string.IsNullOrEmpty(title) ? "商品" : title;
+        foreach (char c in Path.GetInvalidFileNameChars()) safeTitle = safeTitle.Replace(c, '_');
+        safeTitle = safeTitle.Trim();
+        if (string.IsNullOrEmpty(safeTitle)) safeTitle = "商品";
+
+        string desiredDir = Path.Combine(syncDir, itemId + "_" + safeTitle);
+        string existingDir = null;
+        if (itemId > 0 && Directory.Exists(syncDir))
+        {
+            foreach (string d in Directory.GetDirectories(syncDir))
+            {
+                string name = Path.GetFileName(d);
+                if (name.StartsWith(itemId + "_") || name == itemId.ToString())
+                {
+                    existingDir = d;
+                    break;
+                }
+            }
+        }
+
+        if (existingDir != null)
+        {
+            if (!string.Equals(existingDir, desiredDir, StringComparison.OrdinalIgnoreCase) && !Directory.Exists(desiredDir))
+            {
+                try
+                {
+                    Directory.Move(existingDir, desiredDir);
+                    var keys = new List<string>(hashToFilePathMap.Keys);
+                    foreach (var k in keys)
+                    {
+                        string p = hashToFilePathMap[k];
+                        if (!string.IsNullOrEmpty(p) && p.StartsWith(existingDir, StringComparison.OrdinalIgnoreCase))
+                        {
+                            hashToFilePathMap[k] = desiredDir + p.Substring(existingDir.Length);
+                        }
+                    }
+                    return desiredDir;
+                }
+                catch
+                {
+                    return existingDir;
+                }
+            }
+            return existingDir;
+        }
+
+        Directory.CreateDirectory(desiredDir);
+        return desiredDir;
+    }
+
     [STAThread]
     static void Main(string[] args)
     {
@@ -367,11 +419,13 @@ class FurimaServerNative
             hashToFilePathMap.Clear();
             if (!Directory.Exists(syncDir)) return;
 
-            var files = Directory.GetFiles(syncDir, "*.jpg", SearchOption.AllDirectories);
+            var allFiles = Directory.GetFiles(syncDir, "*.*", SearchOption.AllDirectories);
             using (var md5 = MD5.Create())
             {
-                foreach (var file in files)
+                foreach (var file in allFiles)
                 {
+                    string ext = Path.GetExtension(file).ToLower();
+                    if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp") continue;
                     try
                     {
                         using (var stream = File.OpenRead(file))
@@ -631,7 +685,7 @@ class FurimaServerNative
                 {
                     { "status", "ok" },
                     { "appConnected", isConnected },
-                    { "lastHeartbeatSec", (int)(DateTime.Now - lastHeartbeat).TotalSeconds },
+                    { "lastHeartbeatSec", lastHeartbeat == DateTime.MinValue ? -1 : (int)(DateTime.Now - lastHeartbeat).TotalSeconds },
                     { "indexedPhotosCount", hashToFilePathMap.Count },
                     { "missingFileCount", missingCount },
                     { "storeId", SyncStore.StoreId },
@@ -762,8 +816,8 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("リクエスト処理エラー: " + ex.Message);
-            res.StatusCode = 500;
-            res.Close();
+            try { res.StatusCode = 500; } catch { }
+            try { res.Close(); } catch { }
         }
     }
 
@@ -771,7 +825,7 @@ class FurimaServerNative
     {
         try
         {
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
@@ -943,8 +997,8 @@ class FurimaServerNative
 
                             string title = item.Value<string>("title") ?? "商品";
                             string description = item.Value<string>("description") ?? "";
-                            int price = item.Value<int>("price");
-                            int profit = item.Value<int>("profit");
+                            int price = ParseIntSafe(item["price"], 0);
+                            int profit = ParseIntSafe(item["profit"], 0);
                             string itemStatus = item.Value<string>("status") ?? "LISTED";
                             long incomingDeletedAt = item["deletedAt"] != null && item["deletedAt"].Type != JTokenType.Null
                                 ? ParseLongSafe(item["deletedAt"], 0)
@@ -955,15 +1009,7 @@ class FurimaServerNative
                                 ? "ゴミ箱"
                                 : (item.Value<string>("statusLabel") ?? (itemStatus == "SOLD" ? "売却済み" : (itemStatus == "DRAFT" ? "未出品" : "出品中")));
 
-                            string safeTitle = title;
-                            foreach (char c in Path.GetInvalidFileNameChars())
-                            {
-                                safeTitle = safeTitle.Replace(c, '_');
-                            }
-
-                            string itemFolderName = assignedId + "_" + safeTitle;
-                            string itemDirPath = Path.Combine(syncDir, itemFolderName);
-                            Directory.CreateDirectory(itemDirPath);
+                            string itemDirPath = ResolveOrCreateItemFolder(assignedId, title);
 
                             string txtPath = Path.Combine(itemDirPath, "商品情報_説明文.txt");
                             string txtContent = "【商品ID】 " + assignedId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【ステータス】 " + statusLabel + "\n\n--- 商品説明 ---\n" + description;
@@ -976,7 +1022,7 @@ class FurimaServerNative
                             {
                                 foreach (JObject photo in photosArr)
                                 {
-                                    int pId = photo.Value<int>("id");
+                                    int pId = ParseIntSafe(photo["id"], 0);
                                     string md5Hash = (photo.Value<string>("md5Hash") ?? "").Trim().ToLower();
 
                                     bool existsOnServer = !string.IsNullOrEmpty(md5Hash) &&
@@ -992,12 +1038,19 @@ class FurimaServerNative
                                         if (!neededHashes.Contains(md5Hash)) neededHashes.Add(md5Hash);
                                     }
 
-                                    savedPhotosList.Add(new Dictionary<string, object>
+                                    var photoEntry = new Dictionary<string, object>
                                     {
                                         { "id", pId },
                                         { "md5Hash", md5Hash },
-                                        { "photoUrl", "/api/photos/" + md5Hash }
-                                    });
+                                        { "photoUrl", "/api/photos/" + md5Hash },
+                                        { "displayOrder", ParseIntSafe(photo["displayOrder"], savedPhotosList.Count) }
+                                    };
+                                    int childItemIdVal = ParseIntSafe(photo["childItemId"], 0);
+                                    if (childItemIdVal > 0)
+                                    {
+                                        photoEntry["childItemId"] = childItemIdVal;
+                                    }
+                                    savedPhotosList.Add(photoEntry);
                                 }
                             }
 
@@ -1051,7 +1104,7 @@ class FurimaServerNative
                                 { "description", description },
                                 { "status", itemStatus },
                                 { "price", price },
-                                { "soldPrice", item.Value<int>("soldPrice") },
+                                { "soldPrice", ParseIntSafe(item["soldPrice"], 0) },
                                 { "profit", profit },
                                 { "statusLabel", statusLabel },
                                 { "isShared", true },
@@ -1068,10 +1121,10 @@ class FurimaServerNative
                                 { "mergedChildTitles", item["mergedChildTitles"] },
                                 { "originalTotalBundlePrice", item["originalTotalBundlePrice"] },
                                 { "discountAmount", item["discountAmount"] },
-                                { "shippingCost", item["shippingCost"] != null ? item.Value<int>("shippingCost") : 210 },
-                                { "feeRatePercent", item["feeRatePercent"] != null ? item.Value<int>("feeRatePercent") : 5 },
-                                { "expenseCost", item["expenseCost"] != null ? item.Value<int>("expenseCost") : 55 },
-                                { "useCustomSettings", item["useCustomSettings"] != null && item.Value<bool>("useCustomSettings") }
+                                { "shippingCost", ParseIntSafe(item["shippingCost"], 210) },
+                                { "feeRatePercent", ParseIntSafe(item["feeRatePercent"], 5) },
+                                { "expenseCost", ParseIntSafe(item["expenseCost"], 55) },
+                                { "useCustomSettings", ParseBoolSafe(item["useCustomSettings"], false) }
                             };
 
                             if (existingItem != null)
@@ -1180,9 +1233,7 @@ class FurimaServerNative
                                     {
                                         int id = Convert.ToInt32(item["id"]);
                                         string title = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "";
-                                        foreach (char c in Path.GetInvalidFileNameChars()) title = title.Replace(c, '_');
-                                        targetDirPath = Path.Combine(syncDir, id + "_" + title);
-                                        Directory.CreateDirectory(targetDirPath);
+                                        targetDirPath = ResolveOrCreateItemFolder(id, title);
                                         break;
                                     }
                                 }
@@ -1190,7 +1241,7 @@ class FurimaServerNative
                         }
                     }
 
-                    string photoFileName = "photo_" + computedHash.Substring(0, 8) + ".jpg";
+                    string photoFileName = "photo_" + computedHash.Substring(0, 8) + DetectImageExtension(photoBytes);
                     string photoPath = Path.Combine(targetDirPath, photoFileName);
                     File.WriteAllBytes(photoPath, photoBytes);
 
@@ -1297,14 +1348,14 @@ class FurimaServerNative
                 return;
             }
 
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding))
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
 
                 string title = json.Value<string>("title") ?? "";
-                int price = json.Value<int>("price");
-                int soldPrice = json.Value<int>("soldPrice");
+                int price = Math.Max(0, ParseIntSafe(json["price"], 0));
+                int soldPrice = Math.Max(0, ParseIntSafe(json["soldPrice"], 0));
                 string status = json.Value<string>("status") ?? "LISTED";
                 string description = json.Value<string>("description") ?? "";
 
@@ -1323,12 +1374,12 @@ class FurimaServerNative
                     int shipping = item.ContainsKey("shippingCost") && item["shippingCost"] != null ? ParseIntSafe(item["shippingCost"], 210) : 210;
                     int feeRate = item.ContainsKey("feeRatePercent") && item["feeRatePercent"] != null ? ParseIntSafe(item["feeRatePercent"], 5) : 5;
                     int expense = item.ContainsKey("expenseCost") && item["expenseCost"] != null ? ParseIntSafe(item["expenseCost"], 55) : 55;
-                    bool useCustom = item.ContainsKey("useCustomSettings") && item["useCustomSettings"] != null && (bool)item["useCustomSettings"];
+                    bool useCustom = item.ContainsKey("useCustomSettings") && ParseBoolSafe(item["useCustomSettings"], false);
 
                     if (json["shippingCost"] != null && json["shippingCost"].Type != JTokenType.Null) shipping = Math.Max(0, ParseIntSafe(json["shippingCost"], shipping));
                     if (json["feeRatePercent"] != null && json["feeRatePercent"].Type != JTokenType.Null) feeRate = Math.Max(0, ParseIntSafe(json["feeRatePercent"], feeRate));
                     if (json["expenseCost"] != null && json["expenseCost"].Type != JTokenType.Null) expense = Math.Max(0, ParseIntSafe(json["expenseCost"], expense));
-                    if (json["useCustomSettings"] != null) useCustom = json.Value<bool>("useCustomSettings");
+                    if (json["useCustomSettings"] != null && json["useCustomSettings"].Type != JTokenType.Null) useCustom = ParseBoolSafe(json["useCustomSettings"], useCustom);
 
                     int calcPrice = (status == "SOLD" && soldPrice > 0) ? soldPrice : price;
                     int profit = Math.Max(0, calcPrice - (calcPrice * feeRate / 100) - shipping - expense);
@@ -1358,23 +1409,7 @@ class FurimaServerNative
 
                     try
                     {
-                        string safeTitle = title;
-                        foreach (char c in Path.GetInvalidFileNameChars()) safeTitle = safeTitle.Replace(c, '_');
-                        string targetDir = null;
-                        if (Directory.Exists(syncDir))
-                        {
-                            foreach (string d in Directory.GetDirectories(syncDir))
-                            {
-                                string name = Path.GetFileName(d);
-                                if (name.StartsWith(itemId + "_") || name == itemId.ToString())
-                                {
-                                    targetDir = d;
-                                    break;
-                                }
-                            }
-                        }
-                        if (targetDir == null) targetDir = Path.Combine(syncDir, itemId + "_" + safeTitle);
-                        Directory.CreateDirectory(targetDir);
+                        string targetDir = ResolveOrCreateItemFolder(itemId, title);
                         string txtPath = Path.Combine(targetDir, "商品情報_説明文.txt");
                         string txtContent = "【商品ID】 " + itemId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【ステータス】 " + statusLabel + "\n\n--- 商品説明 ---\n" + description;
                         File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
@@ -1742,7 +1777,7 @@ class FurimaServerNative
     {
         try
         {
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
@@ -1754,7 +1789,7 @@ class FurimaServerNative
                     : 0;
                 string status = json.Value<string>("status") ?? "DRAFT";
                 string description = json.Value<string>("description") ?? "";
-                bool useCustomSettings = json["useCustomSettings"] != null && json.Value<bool>("useCustomSettings");
+                bool useCustomSettings = ParseBoolSafe(json["useCustomSettings"], false);
 
                 var defaults = SyncStore.GetDefaultSettings();
                 int shippingCost = json["shippingCost"] != null && json["shippingCost"].Type != JTokenType.Null
@@ -1945,6 +1980,14 @@ class FurimaServerNative
         try { return Convert.ToInt64(val); } catch { return defaultVal; }
     }
 
+    private static bool ParseBoolSafe(object val, bool defaultVal = false)
+    {
+        if (val == null) return defaultVal;
+        var jv = val as Newtonsoft.Json.Linq.JValue;
+        if (jv != null && jv.Type == Newtonsoft.Json.Linq.JTokenType.Null) return defaultVal;
+        try { return Convert.ToBoolean(val); } catch { return defaultVal; }
+    }
+
     private static void ExtractPhotosSafe(object photosObj, int parentId, int childId, string childTitle, ref int photoOrder, List<Dictionary<string, object>> parentPhotos)
     {
         if (photosObj == null) return;
@@ -2104,7 +2147,7 @@ class FurimaServerNative
 
                         // 子商品のステータスを MERGED に更新（子商品ID・出品日時・写真はそのまま保持）
                         child["status"] = "MERGED";
-                        child["statusLabel"] = "まとめ売却済";
+                        child["statusLabel"] = (asStatus == "SOLD") ? "まとめ売却済" : "まとめ出品中";
                         child["mergedParentId"] = newParentId;
                         child["updatedAt"] = now;
                         child["syncedToPhone"] = false;
@@ -2282,26 +2325,6 @@ class FurimaServerNative
                     }
                 }
 
-                if (parentId == 18 && restoredCount == 0)
-                {
-                    foreach (var item in itemsDb)
-                    {
-                        if (item.ContainsKey("status") && item["status"].ToString() == "MERGED")
-                        {
-                            EnsureItemSyncUuid(item);
-                            item["status"] = "LISTED";
-                            item["statusLabel"] = "出品中";
-                            item["mergedParentId"] = null;
-                            item["mergedParentSyncUuid"] = null;
-                            item["deletedAt"] = null;
-                            item["isDeleted"] = false;
-                            item["updatedAt"] = now;
-                            item["syncedToPhone"] = false;
-                            restoredCount++;
-                        }
-                    }
-                }
-
                 // 親商品は物理除去＋完全削除UUID記録＋親フォルダ削除（スマホへも完全削除伝播しゾンビ復活防止）
                 string parentUuid = EnsureItemSyncUuid(parentItem);
                 if (!string.IsNullOrEmpty(parentUuid))
@@ -2377,13 +2400,10 @@ class FurimaServerNative
                     return;
                 }
 
-                string title = item.ContainsKey("title") ? item["title"].ToString() : "";
-                foreach (char c in Path.GetInvalidFileNameChars()) title = title.Replace(c, '_');
+                string title = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "";
+                string itemFolder = ResolveOrCreateItemFolder(itemId, title);
 
-                string itemFolder = Path.Combine(syncDir, itemId + "_" + title);
-                Directory.CreateDirectory(itemFolder);
-
-                string photoFileName = "photo_" + computedHash.Substring(0, 8) + ".jpg";
+                string photoFileName = "photo_" + computedHash.Substring(0, 8) + DetectImageExtension(photoBytes);
                 string photoFilePath = Path.Combine(itemFolder, photoFileName);
                 if (!File.Exists(photoFilePath))
                 {
@@ -2456,7 +2476,7 @@ class FurimaServerNative
             }
 
             string targetHash = "";
-            using (var reader = new StreamReader(req.InputStream, req.ContentEncoding ?? Encoding.UTF8))
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
                 if (!string.IsNullOrEmpty(jsonStr))
@@ -2549,6 +2569,37 @@ class FurimaServerNative
         }
     }
 
+    private static string DetectImageMimeType(byte[] bytes)
+    {
+        if (bytes != null)
+        {
+            if (bytes.Length >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+                bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A)
+            {
+                return "image/png";
+            }
+            if (bytes.Length >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+                bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50)
+            {
+                return "image/webp";
+            }
+            if (bytes.Length >= 6 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38)
+            {
+                return "image/gif";
+            }
+        }
+        return "image/jpeg";
+    }
+
+    private static string DetectImageExtension(byte[] bytes)
+    {
+        string mime = DetectImageMimeType(bytes);
+        if (mime == "image/png") return ".png";
+        if (mime == "image/webp") return ".webp";
+        if (mime == "image/gif") return ".gif";
+        return ".jpg";
+    }
+
     private static void ServePhotoByHash(HttpListenerResponse res, string hash)
     {
         lock (lockObj)
@@ -2557,7 +2608,7 @@ class FurimaServerNative
             if (hashToFilePathMap.TryGetValue(hash, out filePath) && File.Exists(filePath))
             {
                 byte[] bytes = File.ReadAllBytes(filePath);
-                res.ContentType = "image/jpeg";
+                res.ContentType = DetectImageMimeType(bytes);
                 res.ContentLength64 = bytes.Length;
                 res.OutputStream.Write(bytes, 0, bytes.Length);
                 res.OutputStream.Close();

@@ -34,7 +34,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 5)`** （Phase 2.15 重大度「致命的」修復：JArray型不一致根絶・原本削除/MD5整合・build-exe復旧・Build 5 反映）
+現在のバージョン：**`v0.9β (Build 6)`** （Phase 2.16 重大度「警告」修復：PC単独編集案内・画像形式/EXIF回転・UTF-8/Null安全性・Build 6 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -69,10 +69,10 @@
   - [x] `2.15-A` PCサーバー `items_data.json` 再読込後の型不一致 (`JArray`/`JObject` vs `Dictionary`) 根絶（写真追加時消去・フォルダ振り分け・欠損数・30日掃除の復旧）
   - [x] `2.15-B` スマホ側 `cleanupSharedOriginalPhotos` / `saveItem` / `syncDeltaToPcServer` / `mergeServerItemsFromJson` での `isOriginalDeleted` & `md5Hash` 破壊修復
   - [x] `2.15-C` `tools/build-exe.bat` への `TunnelQrForm.cs` 追加 ＋ DLL配置整理 ＋ `Build 5` 統一
-- [ ] **フェーズ 2.16 (`v0.9β Build 6`) — 重大度「警告」修復（PC単独編集・同期整合・画像処理・UI修正）** 【計画策定済・未着手】
-  - `2.16-A` デバッグ残骸 `#18` 撤去 ＋ まとめ買い子ステータス適正化＆30日クリーンアップ安全化
-  - `2.16-B` PC単独編集向け案内文言刷新（ロック表記撤廃）・`lastHeartbeatSec` / `HandleRequest` / `JValue(null)` / UTF-8安全性・フォルダ分断解消・`soldPrice` / 復元パス修復
-  - `2.16-C` 画像形式マジックバイト判定・Canvas経由クリップボードコピー・EXIF回転補正・旧モーダル整理 ＋ `Build 6` 統一
+- [x] **フェーズ 2.16 (`v0.9β Build 6`) — 重大度「警告」修復（PC単独編集・同期整合・画像処理・UI修正）** 【完了】
+  - [x] `2.16-A` デバッグ残骸 `#18` 撤去 ＋ まとめ買い子ステータス適正化＆30日クリーンアップ安全化
+  - [x] `2.16-B` PC単独編集向け案内文言刷新（ロック表記撤廃）・`lastHeartbeatSec` / `HandleRequest` / `JValue(null)` / UTF-8安全性・フォルダ分断解消・`soldPrice` / 復元パス修復
+  - [x] `2.16-C` 画像形式マジックバイト判定・Canvas経由クリップボードコピー・EXIF回転補正・旧モーダル整理 ＋ `Build 6` 統一
 - [ ] **フェーズ 2.17 (`v0.9β Build 7`) — 重大度「提案」改善（ポーリング最適化・孤立ファイル掃除・資産整理）** 【計画策定済・未着手】
   - `2.17-A` `DashboardHtml.cs` リビジョン検知ポーリング一本化・`SaveItemsDbToDisk` 条件付き保存・ロック保護＆未使用バッファ削除
   - `2.17-B` `savePhotoFromUri` 失敗時null保証・`saveItem` 孤立ファイル掃除・デッドコード/旧スクリプト/未使用依存整理 ＋ `Build 7` 統一
@@ -80,6 +80,11 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 2.16 完了 バージョン 0.9β (Build 6)
+- **2.16-A (デバッグ残骸撤去・まとめ買い子ステータス・クリーンアップ安全化)**：`DashboardHtml.cs` (`item.id === 18`) と `FurimaServerNative.cs` (`parentId == 18`) のテスト用ハードコードを撤去。`HandleMergeItems` の子 `statusLabel` を `asStatus` に応じて `"まとめ売却済"` / `"まとめ出品中"` へ適正化し、`SyncStore.GetCleanupCandidates` を `status == "SOLD"` のみに限定＋アクティブ他商品（`LISTED` / `DRAFT` / 未売却親に属する `MERGED` 子）が参照中のハッシュ・ファイル除外ガードを追加。
+- **2.16-B (PC単独編集整合・サーバー堅牢化・フォルダ/復元修復)**：`DashboardHtml.cs` の旧「操作・編集ロック中」バナーを「PC単独で編集可／スマホ再接続時に自動同期」へ刷新。`FurimaServerNative.cs` では `lastHeartbeatSec` の `-1` 保護、`HandleRequest` 終端 `catch` 保護、`ParseBoolSafe` 導入による `JValue(null)` 回避、`Encoding.UTF8` 統一、`ResolveOrCreateItemFolder` によるタイトル変更時フォルダ分断解消、`displayOrder`/`childItemId` 保持を実施。Android 側も `ItemEditScreen.kt` の非売却時 `soldPrice = 0` 化および `LocalWebServer.kt` の `/api/photos/{photoId}/restore` サムネイル上書き防止を実装。
+- **2.16-C (画像形式/EXIF/クリップボード対応・旧モーダル整理・Build 6 統一)**：`FurimaServerNative.cs` でマジックバイト判定 (`image/jpeg`, `image/png`, `image/webp`, `image/gif`) と `.jpg`/`.jpeg`/`.png`/`.webp` スキャンを実装。`DashboardHtml.cs` の `copyPhotoBlob` を Canvas 経由 `image/png` 変換へ改善し、旧 `openImageModal` / `#image-modal` を整理。`PhotoStorageManager.kt` に `ExifInterface` 回転補正を組み込み、`v0.9β (Build 6)` (`versionCode = 6`) へ3箇所同時統一・APK更新・全テスト通過を確認。
 
 ### 2026/11/14 フェーズ 2.15 完了 バージョン 0.9β (Build 5)
 - **2.15-A (PCサーバー `JArray`/`JObject` 型不一致根絶)**：`SyncStore.cs` に `NormalizePhotosList(object)` を新設し、`CountMissingFiles` / `GetCleanupCandidates` および `FurimaServerNative.cs` の `HandleSyncPhoto` / `HandleUnmergeItem` / `HandleAddPhoto` の全5箇所を正規化経由へ統一。再起動後の `items_data.json` 読込状態でも写真追加時の既存写真消失や欠損数・クリーンアップ・フォルダ配置の破損が発生しないよう修復。

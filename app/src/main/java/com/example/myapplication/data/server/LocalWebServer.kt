@@ -515,9 +515,21 @@ class LocalWebServer(
                     var restored = false
                     val photoStorageManager = repository.getPhotoStorageManager()
 
+                    val itemTitle = repository.getItemById(photo.itemId)?.item?.title ?: "Item_${photo.itemId}"
+                    val useExistingOriginalPath = !photo.isOriginalDeleted &&
+                        photo.filePath.isNotBlank() &&
+                        !photo.filePath.equals(photo.thumbnailPath, ignoreCase = true)
+
                     multipart.forEachPart { part ->
                         if (part is PartData.FileItem) {
-                            val targetFile = File(photo.filePath)
+                            val targetFile = if (useExistingOriginalPath) {
+                                File(photo.filePath)
+                            } else {
+                                File(
+                                    photoStorageManager.getItemImageDir(itemTitle),
+                                    "IMG_RESTORE_${photo.id}_${System.currentTimeMillis()}.jpg"
+                                )
+                            }
                             targetFile.parentFile?.mkdirs()
                             val streamProvider = part.streamProvider
                             val inputStream: InputStream = streamProvider()
@@ -526,6 +538,7 @@ class LocalWebServer(
                                     input.copyTo(output)
                                 }
                             }
+                            val restoredMd5 = photoStorageManager.calculateMd5(targetFile)
                             // サムネイルも再作成
                             val newThumb = photoStorageManager.createThumbnail(
                                 targetFile,
@@ -533,8 +546,12 @@ class LocalWebServer(
                                 repository.defaultSettings.value.thumbnailQuality
                             )
                             val updatedPhoto = photo.copy(
+                                filePath = targetFile.absolutePath,
                                 isOriginalDeleted = false,
-                                thumbnailPath = newThumb ?: photo.thumbnailPath
+                                isPcSynced = true,
+                                md5Hash = restoredMd5.ifBlank { photo.md5Hash },
+                                thumbnailPath = newThumb ?: photo.thumbnailPath,
+                                updatedAt = System.currentTimeMillis()
                             )
                             repository.getDao().insertPhotos(listOf(updatedPhoto))
                             restored = true

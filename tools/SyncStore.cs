@@ -529,19 +529,73 @@ public static class SyncStore
 
         if (itemsDb == null || hashToFilePathMap == null) return result;
 
+        // 親IDごとのステータス辞書を構築（MERGED子が売却済み親に属するか判定するため）
+        var statusById = new Dictionary<int, string>();
+        foreach (var item in itemsDb)
+        {
+            if (item == null || !item.ContainsKey("id") || item["id"] == null) continue;
+            try
+            {
+                int iid = Convert.ToInt32(item["id"]);
+                string st = item.ContainsKey("status") && item["status"] != null ? item["status"].ToString().Trim() : "";
+                statusById[iid] = st;
+            }
+            catch { }
+        }
+
+        // アクティブ商品（LISTED / DRAFT、または未売却親に属するMERGED子）が参照するハッシュ・ファイルパスを保護
+        var protectedHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var protectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in itemsDb)
+        {
+            if (item == null) continue;
+            string st = item.ContainsKey("status") && item["status"] != null ? item["status"].ToString().Trim() : "";
+            if (string.Equals(st, "SOLD", StringComparison.OrdinalIgnoreCase)) continue;
+
+            if (string.Equals(st, "MERGED", StringComparison.OrdinalIgnoreCase))
+            {
+                int pid = 0;
+                if (item.ContainsKey("mergedParentId") && item["mergedParentId"] != null)
+                {
+                    try { pid = Convert.ToInt32(item["mergedParentId"]); } catch { pid = 0; }
+                }
+                string parentStatus;
+                if (pid > 0 && statusById.TryGetValue(pid, out parentStatus) &&
+                    string.Equals(parentStatus, "SOLD", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+            }
+
+            if (item.ContainsKey("photos") && item["photos"] != null)
+            {
+                foreach (var photo in NormalizePhotosList(item["photos"]))
+                {
+                    if (photo == null || !photo.ContainsKey("md5Hash") || photo["md5Hash"] == null) continue;
+                    string pHash = photo["md5Hash"].ToString().Trim();
+                    if (string.IsNullOrEmpty(pHash)) continue;
+                    protectedHashes.Add(pHash);
+                    string pPath;
+                    if (hashToFilePathMap.TryGetValue(pHash, out pPath) && !string.IsNullOrEmpty(pPath))
+                    {
+                        protectedPaths.Add(pPath);
+                    }
+                }
+            }
+        }
+
         DateTime cutoff = DateTime.Now.AddDays(-30);
+        var addedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in itemsDb)
         {
             if (item == null) continue;
 
-            string status = item.ContainsKey("status") ? (item["status"] ?? "").ToString() : "";
+            string status = item.ContainsKey("status") ? (item["status"] ?? "").ToString().Trim() : "";
             string statusLabel = item.ContainsKey("statusLabel") ? (item["statusLabel"] ?? "").ToString() : "";
 
-            bool isSold = string.Equals(status, "SOLD", StringComparison.OrdinalIgnoreCase) ||
-                         string.Equals(status, "MERGED", StringComparison.OrdinalIgnoreCase) ||
-                         statusLabel.Contains("売却");
-
+            // MERGED 単体や「まとめ売却済」子ラベルでは削除対象にせず、SOLD 本体のみ判定する
+            bool isSold = string.Equals(status, "SOLD", StringComparison.OrdinalIgnoreCase);
             if (!isSold) continue;
 
             // soldAt の解析
@@ -570,10 +624,13 @@ public static class SyncStore
 
                     string hash = photo["md5Hash"].ToString().Trim();
                     if (string.IsNullOrEmpty(hash)) continue;
+                    if (protectedHashes.Contains(hash)) continue;
 
                     string filePath;
                     if (hashToFilePathMap.TryGetValue(hash, out filePath) && !string.IsNullOrEmpty(filePath) && File.Exists(filePath))
                     {
+                        if (protectedPaths.Contains(filePath) || addedPaths.Contains(filePath)) continue;
+
                         FileInfo fi = new FileInfo(filePath);
 
                         DateTime targetDate = hasValidSoldAt ? soldDate : fi.LastWriteTime;
@@ -583,6 +640,7 @@ public static class SyncStore
                             int id = item.ContainsKey("id") ? Convert.ToInt32(item["id"]) : 0;
                             string title = item.ContainsKey("title") ? (item["title"] ?? "無題").ToString() : "無題";
 
+                            addedPaths.Add(filePath);
                             result.candidates.Add(new CleanupCandidate
                             {
                                 itemId = id,
