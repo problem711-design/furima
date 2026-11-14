@@ -5,7 +5,8 @@
 > **過去の開発進捗ログ・詳細計画書 アーカイブ & 現行計画書**:
 > - 第1世代〜初期ログ: [PROGRESS_ARCHIVE_PHASE1.md](PROGRESS_ARCHIVE_PHASE1.md)
 > - フェーズ2.0〜2.11全詳細ログ・計画書: [PROGRESS_ARCHIVE_PHASE2.md](PROGRESS_ARCHIVE_PHASE2.md)
-> - **現行実装計画書 (フェーズ 2.12〜2.14)**: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
+> - フェーズ 2.12〜2.14 計画書: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
+> - **現行実装計画書 (フェーズ 2.15〜2.17 / 総点検修復)**: [PLAN_PHASE_2_15_TO_2_17.md](PLAN_PHASE_2_15_TO_2_17.md)
 
 ---
 
@@ -64,10 +65,25 @@
   - `2.14-A` Room DB 拡張 (`syncUuid`, `deletedAt`, `isDirty`, `MIGRATION_5_6`) ＆ 論理削除/復元/30日超過完全削除リポジトリ
   - `2.14-B` イベント駆動Push ＋ 軽量リビジョン検知 (`dataRevision`/`settingsRevision`) Pull ＋ `isDirty`/`updatedAt` 保護 ＋ UUID衝突防止同期エンジン
   - `2.14-C` スマホ＆PC共通「ゴミ箱」UI実装（復元・完全削除・一括削除・30日保持カウント表示）
+- [ ] **フェーズ 2.15 (`v0.9β Build 5`) — 重大度「致命的」バグ修復（型不一致・原本/MD5破壊・ビルド復旧）** 【計画策定済・未着手】
+  - `2.15-A` PCサーバー `items_data.json` 再読込後の型不一致 (`JArray`/`JObject` vs `Dictionary`) 根絶（写真追加時消去・フォルダ振り分け・欠損数・30日掃除の復旧）
+  - `2.15-B` スマホ側 `cleanupSharedOriginalPhotos` / `saveItem` / `syncDeltaToPcServer` / `mergeServerItemsFromJson` での `isOriginalDeleted` & `md5Hash` 破壊修復
+  - `2.15-C` `tools/build-exe.bat` への `TunnelQrForm.cs` 追加 ＋ DLL配置整理 ＋ `Build 5` 統一
+- [ ] **フェーズ 2.16 (`v0.9β Build 6`) — 重大度「警告」修復（PC単独編集・同期整合・画像処理・UI修正）** 【計画策定済・未着手】
+  - `2.16-A` デバッグ残骸 `#18` 撤去 ＋ まとめ買い子ステータス適正化＆30日クリーンアップ安全化
+  - `2.16-B` PC単独編集向け案内文言刷新（ロック表記撤廃）・`lastHeartbeatSec` / `HandleRequest` / `JValue(null)` / UTF-8安全性・フォルダ分断解消・`soldPrice` / 復元パス修復
+  - `2.16-C` 画像形式マジックバイト判定・Canvas経由クリップボードコピー・EXIF回転補正・旧モーダル整理 ＋ `Build 6` 統一
+- [ ] **フェーズ 2.17 (`v0.9β Build 7`) — 重大度「提案」改善（ポーリング最適化・孤立ファイル掃除・資産整理）** 【計画策定済・未着手】
+  - `2.17-A` `DashboardHtml.cs` リビジョン検知ポーリング一本化・`SaveItemsDbToDisk` 条件付き保存・ロック保護＆未使用バッファ削除
+  - `2.17-B` `savePhotoFromUri` 失敗時null保証・`saveItem` 孤立ファイル掃除・デッドコード/旧スクリプト/未使用依存整理 ＋ `Build 7` 統一
 
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-14] コードレビュー総点検に基づく修復・改善計画書 (`PLAN_PHASE_2_15_TO_2_17.md`) 策定
+- 最新コミット (`3f87ea8`) の徹底コードレビュー結果に基づき、重大度「致命的」➔「警告」➔「提案」の優先順で順次修復するための詳細実装計画書を `PLAN_PHASE_2_15_TO_2_17.md` に策定。
+- 仕様変更点の反映：初期の「スマホ常時接続時のみPC操作許可」仕様から現在の「PC単独編集 ＋ ゴミ箱復元対応 ＋ 安全な双方向同期」方針への移行を明確化し、ロック表記の撤廃と逐次ハンドオーバー時の整合性修復を組み込んだ。
 
 ### 2026/11/14 フェーズ 2.14 完了 バージョン 0.9β (Build 4)
 - **2.14-A (Room DB拡張 ＆ 論理削除/復元リポジトリ)**：`ItemEntity` に `syncUuid`・`deletedAt`・`isDirty` を追加し、`AppDatabase` を Version 6 (`MIGRATION_5_6`) へ移行。通常一覧/集計クエリへ `deletedAt IS NULL` を適用し、`FleaMarketRepository` に `moveToTrash`・`restoreFromTrash`・`permanentlyDeleteItem`・`emptyTrash`・`purgeExpiredTrash(30)`・`unmergeItem` 時トームストーン記録を実装。
