@@ -426,7 +426,7 @@ public static class DashboardHtml
                             <option value=''>説明定型文を挿入...</option>
                         </select>
                     </div>
-                    <textarea id='add-description' rows='3' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                    <textarea id='add-description' rows='3' oninput='updateModalValidation(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
                 </div>
 
                 <!-- ステータス選択チップ -->
@@ -509,6 +509,7 @@ public static class DashboardHtml
                         <p id='add-profit-formula' class='text-[10px] text-indigo-800 font-mono'>売価 ¥0 - 手数料(5%) ¥0 - 送料 ¥210 - 経費 ¥55</p>
                         <p id='add-profit-value' class='text-sm font-black text-indigo-700'>純利益: ¥0 (0%)</p>
                     </div>
+                    <div id='add-validation-banner' class='hidden rounded-lg p-2.5 text-[11px] border space-y-1'></div>
                 </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
@@ -571,7 +572,7 @@ public static class DashboardHtml
                             <option value=''>説明定型文を挿入...</option>
                         </select>
                     </div>
-                    <textarea id='edit-description' rows='4' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
+                    <textarea id='edit-description' rows='4' oninput='updateModalValidation(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
                 </div>
 
                 <!-- ステータス選択チップ -->
@@ -651,6 +652,7 @@ public static class DashboardHtml
                         <p id='edit-profit-formula' class='text-[10px] text-indigo-800 font-mono'>売価 ¥0 - 手数料(5%) ¥0 - 送料 ¥210 - 経費 ¥55</p>
                         <p id='edit-profit-value' class='text-sm font-black text-indigo-700'>純利益: ¥0 (0%)</p>
                     </div>
+                    <div id='edit-validation-banner' class='hidden rounded-lg p-2.5 text-[11px] border space-y-1'></div>
                 </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
@@ -875,6 +877,7 @@ public static class DashboardHtml
             } else {
                 counter.className = 'text-[10px] font-mono text-slate-400';
             }
+            if (prefix === 'add' || prefix === 'edit') updateModalValidation(prefix);
         }
 
         function openYahooSplit() {
@@ -1443,6 +1446,19 @@ public static class DashboardHtml
             const isTrashView = currentFilter === 'TRASH';
             let items = allItems.filter(item => {
                 const trashed = isItemTrashed(item);
+                const itemWarnings = (!trashed && item.status !== 'SOLD' && item.status !== 'MERGED')
+                    ? evaluateListingWarningsObj({
+                        title: item.title || '',
+                        description: item.description || '',
+                        photoCount: Array.isArray(item.photos) ? item.photos.length : 0,
+                        price: item.price || 0,
+                        profit: (item.profit != null) ? item.profit : ((item.price || 0) - Math.floor((item.price || 0) * ((item.useCustomSettings && item.feeRatePercent != null) ? item.feeRatePercent : pcSettings.defaultFeeRatePercent) / 100) - ((item.useCustomSettings && item.shippingCost != null) ? item.shippingCost : pcSettings.defaultShippingCost) - ((item.useCustomSettings && item.expenseCost != null) ? item.expenseCost : pcSettings.defaultExpenseCost)),
+                        status: item.status || 'LISTED'
+                    })
+                    : [];
+                const itemWarningsCritical = itemWarnings.filter(w => w.critical);
+                const itemWarningsCriticalCount = itemWarningsCritical.length;
+                const itemWarningsTitle = itemWarningsCritical.map(w => w.text).join(' / ');
                 if (isTrashView) {
                     if (!trashed) return false;
                     if (item.status === 'MERGED' && item.mergedParentId && item.mergedParentId > 0) return false;
@@ -1524,6 +1540,7 @@ public static class DashboardHtml
                             ${!trashed && !item.isShared ? `<span class='bg-slate-200 text-slate-700 text-[9px] px-1.5 py-0.2 rounded-full font-bold'>未同期</span>` : ''}
                             ${isBundle ? `<span class='bg-purple-100 text-purple-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-1'><i class='fa-solid fa-gift'></i> まとめ (${item.mergedChildCount || 2}点)</span>` : ''}
                             ${isMergedChild ? `<span class='bg-purple-50 text-purple-600 text-[10px] px-1.5 py-0.2 rounded-full font-bold'>まとめ内包済</span>` : ''}
+                            ${(!trashed && !isSold && !isMergedChild && itemWarningsCriticalCount > 0) ? `<span class='bg-orange-100 text-orange-800 text-[9px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-0.5' title='${escapeHtml(itemWarningsTitle)}'><i class='fa-solid fa-triangle-exclamation'></i> 要確認(${itemWarningsCriticalCount})</span>` : ''}
                         </div>
                     </div>
 
@@ -2056,6 +2073,60 @@ public static class DashboardHtml
             if (valueElem) {
                 valueElem.innerText = '純利益: ¥' + profit.toLocaleString() + ' (' + margin + '%)';
             }
+            if (prefix === 'add' || prefix === 'edit') {
+                updateModalValidation(prefix, basePrice - fee - shipping - expense);
+            }
+        }
+
+        function evaluateListingWarningsObj({ title, description, photoCount, price, profit, status }) {
+            if (status === 'SOLD') return [];
+            const warnings = [];
+            const t = (title || '').trim();
+            if (!t) warnings.push({ critical: true, text: '商品名が未入力です' });
+            else if (t.length > 40) warnings.push({ critical: true, text: '商品名が ' + t.length + '文字です（Yahoo!フリマ目安 40文字超過）' });
+            if (photoCount === 0) warnings.push({ critical: true, text: '商品が未撮影です（写真 0枚）' });
+            else if (photoCount > 10) warnings.push({ critical: true, text: '写真が ' + photoCount + '枚あります（上限 10枚超過）' });
+            if (price <= 0) warnings.push({ critical: true, text: '販売価格が未設定（¥0）です' });
+            else if (price < 300) warnings.push({ critical: false, text: '販売価格 ¥' + price + ' は最低出品額（¥300）未満です' });
+            if (price > 0 && profit <= 0) warnings.push({ critical: true, text: '見込純利益が ¥' + profit + '（利益なし／赤字）です' });
+            if (!(description || '').trim()) warnings.push({ critical: false, text: '商品説明文が未入力です' });
+            return warnings;
+        }
+
+        function updateModalValidation(prefix, knownProfit) {
+            const banner = document.getElementById(prefix + '-validation-banner');
+            if (!banner) return;
+            const title = (document.getElementById(prefix + '-title')?.value || '');
+            const description = (document.getElementById(prefix + '-description')?.value || '');
+            const status = (document.getElementById(prefix + '-status')?.value || 'LISTED');
+            const price = parseNonNegInt(document.getElementById(prefix + '-price')?.value, 0);
+            let photoCount = 0;
+            if (prefix === 'add') {
+                photoCount = (typeof pendingAddFiles !== 'undefined' && Array.isArray(pendingAddFiles)) ? pendingAddFiles.length : 0;
+            } else {
+                const editId = parseInt(document.getElementById('edit-id')?.value || '0', 10);
+                const item = allItems.find(i => i.id === editId);
+                photoCount = (item && Array.isArray(item.photos)) ? item.photos.length : 0;
+            }
+            const useCustom = document.getElementById(prefix + '-use-custom')?.checked;
+            const shipping = useCustom ? parseNonNegInt(document.getElementById(prefix + '-shipping')?.value, pcSettings.defaultShippingCost) : pcSettings.defaultShippingCost;
+            const feeRate = useCustom ? parseNonNegInt(document.getElementById(prefix + '-fee-rate')?.value, pcSettings.defaultFeeRatePercent) : pcSettings.defaultFeeRatePercent;
+            const expense = useCustom ? parseNonNegInt(document.getElementById(prefix + '-expense')?.value, pcSettings.defaultExpenseCost) : pcSettings.defaultExpenseCost;
+            const profit = (typeof knownProfit === 'number') ? knownProfit : (price - Math.floor(price * feeRate / 100) - shipping - expense);
+
+            const warnings = evaluateListingWarningsObj({ title, description, photoCount, price, profit, status });
+            if (warnings.length === 0) {
+                banner.classList.add('hidden');
+                banner.innerHTML = '';
+                return;
+            }
+            const hasCritical = warnings.some(w => w.critical);
+            banner.className = hasCritical
+                ? 'rounded-lg p-2.5 text-[11px] border space-y-1 bg-orange-50 border-orange-200 text-orange-900'
+                : 'rounded-lg p-2.5 text-[11px] border space-y-1 bg-amber-50 border-amber-200 text-amber-900';
+            banner.innerHTML = `<p class='font-bold flex items-center gap-1'><i class='fa-solid fa-triangle-exclamation'></i> ${hasCritical ? '出品前チェック（要確認 ' + warnings.length + '件）' : '出品前メモ（' + warnings.length + '件）'}</p>` +
+                warnings.map(w => `<p class='${w.critical ? 'text-orange-800 font-medium' : 'text-amber-800'}'>・${escapeHtml(w.text)}</p>`).join('');
+            banner.classList.remove('hidden');
         }
 
         async function openEditModal(id) {

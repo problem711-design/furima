@@ -82,13 +82,19 @@
   - [x] `CameraXCaptureDialog.kt` 新設（連続撮影・明るさEVスライダー・ズーム・タップフォーカス・フラッシュ/トーチ・3×3/1対1出品枠ガイド・`Camera2Interop` 対応範囲簡易マニュアル調整）
   - [x] `PhotoPreviewDialog.kt` 「PCから高画質原本を取得」ボタンの上部ヘッダーエリア移設 ＋ `Build 8` 統一
 - [ ] **フェーズ 3.2 (`v0.9β Build 9`) — UI改善・テンプレート拡張・一括操作・出品前チェック** 【実装開始】
-  - [ ] `3.2-A` CameraX全画面オーバーレイ化によるナビバー被り根絶・プレビュー1本指スワイプ透過修復・出品前チェックアラート
+  - [x] `3.2-A` CameraX全画面オーバーレイ化によるナビバー被り根絶・プレビュー1本指スワイプ透過修復・出品前チェックアラート
   - [ ] `3.2-B` テンプレート選択ドロップダウン化＆フルウィンドウ編集・`{title}`/`{price}`変数展開・PCワンクリックコピー強化
   - [ ] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
 
 ---
 amma
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 3.2-A 完了 (進行中 ➔ 目標 v0.9β Build 9)
+- **3.2-A (CameraXオーバーレイ化・プレビュー1本指スワイプ透過・出品前チェック)**：
+  - `CameraXCaptureDialog.kt` / `ItemEditScreen.kt`：`Dialog` ウィンドウを廃止して `ItemEditScreen` ルート `Box` 最前面オーバーレイ (`zIndex(100f)`) へ移行し、`MainActivity` の `enableEdgeToEdge()` に基づく `navigationBarsPadding()` を確実に適用（Xiaomi HyperOS / Android 15 での3ボタンバー被りを根本解消）。
+  - `PhotoPreviewDialog.kt`：`ZoomablePhotoPage` の `detectTransformGestures` を `awaitEachGesture` ベースへ刷新し、2本指ピンチまたは拡大中 (`scale > 1.05f`) のみイベント消費することで等倍時の1本指左右スワイプが `HorizontalPager` へ透過するよう修復。
+  - `ListingValidationBanner.kt` / `ItemEditScreen.kt` / `ItemDetailScreen.kt` / `DashboardHtml.cs`：タイトル未入力/40文字超過・写真0枚/10枚超過・価格0円/300円未満・純利益0円以下・説明文未入力を事前検知する出品前チェックアラートをスマホ＆PC双方に追加。
 
 ### 2026/11/14 フェーズ 3.1 完了 バージョン 0.9β (Build 8)
 - **ハイブリッドカメラ UI ＆ `rememberSaveable` 状態保護 (`ItemEditScreen.kt`, `AndroidManifest.xml`, `PhotoStorageManager.kt`)**：縦方向のレイアウト高さを増やさず従来の `52.dp` 高さのままで撮影ボタンを横並び 2 分割（「アプリ内カメラ」＋「標準カメラ」）へ改修。`AndroidManifest.xml` に `CAMERA` 権限と `STILL_IMAGE_CAMERA` 用 `<queries>` を追加し、左ボタンは `ActivityResultContracts.RequestPermission()` 経由で `CameraXCaptureDialog` を起動、右ボタンは `MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA` により POCO X6 Pro（HyperOS）標準カメラのフル機能（プロモード・マクロ・彩度調整等）を起動（非対応環境時は `TakePicture` へフォールバック）＋ギャラリー取込案内トーストを表示するよう実装。また一時撮影パス等の状態を `rememberSaveable` で保護。
