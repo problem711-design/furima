@@ -219,7 +219,8 @@ fun MainTabsContainer(
                     viewModel = viewModel,
                     onNavigateToDetail = onNavigateToDetail,
                     onNavigateToAdd = onNavigateToAdd,
-                    onNavigateToEdit = onNavigateToEdit
+                    onNavigateToEdit = onNavigateToEdit,
+                    onNavigateToTrash = onNavigateToTrash
                 )
                 1 -> PcSyncScreen(
                     viewModel = viewModel
