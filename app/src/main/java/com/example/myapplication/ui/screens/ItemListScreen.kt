@@ -49,7 +49,6 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -83,6 +82,9 @@ import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.SortOption
 import com.example.myapplication.ui.TimeRange
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material3.OutlinedButton
+import com.example.myapplication.ui.components.BatchEditDialog
 import com.example.myapplication.ui.components.ItemQuickActionDialog
 import com.example.myapplication.ui.components.MergeItemsDialog
 import java.io.File
@@ -114,6 +116,8 @@ fun ItemListScreen(
 
     var showSortMenu by remember { mutableStateOf(false) }
     var showMergeDialog by remember { mutableStateOf(false) }
+    var showBatchEditDialog by remember { mutableStateOf(false) }
+    var showBatchTrashConfirmDialog by remember { mutableStateOf(false) }
     var quickActionItem by remember { mutableStateOf<ItemWithPhotos?>(null) }
 
     // 表示件数リミット（デフォルト20件、10件ずつ追加可能）
@@ -165,6 +169,54 @@ fun ItemListScreen(
         )
     }
 
+    // 複数選択時の一括編集ダイアログ
+    if (showBatchEditDialog && selectedItemIds.isNotEmpty()) {
+        val selectedItems = allActiveItems.filter { selectedItemIds.contains(it.item.id) }
+        if (selectedItems.isNotEmpty()) {
+            BatchEditDialog(
+                selectedItems = selectedItems,
+                defaultSettings = defaultSettings,
+                onDismiss = { showBatchEditDialog = false },
+                onConfirm = { spec ->
+                    showBatchEditDialog = false
+                    viewModel.batchUpdateItems(selectedItems.map { it.item.id }, spec) { updatedCount ->
+                        Toast.makeText(context, "${updatedCount}件を一括更新しました", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            )
+        }
+    }
+
+    // 複数選択時の一括ゴミ箱移動確認ダイアログ
+    if (showBatchTrashConfirmDialog && selectedItemIds.isNotEmpty()) {
+        val selectedIdsList = selectedItemIds.toList()
+        AlertDialog(
+            onDismissRequest = { showBatchTrashConfirmDialog = false },
+            icon = { Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("選択した商品をゴミ箱へ移動") },
+            text = { Text("選択中の ${selectedIdsList.size}件の商品をゴミ箱へ移動しますか？（30日間保持され、いつでも元に戻せます）") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBatchTrashConfirmDialog = false
+                        viewModel.batchMoveToTrash(selectedIdsList) { movedCount ->
+                            Toast.makeText(context, "${movedCount}件をゴミ箱へ移動しました", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_batch_trash_button")
+                ) {
+                    Text("ゴミ箱へ移動")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBatchTrashConfirmDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
     // 複数選択時のまとめ買いダイアログ
     if (showMergeDialog && selectedItemIds.size >= 2) {
         val selectedItems = allActiveItems.filter { selectedItemIds.contains(it.item.id) }
@@ -205,7 +257,7 @@ fun ItemListScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = if (isSelectionMode) "まとめ選択 (${selectedItemIds.size}件)" else "フリマ出品・売上管理",
+                        text = if (isSelectionMode) "選択中 (${selectedItemIds.size}件)" else "フリマ出品・売上管理",
                         fontWeight = FontWeight.Bold,
                         fontSize = 17.sp,
                         color = MaterialTheme.colorScheme.onPrimary
@@ -549,10 +601,13 @@ fun ItemListScreen(
                         }
                     }
 
-                    // 複数選択時の下部「まとめ買い」アクションバー
-                    if (isSelectionMode && selectedItemIds.size >= 2) {
-                        val selectedItemsList = visibleItems.filter { selectedItemIds.contains(it.item.id) }
+                    // 複数選択時の下部一括操作アクションバー (1件以上で一括編集・ゴミ箱／2件以上かつ未売却でまとめ)
+                    if (isSelectionMode && selectedItemIds.isNotEmpty()) {
+                        val selectedItemsList = allActiveItems.filter { selectedItemIds.contains(it.item.id) }
                         val selectedSubItemCount = selectedItemsList.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
+                        val canMerge = selectedItemsList.size >= 2 && selectedItemsList.all {
+                            it.item.status == "LISTED" || it.item.status == "DRAFT"
+                        }
                         Surface(
                             shadowElevation = 8.dp,
                             color = MaterialTheme.colorScheme.primaryContainer,
@@ -560,35 +615,72 @@ fun ItemListScreen(
                                 .fillMaxWidth()
                                 .align(Alignment.BottomCenter)
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(12.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text(
-                                        text = "${selectedSubItemCount}点の商品を選択中",
+                                        text = "${selectedItemsList.size}件 (${selectedSubItemCount}点) 選択中",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         color = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
-                                    Text(
-                                        text = "新売価や送料を設定して1出品に統合",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
-                                    )
+                                    if (selectedItemsList.size >= 2 && !canMerge) {
+                                        Text(
+                                            text = "※売却済を含むためまとめ不可",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    }
                                 }
-
-                                Button(
-                                    onClick = { showMergeDialog = true },
-                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
-                                    modifier = Modifier.testTag("merge_action_button")
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(imageVector = Icons.Default.MergeType, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("出品をまとめる", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Button(
+                                        onClick = { showBatchEditDialog = true },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("batch_edit_action_button")
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("一括編集", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                                    }
+                                    Button(
+                                        onClick = { showBatchTrashConfirmDialog = true },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("batch_trash_action_button")
+                                    ) {
+                                        Icon(imageVector = Icons.Default.DeleteOutline, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("ゴミ箱へ", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                                    }
+                                    Button(
+                                        onClick = { showMergeDialog = true },
+                                        enabled = canMerge,
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.tertiary),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("merge_action_button")
+                                    ) {
+                                        Icon(imageVector = Icons.Default.MergeType, contentDescription = null, modifier = Modifier.size(15.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("まとめる", fontWeight = FontWeight.Bold, fontSize = 12.sp, maxLines = 1)
+                                    }
                                 }
                             }
                         }
@@ -626,7 +718,7 @@ fun CompactItemCard(
     val profit = (basePrice - fee - effectiveShipping - effectiveExpense).coerceAtLeast(0)
 
     val isBundle = item.mergedChildCount > 0 || item.bundleLevel > 0
-    val isSelectable = item.status == "LISTED" || item.status == "DRAFT"
+    val isSelectable = item.status != "MERGED" && item.deletedAt == null
 
     val displayImageFile = firstPhoto?.displayFile
 

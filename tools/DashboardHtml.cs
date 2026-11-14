@@ -31,7 +31,7 @@ public static class DashboardHtml
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
             <span id='status-text'>スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）。スマホアプリの「PC連携」画面から接続できます。</span>
         </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 8)</span>
+        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 9)</span>
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
@@ -183,13 +183,91 @@ public static class DashboardHtml
         </div>
     </main>
 
-    <!-- まとめ買い作成フローティング操作バー (チェックボックス選択時に表示) -->
-    <div id='merge-floating-bar' class='fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 border border-slate-700 hidden'>
-        <span class='text-xs font-bold text-indigo-300'><span id='selected-count'>0</span>点選択中</span>
-        <button onclick='openMergeModal()' class='bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow transition flex items-center gap-1.5'>
-            <i class='fa-solid fa-gift'></i> まとめ出品を作成
-        </button>
+    <!-- 複数選択フローティング操作バー (通常タブ・ゴミ箱タブ共通) -->
+    <div id='merge-floating-bar' class='fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-900/95 text-white px-4 py-2.5 rounded-full shadow-2xl flex flex-wrap items-center justify-center gap-2 border border-slate-700 hidden max-w-[95vw]'>
+        <span class='text-xs font-bold text-indigo-300 px-1'><span id='selected-count'>0</span>件選択中</span>
+        <div id='floating-actions-active' class='flex items-center gap-2'>
+            <button onclick='openBatchEditModal()' class='bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow transition flex items-center gap-1'>
+                <i class='fa-solid fa-pen-to-square'></i> 一括編集
+            </button>
+            <button onclick='batchTrashSelected()' class='bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow transition flex items-center gap-1'>
+                <i class='fa-solid fa-trash'></i> ゴミ箱へ
+            </button>
+            <button id='floating-merge-btn' onclick='openMergeModal()' class='bg-purple-600 hover:bg-purple-500 disabled:bg-slate-700 disabled:text-slate-400 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 rounded-full shadow transition flex items-center gap-1'>
+                <i class='fa-solid fa-gift'></i> まとめる
+            </button>
+        </div>
+        <div id='floating-actions-trash' class='hidden flex items-center gap-2'>
+            <button onclick='batchRestoreSelected()' class='bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow transition flex items-center gap-1'>
+                <i class='fa-solid fa-rotate-left'></i> 一括復元
+            </button>
+            <button onclick='batchPermanentDeleteSelected()' class='bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-full shadow transition flex items-center gap-1'>
+                <i class='fa-solid fa-ban'></i> 一括完全削除
+            </button>
+        </div>
         <button onclick='clearSelection()' class='text-slate-400 hover:text-white text-xs font-bold px-2 py-1'>選択クリア</button>
+    </div>
+
+    <!-- 一括編集モーダル (部分更新＋サンプルプレビュー) -->
+    <div id='batch-edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeBatchEditModal()'>
+        <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between'>
+                <div class='flex items-center gap-2'>
+                    <i class='fa-solid fa-list-check text-lg'></i>
+                    <h3 class='font-bold text-sm tracking-tight'>複数商品の一括編集 (<span id='batch-edit-count'>0</span>件)</h3>
+                </div>
+                <button onclick='closeBatchEditModal()' class='text-indigo-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='p-5 space-y-3.5 text-xs max-h-[75vh] overflow-y-auto custom-scroll'>
+                <p class='text-[11px] text-slate-500'>チェックをONにした項目だけを上書きします（OFFの項目は元の値を保持）。</p>
+
+                <!-- 1. ステータス -->
+                <div class='border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2'>
+                    <label class='flex items-center gap-2 font-bold text-slate-800 cursor-pointer'>
+                        <input type='checkbox' id='batch-enable-status' onchange='updateBatchEditPreview()' class='w-4 h-4 text-indigo-600 rounded'>
+                        <span>ステータスを変更</span>
+                    </label>
+                    <select id='batch-status-value' onchange='document.getElementById(""batch-enable-status"").checked=true; updateBatchEditPreview();' class='w-full p-2 border border-slate-300 rounded bg-white text-xs font-bold'>
+                        <option value='LISTED'>出品中 (LISTED)</option>
+                        <option value='DRAFT'>下書き (DRAFT)</option>
+                        <option value='SOLD'>売却済 (SOLD)</option>
+                    </select>
+                </div>
+
+                <!-- 2. 費用プリセット -->
+                <div class='border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2'>
+                    <label class='flex items-center gap-2 font-bold text-slate-800 cursor-pointer'>
+                        <input type='checkbox' id='batch-enable-preset' onchange='updateBatchEditPreview()' class='w-4 h-4 text-indigo-600 rounded'>
+                        <span>送料・手数料プリセットを適用</span>
+                    </label>
+                    <select id='batch-preset-select' onchange='document.getElementById(""batch-enable-preset"").checked=true; updateBatchEditPreview();' class='w-full p-2 border border-slate-300 rounded bg-white text-xs'></select>
+                </div>
+
+                <!-- 3. 価格変更 -->
+                <div class='border border-slate-200 rounded-lg p-3 bg-slate-50 space-y-2'>
+                    <label class='flex items-center gap-2 font-bold text-slate-800 cursor-pointer'>
+                        <input type='checkbox' id='batch-enable-price' onchange='updateBatchEditPreview()' class='w-4 h-4 text-indigo-600 rounded'>
+                        <span>販売価格を一括変更</span>
+                    </label>
+                    <div class='grid grid-cols-2 gap-2'>
+                        <select id='batch-price-mode' onchange='document.getElementById(""batch-enable-price"").checked=true; updateBatchEditPreview();' class='p-2 border border-slate-300 rounded bg-white text-xs font-bold'>
+                            <option value='DELTA_YEN'>±金額で増減 (円)</option>
+                            <option value='DELTA_PERCENT'>±割合で増減 (%)</option>
+                            <option value='FIXED'>固定額に統一 (円)</option>
+                        </select>
+                        <input type='number' id='batch-price-value' value='-100' oninput='document.getElementById(""batch-enable-price"").checked=true; updateBatchEditPreview();' class='p-2 border border-slate-300 rounded bg-white text-xs font-mono' placeholder='例: -100'>
+                    </div>
+                    <p class='text-[10px] text-slate-500'>※ 値下げ時は「-100」または「-10」のようにマイナス入力してください（0円未満は0円にクランプ）。</p>
+                </div>
+
+                <!-- サンプルプレビュー -->
+                <div id='batch-edit-preview' class='hidden bg-indigo-50 border border-indigo-200 rounded-lg p-2.5 text-[11px] text-indigo-900 space-y-0.5'></div>
+            </div>
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2'>
+                <button type='button' onclick='closeBatchEditModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
+                <button type='button' id='batch-edit-submit-btn' onclick='submitBatchEdit()' class='px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white rounded-lg shadow-sm transition'>適用する</button>
+            </div>
+        </div>
     </div>
 
     <!-- まとめ買い作成モーダル -->
@@ -1453,7 +1531,7 @@ public static class DashboardHtml
                     trashBanner.classList.add('hidden');
                 }
             }
-            if (filter === 'TRASH' && selectedItemIds.size > 0) {
+            if (selectedItemIds.size > 0) {
                 selectedItemIds.clear();
                 updateSelectionBar();
             }
@@ -1462,8 +1540,12 @@ public static class DashboardHtml
 
         function toggleSelect(id) {
             const item = allItems.find(i => i.id === id);
-            if (item && (item.status === 'SOLD' || item.status === 'MERGED' || isItemTrashed(item))) {
-                return;
+            if (!item) return;
+            const trashed = isItemTrashed(item);
+            if (currentFilter === 'TRASH') {
+                if (!trashed) return;
+            } else {
+                if (trashed || item.status === 'MERGED') return;
             }
             if (selectedItemIds.has(id)) {
                 selectedItemIds.delete(id);
@@ -1483,13 +1565,191 @@ public static class DashboardHtml
         function updateSelectionBar() {
             const bar = document.getElementById('merge-floating-bar');
             const countElem = document.getElementById('selected-count');
+            const activeActions = document.getElementById('floating-actions-active');
+            const trashActions = document.getElementById('floating-actions-trash');
+            const mergeBtn = document.getElementById('floating-merge-btn');
+
             if (selectedItemIds.size > 0) {
                 const selectedItems = allItems.filter(i => selectedItemIds.has(i.id));
-                const totalSubItems = selectedItems.reduce((s, i) => s + ((i.mergedChildCount && i.mergedChildCount > 0) ? i.mergedChildCount : 1), 0);
-                countElem.innerText = totalSubItems;
+                countElem.innerText = selectedItems.length;
+                if (currentFilter === 'TRASH') {
+                    activeActions.classList.add('hidden');
+                    trashActions.classList.remove('hidden');
+                } else {
+                    trashActions.classList.add('hidden');
+                    activeActions.classList.remove('hidden');
+                    const canMerge = selectedItems.length >= 2 && selectedItems.every(i => i.status === 'LISTED' || i.status === 'DRAFT');
+                    if (mergeBtn) {
+                        mergeBtn.disabled = !canMerge;
+                        mergeBtn.title = canMerge ? '選択した商品をまとめる' : '売却済商品を除く2件以上を選択するとまとめられます';
+                    }
+                }
                 bar.classList.remove('hidden');
             } else {
                 bar.classList.add('hidden');
+            }
+        }
+
+        async function batchTrashSelected() {
+            const ids = Array.from(selectedItemIds);
+            if (ids.length === 0) return;
+            if (!confirm('選択中の ' + ids.length + '件をゴミ箱へ移動しますか？（30日間保持され復元可能です）')) return;
+            try {
+                const res = await fetch('/api/items/batch-trash', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ itemIds: ids })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                clearSelection();
+                await fetchItems();
+                showToast(ids.length + '件をゴミ箱へ移動しました');
+            } catch (e) {
+                alert('一括ゴミ箱移動に失敗しました: ' + e.message);
+            }
+        }
+
+        async function batchRestoreSelected() {
+            const ids = Array.from(selectedItemIds);
+            if (ids.length === 0) return;
+            try {
+                const res = await fetch('/api/items/batch-restore', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ itemIds: ids })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                clearSelection();
+                await fetchItems();
+                showToast(ids.length + '件を復元しました');
+            } catch (e) {
+                alert('一括復元に失敗しました: ' + e.message);
+            }
+        }
+
+        async function batchPermanentDeleteSelected() {
+            const ids = Array.from(selectedItemIds);
+            if (ids.length === 0) return;
+            if (!confirm('選択中の ' + ids.length + '件を完全に削除しますか？この操作は元に戻せません。')) return;
+            try {
+                const res = await fetch('/api/items/batch-permanent', {
+                    method: 'DELETE',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ itemIds: ids })
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                clearSelection();
+                await fetchItems();
+                showToast(ids.length + '件を完全削除しました');
+            } catch (e) {
+                alert('一括完全削除に失敗しました: ' + e.message);
+            }
+        }
+
+        function openBatchEditModal() {
+            const ids = Array.from(selectedItemIds);
+            if (ids.length === 0) return;
+            document.getElementById('batch-edit-count').innerText = ids.length;
+            document.getElementById('batch-enable-status').checked = false;
+            document.getElementById('batch-enable-preset').checked = false;
+            document.getElementById('batch-enable-price').checked = false;
+
+            const sel = document.getElementById('batch-preset-select');
+            const presets = pcSettings.presets || [];
+            sel.innerHTML = `<option value='__DEFAULT__'>基本設定に従う (${pcSettings.defaultFeeRatePercent}% / 送料¥${pcSettings.defaultShippingCost} / 経費¥${pcSettings.defaultExpenseCost})</option>` +
+                presets.map((p, idx) => `<option value='${idx}'>${escapeHtml(p.name)} (${p.feeRatePercent}% / 送料¥${p.shippingCost} / 経費¥${p.expenseCost})</option>`).join('');
+
+            updateBatchEditPreview();
+            document.getElementById('batch-edit-modal').classList.remove('hidden');
+        }
+
+        function closeBatchEditModal() {
+            document.getElementById('batch-edit-modal').classList.add('hidden');
+        }
+
+        function updateBatchEditPreview() {
+            const enableStatus = document.getElementById('batch-enable-status').checked;
+            const enablePreset = document.getElementById('batch-enable-preset').checked;
+            const enablePrice = document.getElementById('batch-enable-price').checked;
+            const btn = document.getElementById('batch-edit-submit-btn');
+            const preview = document.getElementById('batch-edit-preview');
+            const hasAny = enableStatus || enablePreset || enablePrice;
+            if (btn) btn.disabled = !hasAny;
+
+            const selectedItems = allItems.filter(i => selectedItemIds.has(i.id));
+            const sample = selectedItems[0];
+            if (!hasAny || !sample) {
+                preview.classList.add('hidden');
+                return;
+            }
+            const beforeStatus = sample.status === 'SOLD' ? '売却済' : (sample.status === 'DRAFT' ? '下書き' : '出品中');
+            const targetStatus = enableStatus ? document.getElementById('batch-status-value').value : sample.status;
+            const afterStatus = targetStatus === 'SOLD' ? '売却済' : (targetStatus === 'DRAFT' ? '下書き' : '出品中');
+
+            const oldPrice = sample.price || 0;
+            let newPrice = oldPrice;
+            if (enablePrice) {
+                const mode = document.getElementById('batch-price-mode').value;
+                const val = parseInt(document.getElementById('batch-price-value').value || '0', 10) || 0;
+                if (mode === 'FIXED') newPrice = Math.max(0, val);
+                else if (mode === 'DELTA_YEN') newPrice = Math.max(0, oldPrice + val);
+                else if (mode === 'DELTA_PERCENT') newPrice = Math.max(0, oldPrice + Math.floor((oldPrice * val) / 100));
+            }
+            preview.innerHTML = `<p class='font-bold'>変更サンプル (先頭1件: ${escapeHtml(sample.title || '無題')})</p>` +
+                `<p>状態: ${beforeStatus} ➔ ${afterStatus} ／ 価格: ¥${oldPrice.toLocaleString()} ➔ ¥${newPrice.toLocaleString()}</p>`;
+            preview.classList.remove('hidden');
+        }
+
+        async function submitBatchEdit() {
+            const ids = Array.from(selectedItemIds);
+            if (ids.length === 0) return;
+            const enableStatus = document.getElementById('batch-enable-status').checked;
+            const enablePreset = document.getElementById('batch-enable-preset').checked;
+            const enablePrice = document.getElementById('batch-enable-price').checked;
+            if (!enableStatus && !enablePreset && !enablePrice) return;
+
+            let useCustomSettings = false;
+            let feeRatePercent = pcSettings.defaultFeeRatePercent;
+            let shippingCost = pcSettings.defaultShippingCost;
+            let expenseCost = pcSettings.defaultExpenseCost;
+            if (enablePreset) {
+                const pVal = document.getElementById('batch-preset-select').value;
+                if (pVal !== '__DEFAULT__') {
+                    const preset = (pcSettings.presets || [])[parseInt(pVal, 10)];
+                    if (preset) {
+                        useCustomSettings = true;
+                        feeRatePercent = preset.feeRatePercent;
+                        shippingCost = preset.shippingCost;
+                        expenseCost = preset.expenseCost;
+                    }
+                }
+            }
+
+            const payload = {
+                itemIds: ids,
+                newStatus: enableStatus ? document.getElementById('batch-status-value').value : null,
+                applyCostPreset: enablePreset,
+                useCustomSettings,
+                feeRatePercent,
+                shippingCost,
+                expenseCost,
+                priceMode: enablePrice ? document.getElementById('batch-price-mode').value : 'NONE',
+                priceValue: enablePrice ? (parseInt(document.getElementById('batch-price-value').value || '0', 10) || 0) : 0
+            };
+
+            try {
+                const res = await fetch('/api/items/batch-update', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                closeBatchEditModal();
+                clearSelection();
+                await fetchItems();
+                showToast(ids.length + '件を一括更新しました');
+            } catch (e) {
+                alert('一括更新に失敗しました: ' + e.message);
             }
         }
 
@@ -1592,13 +1852,13 @@ public static class DashboardHtml
                 const remainingDays = trashed ? getTrashRemainingDays(item) : 30;
                 const profitText = item.profit != null ? ' (利益 ¥' + item.profit.toLocaleString() + ')' : '';
                 const titleLen = (item.title || '').length;
-                const isChecked = !trashed && selectedItemIds.has(item.id);
+                const isChecked = selectedItemIds.has(item.id);
 
                 return `<div class='bg-white rounded-lg border ${trashed ? 'border-rose-200 bg-rose-50/20' : (isChecked ? 'border-indigo-500 ring-2 ring-indigo-300' : 'border-slate-200')} overflow-hidden shadow-sm hover:shadow-md transition flex flex-col'>
                     <!-- サムネイル外の選択チェックボックスバー -->
                     <div class='px-2.5 py-1 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px]'>
                         <label class='flex items-center gap-1.5 cursor-pointer font-bold text-slate-700 hover:text-indigo-600' onclick='event.stopPropagation()'>
-                            <input type='checkbox' class='w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 ${trashed || isSold || isMergedChild ? 'opacity-40 cursor-not-allowed' : ''}' onchange='toggleSelect(${item.id})' ${isChecked ? 'checked' : ''} ${trashed || isSold || isMergedChild ? 'disabled' : ''}>
+                            <input type='checkbox' class='w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500 ${isMergedChild ? 'opacity-40 cursor-not-allowed' : ''}' onchange='toggleSelect(${item.id})' ${isChecked ? 'checked' : ''} ${isMergedChild ? 'disabled' : ''}>
                             <span class='font-mono text-slate-500'>#${item.id}</span>
                         </label>
                         <div class='flex items-center gap-1'>
@@ -1859,6 +2119,11 @@ public static class DashboardHtml
             await fetchSettings();
             if (selectedItemIds.size < 2) {
                 alert('まとめ出品を作成するには、2点以上の商品を選択してください。');
+                return;
+            }
+            const selectedCheck = allItems.filter(i => selectedItemIds.has(i.id));
+            if (selectedCheck.some(i => i.status === 'SOLD' || isItemTrashed(i))) {
+                alert('売却済みまたはゴミ箱内の商品はまとめ買いに含められません。');
                 return;
             }
 

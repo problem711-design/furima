@@ -11,6 +11,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import java.io.File
 import com.example.myapplication.data.CsvExporter
+import com.example.myapplication.data.BatchEditSpec
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemEntity
@@ -338,7 +339,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             current.remove(id)
         } else {
             val itemWithPhotos = itemsWithPhotos.value.firstOrNull { it.item.id == id }
-            if (itemWithPhotos != null && (itemWithPhotos.item.status == "SOLD" || itemWithPhotos.item.status == "MERGED")) {
+            if (itemWithPhotos != null && (itemWithPhotos.item.status == "MERGED" || itemWithPhotos.item.deletedAt != null)) {
                 return
             }
             current.add(id)
@@ -489,6 +490,40 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val count = repository.emptyTrash()
             triggerAutoSync()
+            onSuccess(count)
+        }
+    }
+
+    fun batchMoveToTrash(itemIds: List<Int>, onSuccess: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.moveItemsToTrash(itemIds)
+            clearSelection()
+            if (count > 0) triggerAutoSync()
+            onSuccess(count)
+        }
+    }
+
+    fun batchUpdateItems(itemIds: List<Int>, spec: BatchEditSpec, onSuccess: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.batchUpdateItems(itemIds, spec)
+            clearSelection()
+            if (count > 0) triggerAutoSync()
+            onSuccess(count)
+        }
+    }
+
+    fun batchRestoreFromTrash(itemIds: List<Int>, onSuccess: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.restoreItemsFromTrash(itemIds)
+            if (count > 0) triggerAutoSync()
+            onSuccess(count)
+        }
+    }
+
+    fun batchPermanentlyDeleteFromTrash(itemIds: List<Int>, onSuccess: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.permanentlyDeleteItemsFromTrash(itemIds)
+            if (count > 0) triggerAutoSync()
             onSuccess(count)
         }
     }

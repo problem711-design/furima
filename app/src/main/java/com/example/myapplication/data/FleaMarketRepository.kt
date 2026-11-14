@@ -14,6 +14,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import java.io.File
 
+enum class BatchPriceMode {
+    NONE,
+    FIXED,
+    DELTA_YEN,
+    DELTA_PERCENT
+}
+
+data class BatchEditSpec(
+    val newStatus: String? = null,
+    val applyCostPreset: Boolean = false,
+    val useCustomSettings: Boolean = false,
+    val feeRatePercent: Int = 5,
+    val shippingCost: Int = 210,
+    val expenseCost: Int = 55,
+    val priceMode: BatchPriceMode = BatchPriceMode.NONE,
+    val priceValue: Int = 0
+)
+
 class FleaMarketRepository(private val context: Context) {
     private val db = AppDatabase.getDatabase(context)
     private val dao = db.itemDao()
@@ -388,6 +406,76 @@ class FleaMarketRepository(private val context: Context) {
         val now = System.currentTimeMillis()
         dao.restoreFromTrash(itemId, now)
         dao.restoreChildrenByParent(itemId, now)
+    }
+
+    suspend fun moveItemsToTrash(itemIds: List<Int>): Int {
+        var count = 0
+        for (id in itemIds.distinct()) {
+            val itemWithPhotos = dao.getItemById(id) ?: continue
+            moveToTrash(itemWithPhotos)
+            count++
+        }
+        return count
+    }
+
+    suspend fun restoreItemsFromTrash(itemIds: List<Int>): Int {
+        var count = 0
+        for (id in itemIds.distinct()) {
+            restoreFromTrash(id)
+            count++
+        }
+        return count
+    }
+
+    suspend fun permanentlyDeleteItemsFromTrash(itemIds: List<Int>): Int {
+        var count = 0
+        for (id in itemIds.distinct()) {
+            val itemWithPhotos = dao.getItemById(id) ?: continue
+            permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
+            count++
+        }
+        return count
+    }
+
+    suspend fun batchUpdateItems(itemIds: List<Int>, spec: BatchEditSpec): Int {
+        val now = System.currentTimeMillis()
+        var updatedCount = 0
+        for (id in itemIds.distinct()) {
+            val existing = dao.getItemById(id)?.item ?: continue
+            if (existing.deletedAt != null || existing.status == "MERGED") continue
+
+            val nextPrice = when (spec.priceMode) {
+                BatchPriceMode.NONE -> existing.price
+                BatchPriceMode.FIXED -> spec.priceValue.coerceAtLeast(0)
+                BatchPriceMode.DELTA_YEN -> (existing.price + spec.priceValue).coerceAtLeast(0)
+                BatchPriceMode.DELTA_PERCENT -> (existing.price + (existing.price * spec.priceValue) / 100).coerceAtLeast(0)
+            }
+
+            val nextStatus = spec.newStatus ?: existing.status
+            val nextSoldAt = if (nextStatus == "SOLD") (existing.soldAt ?: now) else null
+            val nextSoldPrice = when {
+                nextStatus != "SOLD" -> 0
+                spec.priceMode != BatchPriceMode.NONE -> nextPrice
+                existing.soldPrice > 0 -> existing.soldPrice
+                else -> nextPrice
+            }
+
+            val updated = existing.copy(
+                status = nextStatus,
+                price = nextPrice,
+                soldPrice = nextSoldPrice,
+                soldAt = nextSoldAt,
+                useCustomSettings = if (spec.applyCostPreset) spec.useCustomSettings else existing.useCustomSettings,
+                feeRatePercent = if (spec.applyCostPreset) spec.feeRatePercent.coerceAtLeast(0) else existing.feeRatePercent,
+                shippingCost = if (spec.applyCostPreset) spec.shippingCost.coerceAtLeast(0) else existing.shippingCost,
+                expenseCost = if (spec.applyCostPreset) spec.expenseCost.coerceAtLeast(0) else existing.expenseCost,
+                updatedAt = now,
+                isDirty = true
+            )
+            dao.updateItem(updated)
+            updatedCount++
+        }
+        return updatedCount
     }
 
     /**

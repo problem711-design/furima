@@ -765,6 +765,22 @@ class FurimaServerNative
             {
                 HandleMergeItems(req, res);
             }
+            else if (rawPath == "/api/items/batch-trash" && req.HttpMethod == "POST")
+            {
+                HandleBatchTrashItems(req, res);
+            }
+            else if (rawPath == "/api/items/batch-restore" && req.HttpMethod == "POST")
+            {
+                HandleBatchRestoreItems(req, res);
+            }
+            else if (rawPath == "/api/items/batch-permanent" && req.HttpMethod == "DELETE")
+            {
+                HandleBatchPermanentDeleteItems(req, res);
+            }
+            else if (rawPath == "/api/items/batch-update" && req.HttpMethod == "POST")
+            {
+                HandleBatchUpdateItems(req, res);
+            }
             else if (rawPath == "/api/trash/empty" && req.HttpMethod == "POST")
             {
                 HandleEmptyTrash(res);
@@ -1709,6 +1725,360 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("PermanentDeleteItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static List<int> ParseIdListFromRequest(HttpListenerRequest req)
+    {
+        var ids = new List<int>();
+        using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+        {
+            string jsonStr = reader.ReadToEnd();
+            if (string.IsNullOrWhiteSpace(jsonStr)) return ids;
+            JObject json = JObject.Parse(jsonStr);
+            JArray arr = json["itemIds"] as JArray;
+            if (arr != null)
+            {
+                foreach (JToken tok in arr)
+                {
+                    int val = ParseIntSafe(tok, 0);
+                    if (val > 0 && !ids.Contains(val)) ids.Add(val);
+                }
+            }
+        }
+        return ids;
+    }
+
+    private static void HandleBatchTrashItems(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            List<int> targetIds = ParseIdListFromRequest(req);
+            int affected = 0;
+            lock (lockObj)
+            {
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                foreach (int itemId in targetIds)
+                {
+                    var item = itemsDb.Find(i => i != null && ParseIntSafe(i["id"], 0) == itemId);
+                    if (item == null) continue;
+                    EnsureItemSyncUuid(item);
+                    item["deletedAt"] = now;
+                    item["isDeleted"] = true;
+                    item["statusLabel"] = "ゴミ箱";
+                    item["updatedAt"] = now;
+                    item["syncedToPhone"] = false;
+                    affected++;
+
+                    int mChildCount = item.ContainsKey("mergedChildCount") ? ParseIntSafe(item["mergedChildCount"], 0) : 0;
+                    if (mChildCount > 0)
+                    {
+                        foreach (var child in itemsDb)
+                        {
+                            if (child != null && child.ContainsKey("mergedParentId") && ParseIntSafe(child["mergedParentId"], 0) == itemId)
+                            {
+                                EnsureItemSyncUuid(child);
+                                child["deletedAt"] = now;
+                                child["isDeleted"] = true;
+                                child["updatedAt"] = now;
+                                child["syncedToPhone"] = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (affected > 0)
+            {
+                BumpDataRevision();
+                SaveItemsDbToDisk();
+            }
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "affectedCount", affected }, { "dataRevision", GetDataRevision() } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("BatchTrashItems エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleBatchRestoreItems(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            List<int> targetIds = ParseIdListFromRequest(req);
+            int affected = 0;
+            lock (lockObj)
+            {
+                long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                foreach (int itemId in targetIds)
+                {
+                    var item = itemsDb.Find(i => i != null && ParseIntSafe(i["id"], 0) == itemId);
+                    if (item == null) continue;
+                    string st = item.ContainsKey("status") && item["status"] != null ? item["status"].ToString() : "LISTED";
+                    EnsureItemSyncUuid(item);
+                    item["deletedAt"] = null;
+                    item["isDeleted"] = false;
+                    item["statusLabel"] = st == "SOLD" ? "売却済み" : (st == "DRAFT" ? "未出品" : (st == "MERGED" ? "まとめ売却" : "出品中"));
+                    item["updatedAt"] = now;
+                    item["syncedToPhone"] = false;
+                    affected++;
+
+                    int mChildCount = item.ContainsKey("mergedChildCount") ? ParseIntSafe(item["mergedChildCount"], 0) : 0;
+                    if (mChildCount > 0)
+                    {
+                        foreach (var child in itemsDb)
+                        {
+                            if (child != null && child.ContainsKey("mergedParentId") && ParseIntSafe(child["mergedParentId"], 0) == itemId)
+                            {
+                                EnsureItemSyncUuid(child);
+                                child["deletedAt"] = null;
+                                child["isDeleted"] = false;
+                                child["statusLabel"] = st == "SOLD" ? "まとめ売却済" : "まとめ出品中";
+                                child["updatedAt"] = now;
+                                child["syncedToPhone"] = false;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (affected > 0)
+            {
+                BumpDataRevision();
+                SaveItemsDbToDisk();
+            }
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "affectedCount", affected }, { "dataRevision", GetDataRevision() } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("BatchRestoreItems エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleBatchPermanentDeleteItems(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            List<int> targetIds = ParseIdListFromRequest(req);
+            int affected = 0;
+            lock (lockObj)
+            {
+                var idsToDelete = new HashSet<int>();
+                var uuidsToRecord = new List<string>();
+                foreach (int itemId in targetIds)
+                {
+                    var item = itemsDb.Find(i => i != null && ParseIntSafe(i["id"], 0) == itemId);
+                    if (item == null) continue;
+                    idsToDelete.Add(itemId);
+                    affected++;
+                    string pUuid = EnsureItemSyncUuid(item);
+                    if (!string.IsNullOrEmpty(pUuid) && !uuidsToRecord.Contains(pUuid)) uuidsToRecord.Add(pUuid);
+
+                    int mChildCount = item.ContainsKey("mergedChildCount") ? ParseIntSafe(item["mergedChildCount"], 0) : 0;
+                    if (mChildCount > 0)
+                    {
+                        foreach (var child in itemsDb)
+                        {
+                            if (child != null && child.ContainsKey("mergedParentId") && ParseIntSafe(child["mergedParentId"], 0) == itemId)
+                            {
+                                int cid = ParseIntSafe(child["id"], 0);
+                                if (cid > 0) idsToDelete.Add(cid);
+                                string cu = EnsureItemSyncUuid(child);
+                                if (!string.IsNullOrEmpty(cu) && !uuidsToRecord.Contains(cu)) uuidsToRecord.Add(cu);
+                            }
+                        }
+                    }
+                }
+
+                if (idsToDelete.Count > 0)
+                {
+                    foreach (int did in idsToDelete)
+                    {
+                        DeleteItemFolderById(did);
+                    }
+                    SyncStore.RecordPermanentlyDeletedUuids(uuidsToRecord);
+                    itemsDb.RemoveAll(i => i != null && i.ContainsKey("id") && idsToDelete.Contains(ParseIntSafe(i["id"], 0)));
+                }
+            }
+
+            if (affected > 0)
+            {
+                ScanAndIndexLocalPhotos();
+                BumpDataRevision();
+                SaveItemsDbToDisk();
+            }
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "affectedCount", affected }, { "dataRevision", GetDataRevision() } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("BatchPermanentDeleteItems エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleBatchUpdateItems(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr;
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            JObject json = JObject.Parse(jsonStr);
+
+            var targetIds = new List<int>();
+            JArray arr = json["itemIds"] as JArray;
+            if (arr != null)
+            {
+                foreach (JToken tok in arr)
+                {
+                    int val = ParseIntSafe(tok, 0);
+                    if (val > 0 && !targetIds.Contains(val)) targetIds.Add(val);
+                }
+            }
+
+            string newStatus = json.Value<string>("newStatus");
+            if (string.IsNullOrWhiteSpace(newStatus)) newStatus = null;
+
+            bool applyCostPreset = ParseBoolSafe(json["applyCostPreset"], false);
+            bool useCustomSettings = ParseBoolSafe(json["useCustomSettings"], false);
+            int feeRatePercent = Math.Max(0, ParseIntSafe(json["feeRatePercent"], 5));
+            int shippingCost = Math.Max(0, ParseIntSafe(json["shippingCost"], 210));
+            int expenseCost = Math.Max(0, ParseIntSafe(json["expenseCost"], 55));
+
+            string priceMode = json.Value<string>("priceMode") ?? "NONE";
+            int priceValue = ParseIntSafe(json["priceValue"], 0);
+
+            int affected = 0;
+            lock (lockObj)
+            {
+                long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                foreach (int itemId in targetIds)
+                {
+                    var item = itemsDb.Find(i => i != null && ParseIntSafe(i["id"], 0) == itemId);
+                    if (item == null) continue;
+                    if (ParseBoolSafe(item.ContainsKey("isDeleted") ? item["isDeleted"] : null, false)) continue;
+                    string curStatus = item.ContainsKey("status") && item["status"] != null ? item["status"].ToString() : "LISTED";
+                    if (curStatus == "MERGED") continue;
+
+                    int curPrice = Math.Max(0, ParseIntSafe(item.ContainsKey("price") ? item["price"] : null, 0));
+                    int nextPrice = curPrice;
+                    if (priceMode == "FIXED")
+                    {
+                        nextPrice = Math.Max(0, priceValue);
+                    }
+                    else if (priceMode == "DELTA_YEN")
+                    {
+                        nextPrice = Math.Max(0, curPrice + priceValue);
+                    }
+                    else if (priceMode == "DELTA_PERCENT")
+                    {
+                        nextPrice = Math.Max(0, curPrice + (curPrice * priceValue) / 100);
+                    }
+
+                    string nextStatus = newStatus != null ? newStatus : curStatus;
+                    string nextStatusLabel = nextStatus == "SOLD" ? "売却済み" : (nextStatus == "DRAFT" ? "未出品" : "出品中");
+
+                    long existingSoldAt = item.ContainsKey("soldAt") && item["soldAt"] != null ? ParseLongSafe(item["soldAt"], 0) : 0;
+                    int existingSoldPrice = item.ContainsKey("soldPrice") && item["soldPrice"] != null ? Math.Max(0, ParseIntSafe(item["soldPrice"], 0)) : 0;
+
+                    int nextSoldPrice = 0;
+                    if (nextStatus == "SOLD")
+                    {
+                        if (priceMode != "NONE") nextSoldPrice = nextPrice;
+                        else if (existingSoldPrice > 0) nextSoldPrice = existingSoldPrice;
+                        else nextSoldPrice = nextPrice;
+                    }
+
+                    int nextShipping = applyCostPreset
+                        ? shippingCost
+                        : (item.ContainsKey("shippingCost") && item["shippingCost"] != null ? ParseIntSafe(item["shippingCost"], 210) : 210);
+                    int nextFeeRate = applyCostPreset
+                        ? feeRatePercent
+                        : (item.ContainsKey("feeRatePercent") && item["feeRatePercent"] != null ? ParseIntSafe(item["feeRatePercent"], 5) : 5);
+                    int nextExpense = applyCostPreset
+                        ? expenseCost
+                        : (item.ContainsKey("expenseCost") && item["expenseCost"] != null ? ParseIntSafe(item["expenseCost"], 55) : 55);
+                    bool nextUseCustom = applyCostPreset
+                        ? useCustomSettings
+                        : (item.ContainsKey("useCustomSettings") && ParseBoolSafe(item["useCustomSettings"], false));
+
+                    int baseForProfit = (nextStatus == "SOLD" && nextSoldPrice > 0) ? nextSoldPrice : nextPrice;
+                    int fee = (baseForProfit * nextFeeRate) / 100;
+                    int profit = Math.Max(0, baseForProfit - fee - nextShipping - nextExpense);
+
+                    item["status"] = nextStatus;
+                    item["statusLabel"] = nextStatusLabel;
+                    item["price"] = nextPrice;
+                    item["soldPrice"] = nextSoldPrice;
+                    item["soldAt"] = nextStatus == "SOLD" ? (object)(existingSoldAt > 0 ? existingSoldAt : nowMs) : null;
+                    item["useCustomSettings"] = nextUseCustom;
+                    item["shippingCost"] = nextShipping;
+                    item["feeRatePercent"] = nextFeeRate;
+                    item["expenseCost"] = nextExpense;
+                    item["profit"] = profit;
+                    item["updatedAt"] = nowMs;
+                    item["syncedToPhone"] = false;
+                    EnsureItemSyncUuid(item);
+
+                    int mChildCount = item.ContainsKey("mergedChildCount") ? ParseIntSafe(item["mergedChildCount"], 0) : 0;
+                    if (mChildCount > 0 && newStatus != null)
+                    {
+                        string childLabel = nextStatus == "SOLD" ? "まとめ売却済" : "まとめ出品中";
+                        foreach (var child in itemsDb)
+                        {
+                            if (child != null && child.ContainsKey("mergedParentId") && ParseIntSafe(child["mergedParentId"], 0) == itemId)
+                            {
+                                child["statusLabel"] = childLabel;
+                                child["updatedAt"] = nowMs;
+                                child["syncedToPhone"] = false;
+                            }
+                        }
+                    }
+
+                    try
+                    {
+                        string title = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "";
+                        string description = item.ContainsKey("description") && item["description"] != null ? item["description"].ToString() : "";
+                        string targetDir = ResolveOrCreateItemFolder(itemId, title);
+                        string txtPath = Path.Combine(targetDir, "商品情報_説明文.txt");
+                        string txtContent = "【商品ID】 " + itemId + "
+【タイトル】 " + title + "
+【販売価格】 ¥" + nextPrice.ToString("N0") + "
+【純利益】 ¥" + profit.ToString("N0") + "
+【ステータス】 " + nextStatusLabel + "
+
+--- 商品説明 ---
+" + description;
+                        File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
+                    }
+                    catch (Exception tex)
+                    {
+                        Console.WriteLine("一括更新 説明文txt例外: " + tex.Message);
+                    }
+
+                    affected++;
+                }
+            }
+
+            if (affected > 0)
+            {
+                BumpDataRevision();
+                SaveItemsDbToDisk();
+            }
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "affectedCount", affected }, { "dataRevision", GetDataRevision() } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("BatchUpdateItems エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

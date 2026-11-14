@@ -35,7 +35,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 8)`** （Phase 3.2 計画確定済み・順次実装中：目標 **`v0.9β (Build 9)`**）
+現在のバージョン：**`v0.9β (Build 9)`** （Phase 3.2 完了：UI改善・テンプレートフルウィンドウ化＆変数展開・一括操作・出品前チェック・Build 9 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -81,14 +81,21 @@
   - [x] `ItemEditScreen.kt` 撮影ボタン横並び 2 分割（`52.dp` 維持：左側「アプリ内カメラ」＋右側「標準カメラ」＋ `CAMERA` 権限リクエスト／拒否時案内）
   - [x] `CameraXCaptureDialog.kt` 新設（連続撮影・明るさEVスライダー・ズーム・タップフォーカス・フラッシュ/トーチ・3×3/1対1出品枠ガイド・`Camera2Interop` 対応範囲簡易マニュアル調整）
   - [x] `PhotoPreviewDialog.kt` 「PCから高画質原本を取得」ボタンの上部ヘッダーエリア移設 ＋ `Build 8` 統一
-- [ ] **フェーズ 3.2 (`v0.9β Build 9`) — UI改善・テンプレート拡張・一括操作・出品前チェック** 【実装開始】
+- [x] **フェーズ 3.2 (`v0.9β Build 9`) — UI改善・テンプレート拡張・一括操作・出品前チェック** 【完了】
   - [x] `3.2-A` CameraX全画面オーバーレイ化によるナビバー被り根絶・プレビュー1本指スワイプ透過修復・出品前チェックアラート
   - [x] `3.2-B` テンプレート選択ドロップダウン化＆フルウィンドウ編集・`{title}`/`{price}`変数展開・PCワンクリックコピー強化
-  - [ ] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
+  - [x] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
 
 ---
 amma
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 3.2 完了 バージョン 0.9β (Build 9)
+- **3.2-C (選択モード拡張・ゴミ箱一括操作・一括ゴミ箱移動＆部分一括編集・Build 9統一)**：
+  - `ItemListScreen.kt` / `FleaMarketViewModel.kt` / `DashboardHtml.cs`：選択モードの `SOLD` 選択禁止を解除（非削除・非内包商品は全ステータス選択可）し、1件選択から一括操作バーを表示。「まとめ買い」ボタンのみ `2件以上かつ未売却のみ` で有効化する安全ガードを追加。
+  - `BatchEditDialog.kt` / `FleaMarketRepository.kt` / `DashboardHtml.cs`：ステータス変更（`soldAt`/`soldPrice`・まとめ子 `statusLabel` 連動）、費用プリセット適用（`基本設定に従う` 含む）、価格変更（固定額/±円/±%、**0円未満クランプ**）を個別ON/OFFできる部分一括編集 ＋ 変更サンプルプレビューを実装。
+  - `TrashScreen.kt` / `FurimaServerNative.cs` / `DashboardHtml.cs`：ゴミ箱画面での複数選択一括復元・一括完全削除を追加し、PCサーバーに `POST /api/items/batch-trash`、`POST /api/items/batch-restore`、`DELETE /api/items/batch-permanent`、`POST /api/items/batch-update` を新設（バッチ毎に1回のみ `BumpDataRevision()` / `SaveItemsDbToDisk()` を実行）。
+  - **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 9`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v0.9β (Build 9)`** へ3箇所同時統一（※Windows向け `.exe` および実機配布用 `.apk` のバイナリ再ビルドは各自環境で実行可能）。
 
 ### 2026/11/14 フェーズ 3.2-B 完了 (進行中 ➔ 目標 v0.9β Build 9)
 - **3.2-B (テンプレートUI刷新・フルウィンドウ編集・変数展開・PCワンクリックコピー)**：
