@@ -83,12 +83,18 @@
   - [x] `PhotoPreviewDialog.kt` 「PCから高画質原本を取得」ボタンの上部ヘッダーエリア移設 ＋ `Build 8` 統一
 - [ ] **フェーズ 3.2 (`v0.9β Build 9`) — UI改善・テンプレート拡張・一括操作・出品前チェック** 【実装開始】
   - [x] `3.2-A` CameraX全画面オーバーレイ化によるナビバー被り根絶・プレビュー1本指スワイプ透過修復・出品前チェックアラート
-  - [ ] `3.2-B` テンプレート選択ドロップダウン化＆フルウィンドウ編集・`{title}`/`{price}`変数展開・PCワンクリックコピー強化
+  - [x] `3.2-B` テンプレート選択ドロップダウン化＆フルウィンドウ編集・`{title}`/`{price}`変数展開・PCワンクリックコピー強化
   - [ ] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
 
 ---
 amma
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 3.2-B 完了 (進行中 ➔ 目標 v0.9β Build 9)
+- **3.2-B (テンプレートUI刷新・フルウィンドウ編集・変数展開・PCワンクリックコピー)**：
+  - `ItemEditScreen.kt`：タイトル/商品説明テンプレート選択を `ExposedDropdownMenuBox` ドロップダウンへ移行し、選択挿入後即座に選択表示をリセット（連続挿入可能）。挿入時に `{title}` / `{price}` 変数を自動展開。
+  - `SettingsStorageScreen.kt`：従来の小サイズ `AlertDialog` を廃止し、`Dialog(usePlatformDefaultWidth = false)` + `Scaffold` + `imePadding()` / `navigationBarsPadding()` + `{title}`/`{price}` 変数チップ付きフルウィンドウ大型テキストエリアエディタを実装。
+  - `DashboardHtml.cs`：テンプレート編集モーダルを全画面スタイル (`#template-editor-modal`, `max-w-4xl h-[88vh]`) へ拡張、プルダウン挿入時の `{title}`/`{price}` 変数展開に対応。`copyText` にボタン上 `✓ コピー済` フィードバックを追加し、編集モーダル内にもタイトル/説明文ワンクリックコピーボタンを配置。
 
 ### 2026/11/14 フェーズ 3.2-A 完了 (進行中 ➔ 目標 v0.9β Build 9)
 - **3.2-A (CameraXオーバーレイ化・プレビュー1本指スワイプ透過・出品前チェック)**：

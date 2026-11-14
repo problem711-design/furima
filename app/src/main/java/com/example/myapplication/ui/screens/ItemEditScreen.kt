@@ -17,8 +17,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,7 +45,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -100,7 +101,7 @@ import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ItemEditScreen(
     itemId: Int,
@@ -628,20 +629,16 @@ fun ItemEditScreen(
 
             if (defaultSettings.titleTemplates.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "タイトル定型文をカーソル位置へ挿入：",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    defaultSettings.titleTemplates.forEach { tpl ->
-                        AssistChip(
-                            onClick = { titleFieldValue = insertTemplateAtCursor(titleFieldValue, tpl.content) },
-                            label = { Text(tpl.name, fontSize = 11.sp) },
-                            modifier = Modifier.testTag("insert_title_template_${tpl.id}")
-                        )
+                TemplateInsertDropdown(
+                    placeholder = "タイトル定型文を選択して挿入 (${defaultSettings.titleTemplates.size}件)",
+                    templates = defaultSettings.titleTemplates,
+                    dropdownTag = "title_template_dropdown",
+                    itemTagPrefix = "insert_title_template_",
+                    onTemplateSelected = { tpl ->
+                        val expanded = expandTemplatePlaceholders(tpl.content, title, priceText)
+                        titleFieldValue = insertTemplateAtCursor(titleFieldValue, expanded)
                     }
-                }
+                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -661,20 +658,16 @@ fun ItemEditScreen(
 
             if (defaultSettings.descriptionTemplates.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = "説明文定型文をカーソル位置へ挿入：",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    defaultSettings.descriptionTemplates.forEach { tpl ->
-                        AssistChip(
-                            onClick = { descriptionFieldValue = insertTemplateAtCursor(descriptionFieldValue, tpl.content) },
-                            label = { Text(tpl.name, fontSize = 11.sp) },
-                            modifier = Modifier.testTag("insert_desc_template_${tpl.id}")
-                        )
+                TemplateInsertDropdown(
+                    placeholder = "説明文定型文を選択して挿入 (${defaultSettings.descriptionTemplates.size}件)",
+                    templates = defaultSettings.descriptionTemplates,
+                    dropdownTag = "desc_template_dropdown",
+                    itemTagPrefix = "insert_desc_template_",
+                    onTemplateSelected = { tpl ->
+                        val expanded = expandTemplatePlaceholders(tpl.content, title, priceText)
+                        descriptionFieldValue = insertTemplateAtCursor(descriptionFieldValue, expanded)
                     }
-                }
+                )
             }
 
             Spacer(modifier = Modifier.height(14.dp))
@@ -952,6 +945,70 @@ fun ItemEditScreen(
         )
     }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TemplateInsertDropdown(
+    placeholder: String,
+    templates: List<com.example.myapplication.data.local.TextTemplate>,
+    dropdownTag: String,
+    itemTagPrefix: String,
+    onTemplateSelected: (com.example.myapplication.data.local.TextTemplate) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        OutlinedTextField(
+            value = placeholder,
+            onValueChange = {},
+            readOnly = true,
+            singleLine = true,
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            textStyle = MaterialTheme.typography.bodySmall,
+            modifier = Modifier
+                .menuAnchor()
+                .fillMaxWidth()
+                .testTag(dropdownTag)
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            templates.forEach { tpl ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(tpl.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(
+                                text = tpl.content.replace("\n", " "),
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onTemplateSelected(tpl)
+                    },
+                    modifier = Modifier.testTag("${itemTagPrefix}${tpl.id}")
+                )
+            }
+        }
+    }
+}
+
+private fun expandTemplatePlaceholders(templateText: String, title: String, priceText: String): String {
+    val parsedPrice = priceText.toIntOrNull() ?: 0
+    val formattedPrice = NumberFormat.getNumberInstance(Locale.JAPAN).format(parsedPrice)
+    return templateText
+        .replace("{title}", title.trim())
+        .replace("{price}", formattedPrice)
 }
 
 private fun insertTemplateAtCursor(current: TextFieldValue, insertText: String): TextFieldValue {

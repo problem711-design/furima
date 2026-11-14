@@ -556,6 +556,9 @@ public static class DashboardHtml
                     <div class='flex justify-between items-center mb-1 gap-2'>
                         <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
                         <div class='flex items-center gap-2'>
+                            <button type='button' onclick='copyText(document.getElementById(""edit-title"").value, ""タイトル"", this)' class='px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[10px] font-bold text-slate-700 flex items-center gap-1 transition'>
+                                <i class='fa-regular fa-copy text-indigo-600'></i> コピー
+                            </button>
                             <select id='edit-title-tpl-select' onchange='applyTemplateSelect(""edit-title"", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
                                 <option value=''>定型文を挿入...</option>
                             </select>
@@ -568,9 +571,14 @@ public static class DashboardHtml
                 <div>
                     <div class='flex justify-between items-center mb-1 gap-2'>
                         <label class='font-bold text-slate-700'>商品説明文</label>
-                        <select id='edit-desc-tpl-select' onchange='applyTemplateSelect(""edit-description"", this, false)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[180px]'>
-                            <option value=''>説明定型文を挿入...</option>
-                        </select>
+                        <div class='flex items-center gap-2'>
+                            <button type='button' onclick='copyText(document.getElementById(""edit-description"").value, ""商品説明"", this)' class='px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[10px] font-bold text-slate-700 flex items-center gap-1 transition'>
+                                <i class='fa-regular fa-copy text-indigo-600'></i> コピー
+                            </button>
+                            <select id='edit-desc-tpl-select' onchange='applyTemplateSelect(""edit-description"", this, false)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[180px]'>
+                                <option value=''>説明定型文を挿入...</option>
+                            </select>
+                        </div>
                     </div>
                     <textarea id='edit-description' rows='4' oninput='updateModalValidation(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
                 </div>
@@ -709,44 +717,66 @@ public static class DashboardHtml
 
                 <!-- 2. タイトル用テンプレート -->
                 <div class='space-y-2.5'>
-                    <h4 class='font-bold text-slate-800 text-sm border-b border-slate-200 pb-1.5 flex items-center gap-1.5'>
-                        <i class='fa-solid fa-heading text-indigo-500'></i> タイトル用テンプレート
-                    </h4>
-                    <div id='settings-title-tpl-list' class='space-y-1.5'></div>
-                    <div class='bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2'>
-                        <p id='setting-title-tpl-form-title' class='font-bold text-slate-700 text-[11px]'>＋ タイトル定型文を追加</p>
-                        <input type='hidden' id='setting-title-tpl-edit-id' value=''>
-                        <div class='grid grid-cols-1 sm:grid-cols-2 gap-2'>
-                            <input type='text' id='setting-title-tpl-name' placeholder='表示名 (例: 美品タグ)' class='p-1.5 border border-slate-300 rounded bg-white'>
-                            <input type='text' id='setting-title-tpl-content' placeholder='挿入文字列 (例: 【美品】)' class='p-1.5 border border-slate-300 rounded bg-white'>
-                        </div>
-                        <div class='flex gap-2 justify-end'>
-                            <button type='button' onclick='resetTemplateForm(""title"")' class='bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded transition'>クリア</button>
-                            <button type='button' onclick='saveTemplateFromForm(""title"")' class='bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-1 px-3 rounded transition'>保存</button>
-                        </div>
+                    <div class='flex items-center justify-between border-b border-slate-200 pb-1.5'>
+                        <h4 class='font-bold text-slate-800 text-sm flex items-center gap-1.5'>
+                            <i class='fa-solid fa-heading text-indigo-500'></i> タイトル用テンプレート
+                        </h4>
+                        <button type='button' onclick='openTemplateEditorModal(""title"", -1)' class='px-2.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-bold text-[11px] flex items-center gap-1 transition'>
+                            <i class='fa-solid fa-plus'></i> 追加・大型編集
+                        </button>
                     </div>
+                    <div id='settings-title-tpl-list' class='space-y-1.5'></div>
                 </div>
 
                 <!-- 3. 商品説明用テンプレート -->
                 <div class='space-y-2.5'>
-                    <h4 class='font-bold text-slate-800 text-sm border-b border-slate-200 pb-1.5 flex items-center gap-1.5'>
-                        <i class='fa-solid fa-align-left text-emerald-600'></i> 商品説明用テンプレート
-                    </h4>
-                    <div id='settings-desc-tpl-list' class='space-y-1.5'></div>
-                    <div class='bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2'>
-                        <p id='setting-desc-tpl-form-title' class='font-bold text-slate-700 text-[11px]'>＋ 説明文定型文を追加</p>
-                        <input type='hidden' id='setting-desc-tpl-edit-id' value=''>
-                        <input type='text' id='setting-desc-tpl-name' placeholder='表示名 (例: 発送・ペットなし案内)' class='w-full p-1.5 border border-slate-300 rounded bg-white'>
-                        <textarea id='setting-desc-tpl-content' rows='3' placeholder='挿入する説明文本文...' class='w-full p-1.5 border border-slate-300 rounded bg-white'></textarea>
-                        <div class='flex gap-2 justify-end'>
-                            <button type='button' onclick='resetTemplateForm(""desc"")' class='bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-1 px-3 rounded transition'>クリア</button>
-                            <button type='button' onclick='saveTemplateFromForm(""desc"")' class='bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1 px-3 rounded transition'>保存</button>
-                        </div>
+                    <div class='flex items-center justify-between border-b border-slate-200 pb-1.5'>
+                        <h4 class='font-bold text-slate-800 text-sm flex items-center gap-1.5'>
+                            <i class='fa-solid fa-align-left text-emerald-600'></i> 商品説明用テンプレート
+                        </h4>
+                        <button type='button' onclick='openTemplateEditorModal(""desc"", -1)' class='px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-bold text-[11px] flex items-center gap-1 transition'>
+                            <i class='fa-solid fa-plus'></i> 追加・大型編集
+                        </button>
                     </div>
+                    <div id='settings-desc-tpl-list' class='space-y-1.5'></div>
                 </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end'>
                 <button onclick='closeSettingsModal()' class='px-4 py-2 text-xs font-bold bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition'>閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- テンプレート全画面スタイル編集モーダル -->
+    <div id='template-editor-modal' class='fixed inset-0 bg-black/70 z-[60] hidden flex items-center justify-center p-3 sm:p-6' onclick='closeTemplateEditorModal()'>
+        <div class='bg-white rounded-xl w-full max-w-4xl h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-slate-800 text-white px-5 py-3.5 flex items-center justify-between shrink-0'>
+                <div class='flex items-center gap-2'>
+                    <i class='fa-solid fa-file-pen text-emerald-300 text-lg'></i>
+                    <h3 id='tpl-editor-title' class='font-bold text-sm tracking-tight'>テンプレート編集</h3>
+                </div>
+                <button onclick='closeTemplateEditorModal()' class='text-slate-300 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='p-5 flex-1 flex flex-col gap-3 overflow-hidden text-xs'>
+                <input type='hidden' id='tpl-editor-category' value='desc'>
+                <input type='hidden' id='tpl-editor-edit-id' value=''>
+                <div>
+                    <label class='block font-bold text-slate-700 mb-1'>表示名</label>
+                    <input type='text' id='tpl-editor-name' placeholder='表示名 (例: 発送・ペットなし案内)' class='w-full p-2.5 border border-slate-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500'>
+                </div>
+                <div class='flex items-center justify-between flex-wrap gap-2'>
+                    <div class='flex items-center gap-1.5'>
+                        <span class='text-[11px] font-bold text-slate-600'>変数挿入：</span>
+                        <button type='button' onclick='insertTextAtCursor(""tpl-editor-content"", ""{title}"")' class='px-2 py-1 rounded border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-mono text-[11px] font-bold transition'>+ {title} 商品名</button>
+                        <button type='button' onclick='insertTextAtCursor(""tpl-editor-content"", ""{price}"")' class='px-2 py-1 rounded border border-indigo-200 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-mono text-[11px] font-bold transition'>+ {price} 価格</button>
+                    </div>
+                    <span id='tpl-editor-char-count' class='text-[11px] font-mono text-slate-500'>0文字</span>
+                </div>
+                <textarea id='tpl-editor-content' oninput='updateTemplateEditorCharCount()' placeholder='挿入するテキストを入力...' class='w-full flex-1 p-3 border border-slate-300 rounded-lg bg-white text-sm leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500 custom-scroll'></textarea>
+            </div>
+            <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end gap-2 shrink-0'>
+                <button type='button' onclick='closeTemplateEditorModal()' class='px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-lg transition'>キャンセル</button>
+                <button type='button' onclick='saveTemplateFromEditorModal()' class='px-5 py-2 text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg shadow-sm transition'>保存して同期</button>
             </div>
         </div>
     </div>
@@ -803,10 +833,23 @@ public static class DashboardHtml
             }, 2500);
         }
 
-        async function copyText(text, label) {
+        async function copyText(text, label, btnElem) {
+            const markCopied = () => {
+                showToast(label + 'をコピーしました！');
+                if (btnElem) {
+                    if (!btnElem.dataset.origHtml) btnElem.dataset.origHtml = btnElem.innerHTML;
+                    btnElem.innerHTML = '<i class="fa-solid fa-check text-emerald-600"></i> コピー済';
+                    btnElem.classList.add('border-emerald-400', 'bg-emerald-50', 'text-emerald-700');
+                    clearTimeout(btnElem._copyTimer);
+                    btnElem._copyTimer = setTimeout(() => {
+                        btnElem.innerHTML = btnElem.dataset.origHtml;
+                        btnElem.classList.remove('border-emerald-400', 'bg-emerald-50', 'text-emerald-700');
+                    }, 1500);
+                }
+            };
             try {
                 await navigator.clipboard.writeText(text);
-                showToast(label + 'をコピーしました！');
+                markCopied();
             } catch (err) {
                 const ta = document.createElement('textarea');
                 ta.value = text;
@@ -814,7 +857,7 @@ public static class DashboardHtml
                 ta.select();
                 document.execCommand('copy');
                 document.body.removeChild(ta);
-                showToast(label + 'をコピーしました！');
+                markCopied();
             }
         }
 
@@ -950,16 +993,27 @@ public static class DashboardHtml
             try { el.setSelectionRange(newPos, newPos); } catch (e) {}
         }
 
+        function expandPcTemplatePlaceholders(content, prefix) {
+            const rawTitle = (document.getElementById(prefix + '-title')?.value || '').trim();
+            const rawPrice = parseNonNegInt(document.getElementById(prefix + '-price')?.value, 0);
+            return (content || '')
+                .replace(/\{title\}/g, rawTitle)
+                .replace(/\{price\}/g, rawPrice.toLocaleString());
+        }
+
         function applyTemplateSelect(elementId, selectElem, isTitle) {
             const idx = selectElem.selectedIndex;
             if (idx <= 0) return;
             const list = isTitle ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
             const tpl = list[idx - 1];
             if (tpl && tpl.content) {
-                insertTextAtCursor(elementId, tpl.content);
+                const prefix = elementId.split('-')[0];
+                const expanded = expandPcTemplatePlaceholders(tpl.content, prefix);
+                insertTextAtCursor(elementId, expanded);
                 if (isTitle) {
-                    const prefix = elementId.split('-')[0];
                     checkTitleLength(prefix);
+                } else if (prefix === 'add' || prefix === 'edit') {
+                    updateModalValidation(prefix);
                 }
             }
             selectElem.selectedIndex = 0;
@@ -1185,26 +1239,38 @@ public static class DashboardHtml
         }
 
         function editTemplateByIndex(category, idx) {
+            openTemplateEditorModal(category, idx);
+        }
+
+        function openTemplateEditorModal(category, idx) {
             const list = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
-            const tpl = list[idx];
-            if (!tpl) return;
-            document.getElementById('setting-' + category + '-tpl-edit-id').value = tpl.id;
-            document.getElementById('setting-' + category + '-tpl-name').value = tpl.name;
-            document.getElementById('setting-' + category + '-tpl-content').value = tpl.content;
-            document.getElementById('setting-' + category + '-tpl-form-title').innerText = '✎ 定型文を編集中';
+            const tpl = (typeof idx === 'number' && idx >= 0) ? list[idx] : null;
+            document.getElementById('tpl-editor-category').value = category;
+            document.getElementById('tpl-editor-edit-id').value = tpl ? tpl.id : '';
+            document.getElementById('tpl-editor-name').value = tpl ? tpl.name : '';
+            document.getElementById('tpl-editor-content').value = tpl ? tpl.content : '';
+            document.getElementById('tpl-editor-title').innerText = tpl
+                ? (category === 'title' ? 'タイトルテンプレートを編集' : '商品説明テンプレートを編集')
+                : (category === 'title' ? 'タイトルテンプレートを追加' : '商品説明テンプレートを追加');
+            updateTemplateEditorCharCount();
+            document.getElementById('template-editor-modal').classList.remove('hidden');
         }
 
-        function resetTemplateForm(category) {
-            document.getElementById('setting-' + category + '-tpl-edit-id').value = '';
-            document.getElementById('setting-' + category + '-tpl-name').value = '';
-            document.getElementById('setting-' + category + '-tpl-content').value = '';
-            document.getElementById('setting-' + category + '-tpl-form-title').innerText = category === 'title' ? '＋ タイトル定型文を追加' : '＋ 説明文定型文を追加';
+        function closeTemplateEditorModal() {
+            document.getElementById('template-editor-modal').classList.add('hidden');
         }
 
-        async function saveTemplateFromForm(category) {
-            const editId = document.getElementById('setting-' + category + '-tpl-edit-id').value.trim();
-            const name = document.getElementById('setting-' + category + '-tpl-name').value.trim();
-            const content = document.getElementById('setting-' + category + '-tpl-content').value;
+        function updateTemplateEditorCharCount() {
+            const len = (document.getElementById('tpl-editor-content')?.value || '').length;
+            const el = document.getElementById('tpl-editor-char-count');
+            if (el) el.innerText = len + '文字';
+        }
+
+        async function saveTemplateFromEditorModal() {
+            const category = document.getElementById('tpl-editor-category').value || 'desc';
+            const editId = document.getElementById('tpl-editor-edit-id').value.trim();
+            const name = document.getElementById('tpl-editor-name').value.trim();
+            const content = document.getElementById('tpl-editor-content').value;
             if (!name || !content) {
                 alert('表示名と挿入テキストを入力してください');
                 return;
@@ -1223,7 +1289,7 @@ public static class DashboardHtml
                 descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || [])
             };
             const ok = await savePcSettingsPayload(next, 'テンプレートを保存しました');
-            if (ok) resetTemplateForm(category);
+            if (ok) closeTemplateEditorModal();
         }
 
         async function deleteTemplateByIndex(category, idx) {
@@ -1570,13 +1636,13 @@ public static class DashboardHtml
                         ${!trashed ? `
                         <!-- Yahoo!フリマ出品コピペ & 写真ビューアー支援バー -->
                         <div class='bg-slate-50 border border-slate-100 rounded p-1 flex items-center justify-between gap-1 text-[10px]'>
-                            <button onclick='copyText(${JSON.stringify(item.title || '')}, ""タイトル"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='タイトルをコピー'>
+                            <button onclick='copyText(${JSON.stringify(item.title || '')}, ""タイトル"", this)' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='タイトルをコピー'>
                                 <i class='fa-regular fa-copy text-indigo-600'></i> 題名
                             </button>
-                            <button onclick='copyText(${JSON.stringify(item.description || '')}, ""商品説明"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='商品説明をコピー'>
+                            <button onclick='copyText(${JSON.stringify(item.description || '')}, ""商品説明"", this)' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='商品説明をコピー'>
                                 <i class='fa-regular fa-copy text-indigo-600'></i> 説明
                             </button>
-                            <button onclick='copyText(${JSON.stringify(displayPrice.toString())}, ""価格"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='価格をコピー'>
+                            <button onclick='copyText(${JSON.stringify(displayPrice.toString())}, ""価格"", this)' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-0.5 rounded font-bold transition flex items-center justify-center gap-1' title='価格をコピー'>
                                 <i class='fa-regular fa-copy text-indigo-600'></i> 価格
                             </button>
                             <button onclick='openPhotoViewer(${item.id})' class='bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-1.5 py-0.5 rounded font-bold transition flex items-center justify-center' title='写真ギャラリー / 出品画像ドラッグ'>

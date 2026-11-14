@@ -29,7 +29,16 @@ import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TopAppBar
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -382,7 +391,7 @@ fun SettingsStorageScreen(
         )
     }
 
-    // テンプレート追加・編集ダイアログ
+    // テンプレート追加・編集フルウィンドウダイアログ
     val activeTplCategory = editingTemplateCategory
     if (activeTplCategory != null) {
         val editing = templateToEdit
@@ -390,85 +399,134 @@ fun SettingsStorageScreen(
         var tplContent by remember(activeTplCategory, editing?.id) { mutableStateOf(editing?.content ?: "") }
         val isTitleCategory = (activeTplCategory == TemplateCategory.TITLE)
 
-        AlertDialog(
+        Dialog(
             onDismissRequest = {
                 editingTemplateCategory = null
                 templateToEdit = null
             },
-            title = {
-                Text(
-                    when {
-                        editing != null && isTitleCategory -> "タイトルテンプレートを編集"
-                        editing != null -> "商品説明テンプレートを編集"
-                        isTitleCategory -> "タイトルテンプレートを追加"
-                        else -> "商品説明テンプレートを追加"
-                    }
-                )
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            properties = DialogProperties(
+                usePlatformDefaultWidth = false,
+                decorFitsSystemWindows = false
+            )
+        ) {
+            Scaffold(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding()
+                    .imePadding(),
+                topBar = {
+                    TopAppBar(
+                        title = {
+                            Text(
+                                text = when {
+                                    editing != null && isTitleCategory -> "タイトルテンプレート編集"
+                                    editing != null -> "商品説明テンプレート編集"
+                                    isTitleCategory -> "タイトルテンプレート追加"
+                                    else -> "商品説明テンプレート追加"
+                                },
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        navigationIcon = {
+                            IconButton(
+                                onClick = {
+                                    editingTemplateCategory = null
+                                    templateToEdit = null
+                                }
+                            ) {
+                                Icon(imageVector = Icons.Default.Close, contentDescription = "閉じる")
+                            }
+                        },
+                        actions = {
+                            Button(
+                                onClick = {
+                                    if (tplName.isNotBlank() && tplContent.isNotEmpty()) {
+                                        val targetList = if (isTitleCategory) titleTemplatesList else descriptionTemplatesList
+                                        if (editing != null) {
+                                            val updated = editing.copy(name = tplName.trim(), content = tplContent)
+                                            val idx = targetList.indexOfFirst { it.id == editing.id }
+                                            if (idx >= 0) targetList[idx] = updated
+                                        } else {
+                                            targetList.add(
+                                                TextTemplate(
+                                                    id = "tpl_${System.currentTimeMillis()}",
+                                                    name = tplName.trim(),
+                                                    content = tplContent
+                                                )
+                                            )
+                                        }
+                                        editingTemplateCategory = null
+                                        templateToEdit = null
+                                        persistSettingsNow(
+                                            targetTitleTemplates = titleTemplatesList.toList(),
+                                            targetDescTemplates = descriptionTemplatesList.toList()
+                                        )
+                                        Toast.makeText(context, "テンプレートを保存・同期しました", Toast.LENGTH_SHORT).show()
+                                    }
+                                },
+                                enabled = tplName.isNotBlank() && tplContent.isNotEmpty(),
+                                modifier = Modifier
+                                    .padding(end = 8.dp)
+                                    .testTag("confirm_save_template_button")
+                            ) {
+                                Text("保存")
+                            }
+                        }
+                    )
+                }
+            ) { innerPadding ->
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     OutlinedTextField(
                         value = tplName,
                         onValueChange = { tplName = it },
-                        label = { Text("表示名 (例: 美品タグ / 発送定型文)") },
+                        label = { Text("表示名 (例：美品タグ / 発送定型文)") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("template_name_input")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("template_name_input")
                     )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "変数挿入：",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        AssistChip(
+                            onClick = { tplContent += "{title}" },
+                            label = { Text("+ {title} 商品名", fontSize = 11.sp) }
+                        )
+                        AssistChip(
+                            onClick = { tplContent += "{price}" },
+                            label = { Text("+ {price} 価格", fontSize = 11.sp) }
+                        )
+                    }
+
                     OutlinedTextField(
                         value = tplContent,
                         onValueChange = { tplContent = it },
-                        label = { Text(if (isTitleCategory) "挿入するタイトル文字列" else "挿入する説明文本文") },
-                        singleLine = isTitleCategory,
-                        minLines = if (isTitleCategory) 1 else 3,
-                        maxLines = if (isTitleCategory) 2 else 8,
-                        modifier = Modifier.fillMaxWidth().testTag("template_content_input")
+                        label = { Text(if (isTitleCategory) "挿入するタイトル文字列" else "挿入する説明文本文 (${tplContent.length}文字)") },
+                        singleLine = false,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .testTag("template_content_input")
                     )
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (tplName.isNotBlank() && tplContent.isNotEmpty()) {
-                            val targetList = if (isTitleCategory) titleTemplatesList else descriptionTemplatesList
-                            if (editing != null) {
-                                val updated = editing.copy(name = tplName.trim(), content = tplContent)
-                                val idx = targetList.indexOfFirst { it.id == editing.id }
-                                if (idx >= 0) targetList[idx] = updated
-                            } else {
-                                targetList.add(
-                                    TextTemplate(
-                                        id = "tpl_${System.currentTimeMillis()}",
-                                        name = tplName.trim(),
-                                        content = tplContent
-                                    )
-                                )
-                            }
-                            editingTemplateCategory = null
-                            templateToEdit = null
-                            persistSettingsNow(
-                                targetTitleTemplates = titleTemplatesList.toList(),
-                                targetDescTemplates = descriptionTemplatesList.toList()
-                            )
-                            Toast.makeText(context, "テンプレートを保存・同期しました", Toast.LENGTH_SHORT).show()
-                        }
-                    },
-                    enabled = tplName.isNotBlank() && tplContent.isNotEmpty(),
-                    modifier = Modifier.testTag("confirm_save_template_button")
-                ) {
-                    Text("保存")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        editingTemplateCategory = null
-                        templateToEdit = null
-                    }
-                ) {
-                    Text("キャンセル")
-                }
             }
-        )
+        }
     }
 
     // テンプレート削除ダイアログ
