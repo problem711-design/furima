@@ -916,7 +916,7 @@ public static class DashboardHtml
                 showToast(label + 'をコピーしました！');
                 if (btnElem) {
                     if (!btnElem.dataset.origHtml) btnElem.dataset.origHtml = btnElem.innerHTML;
-                    btnElem.innerHTML = '<i class="fa-solid fa-check text-emerald-600"></i> コピー済';
+                    btnElem.innerHTML = '<i class=""fa-solid fa-check text-emerald-600""></i> コピー済';
                     btnElem.classList.add('border-emerald-400', 'bg-emerald-50', 'text-emerald-700');
                     clearTimeout(btnElem._copyTimer);
                     btnElem._copyTimer = setTimeout(() => {
