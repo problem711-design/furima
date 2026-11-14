@@ -25,6 +25,9 @@
    - 作業開始時、およびビルドナンバー（Build番号）更新時には、本ファイル (`PROGRESS.md`) に加えて、最新の仕様・計画書を**必ず同時に確認・参照・更新**する。
 8. **フェーズ完了ごとの Git コミット & GitHub 同期ルール**:
    - 各フェーズ（またはサブフェーズ）の完了ごとに、対象ファイルを選択的に `git add` して `git commit` を作成し、**`git push origin main` で GitHub リモートへ同期**する。
+9. **実機直接インストール保証・`testOnly` 防止ルール (Physical Device Installation Rule)**:
+   - スマホ実機への直接インストール（ファイルマネージャー等からのタップ）を常に保証するため、`gradle.properties` に `android.injected.testOnly=false` を常時固定し、`targetSdk = 35`（安定版）を維持する。
+   - APK 再ビルド時は、生成された `app-debug.apk` をプロジェクトルートの `flea_market_app.apk` および `public/flea_market_app.apk` へ上書き更新して実機配布用ファイルとして提示する。
 
 ---
 
