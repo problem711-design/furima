@@ -1,6 +1,12 @@
 package com.example.myapplication.ui.screens
 
+import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.provider.MediaStore
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -13,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.PhotoLibrary
@@ -40,6 +48,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,6 +68,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -67,16 +77,20 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
 import com.example.myapplication.data.PhotoStorageManager
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
+import com.example.myapplication.ui.components.CameraXCaptureDialog
 import com.example.myapplication.ui.components.PhotoPreviewDialog
 import com.example.myapplication.ui.components.PreviewPhotoItem
 import com.example.myapplication.ui.components.toPreviewPhotoItem
@@ -114,7 +128,9 @@ fun ItemEditScreen(
     val createdTempCameraPaths = remember { mutableStateListOf<String>() }
 
     var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var tempCameraPath by remember { mutableStateOf<String?>(null) }
+    var tempCameraPath by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCameraXDialog by rememberSaveable { mutableStateOf(false) }
+    var showCameraPermissionDeniedDialog by rememberSaveable { mutableStateOf(false) }
 
     var initialTitle by remember(itemId) { mutableStateOf("") }
     var initialDescription by remember(itemId) { mutableStateOf("") }
@@ -150,6 +166,16 @@ fun ItemEditScreen(
             } catch (_: Exception) {}
         }
         tempCameraPath = null
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            showCameraXDialog = true
+        } else {
+            showCameraPermissionDeniedDialog = true
+        }
     }
 
     LaunchedEffect(itemId) {
@@ -309,6 +335,52 @@ fun ItemEditScreen(
         }
     }
 
+    if (showCameraXDialog) {
+        CameraXCaptureDialog(
+            itemTitle = title.ifBlank { "Unassigned" },
+            onPhotosCaptured = { paths ->
+                if (paths.isNotEmpty()) {
+                    existingFilePaths.addAll(paths)
+                    createdTempCameraPaths.addAll(paths)
+                }
+                showCameraXDialog = false
+            },
+            onDismiss = { showCameraXDialog = false }
+        )
+    }
+
+    if (showCameraPermissionDeniedDialog) {
+        AlertDialog(
+            onDismissRequest = { showCameraPermissionDeniedDialog = false },
+            title = { Text("カメラ権限が必要です") },
+            text = {
+                Text("アプリ内カメラを使用するにはカメラへのアクセス許可が必要です。許可しない場合でも、右側の「標準カメラ」や下の「端末のギャラリーから写真を選択」から写真を追加できます。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showCameraPermissionDeniedDialog = false
+                        val settingsIntent = Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", context.packageName, null)
+                        )
+                        try {
+                            context.startActivity(settingsIntent)
+                        } catch (_: Exception) {
+                        }
+                    }
+                ) {
+                    Text("アプリ設定を開く")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCameraPermissionDeniedDialog = false }) {
+                    Text("閉じる")
+                }
+            }
+        )
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -339,30 +411,105 @@ fun ItemEditScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
 
-            // メインの撮影ボタン（一番目立つ位置・大きく配置）
-            Button(
-                onClick = {
-                    val manager = PhotoStorageManager(context)
-                    val pair = manager.createTempCameraPhotoUri(title.ifBlank { "Unassigned" })
-                    if (pair != null) {
-                        cameraPhotoUri = pair.first
-                        tempCameraPath = pair.second
-                        cameraLauncher.launch(pair.first)
-                    } else {
-                        Toast.makeText(context, "カメラ起動用のURI作成に失敗しました (FileProviderの設定をご確認ください)", Toast.LENGTH_LONG).show()
-                    }
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("take_photo_button"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+            // メインの撮影ボタン（高さ 52.dp を維持したまま横並び 2 分割）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(24.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("カメラで写真を撮影する (推奨)", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Button(
+                    onClick = {
+                        val granted = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (granted) {
+                            showCameraXDialog = true
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {}
+                        .testTag("take_photo_camerax_button"),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CameraAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "アプリ内カメラ",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                FilledTonalButton(
+                    onClick = {
+                        val stillIntent = Intent(MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA)
+                        val launchedStandard = try {
+                            if (stillIntent.resolveActivity(context.packageManager) != null) {
+                                context.startActivity(stillIntent)
+                                Toast.makeText(
+                                    context,
+                                    "標準カメラを起動しました（プロモード可）。撮影後は下の「端末のギャラリーから写真を選択」で取り込めます",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                true
+                            } else {
+                                false
+                            }
+                        } catch (_: ActivityNotFoundException) {
+                            false
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (!launchedStandard) {
+                            val manager = PhotoStorageManager(context)
+                            val pair = manager.createTempCameraPhotoUri(title.ifBlank { "Unassigned" })
+                            if (pair != null) {
+                                cameraPhotoUri = pair.first
+                                tempCameraPath = pair.second
+                                cameraLauncher.launch(pair.first)
+                            } else {
+                                Toast.makeText(
+                                    context,
+                                    "カメラ起動用のURI作成に失敗しました (FileProviderの設定をご確認ください)",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            }
+                        }
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .semantics(mergeDescendants = true) {}
+                        .testTag("launch_standard_camera_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.AddAPhoto,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "標準カメラ",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))

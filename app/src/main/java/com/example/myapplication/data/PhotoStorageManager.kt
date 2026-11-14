@@ -267,13 +267,25 @@ class PhotoStorageManager(private val context: Context) {
     }
 
     /**
+     * カメラ撮影用のテンポラリファイルを作成 (CameraX直接出力用)
+     */
+    fun createTempCameraPhotoFile(itemTitle: String): File? {
+        return try {
+            val dir = getItemImageDir(itemTitle)
+            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+            File(dir, "CAMERA_$timeStamp.jpg")
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    /**
      * カメラ撮影用のテンポラリURIを作成
      */
     fun createTempCameraPhotoUri(itemTitle: String): Pair<Uri, String>? {
         return try {
-            val dir = getItemImageDir(itemTitle)
-            val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
-            val file = File(dir, "CAMERA_$timeStamp.jpg")
+            val file = createTempCameraPhotoFile(itemTitle) ?: return null
             val authority = "${context.packageName}.fileprovider"
             val uri = FileProvider.getUriForFile(context, authority, file)
             Pair(uri, file.absolutePath)

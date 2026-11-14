@@ -153,94 +153,89 @@ fun PhotoPreviewDialog(
                 )
             }
 
-            // 上部ヘッダーバー (ページ番号 + 原本/サムネ表示バッジ + 閉じるボタン)
+            // 上部ヘッダーエリア (ページ番号 + 原本/サムネ表示バッジ + 閉じるボタン + 原本取得ボタン)
             val activePhoto = photos[pagerState.currentPage]
             val activeHash = activePhoto.md5Hash.trim().lowercase()
             val hasLoadedOriginal = activePhoto.hasLocalOriginal || cachedOriginals.containsKey(activeHash)
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.TopCenter)
-                    .background(Color.Black.copy(alpha = 0.5f))
-                    .statusBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Surface(
-                        color = Color.White.copy(alpha = 0.18f),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Text(
-                            text = "${pagerState.currentPage + 1} / ${photos.size}",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .padding(horizontal = 10.dp, vertical = 4.dp)
-                                .testTag("photo_preview_counter")
-                        )
-                    }
-
-                    Surface(
-                        color = if (hasLoadedOriginal) Color(0xFF2E7D32).copy(alpha = 0.85f) else Color(0xFF475569).copy(alpha = 0.85f),
-                        shape = RoundedCornerShape(16.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (hasLoadedOriginal) {
-                                Icon(
-                                    imageVector = Icons.Default.Hd,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(modifier = Modifier.width(3.dp))
-                            }
-                            Text(
-                                text = if (hasLoadedOriginal) "高画質原本" else "サムネイル表示",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.testTag("photo_preview_quality_badge")
-                            )
-                        }
-                    }
-                }
-
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.16f))
-                        .testTag("photo_preview_close_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "閉じる",
-                        tint = Color.White
-                    )
-                }
-            }
-
-            // 下部アクションバー (端末に原本がなくPCサーバー接続中のときのみ「PCから高画質原本を取得」を表示)
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .align(Alignment.TopCenter)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .statusBarsPadding()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            color = Color.White.copy(alpha = 0.18f),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text(
+                                text = "${pagerState.currentPage + 1} / ${photos.size}",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                                    .testTag("photo_preview_counter")
+                            )
+                        }
+
+                        Surface(
+                            color = if (hasLoadedOriginal) Color(0xFF2E7D32).copy(alpha = 0.85f) else Color(0xFF475569).copy(alpha = 0.85f),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (hasLoadedOriginal) {
+                                    Icon(
+                                        imageVector = Icons.Default.Hd,
+                                        contentDescription = null,
+                                        tint = Color.White,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(3.dp))
+                                }
+                                Text(
+                                    text = if (hasLoadedOriginal) "高画質原本" else "サムネイル表示",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.testTag("photo_preview_quality_badge")
+                                )
+                            }
+                        }
+                    }
+
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.16f))
+                            .testTag("photo_preview_close_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "閉じる",
+                            tint = Color.White
+                        )
+                    }
+                }
+
+                // 端末に原本がなくPCサーバー接続中のときのみ上部へ「PCから高画質原本を取得」を表示
                 if (!hasLoadedOriginal && activeHash.isNotBlank() && isPcServerConnected) {
                     val fetchingThis = (isFetchingHash == activeHash)
                     Button(
@@ -266,6 +261,7 @@ fun PhotoPreviewDialog(
                         ),
                         shape = RoundedCornerShape(24.dp),
                         modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
                             .height(48.dp)
                             .testTag("fetch_original_preview_button")
                     ) {
@@ -287,12 +283,22 @@ fun PhotoPreviewDialog(
                             Text("PCから高画質原本を取得", fontWeight = FontWeight.Bold, fontSize = 13.sp)
                         }
                     }
-                    Spacer(modifier = Modifier.height(6.dp))
                 }
+            }
 
+            // 下部操作ガイドバー (システムナビゲーションバーと重ならないシンプル案内)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .background(Color.Black.copy(alpha = 0.45f))
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
                 Text(
                     text = "ピンチで拡大縮小・ダブルタップでズーム切替・左右スワイプで移動",
-                    color = Color.White.copy(alpha = 0.7f),
+                    color = Color.White.copy(alpha = 0.75f),
                     fontSize = 11.sp
                 )
             }

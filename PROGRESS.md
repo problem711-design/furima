@@ -34,7 +34,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 7)`** （Phase 2.15〜2.17 総点検修復完了：重大度「致命的」「警告」「提案」全項目対応・Build 7 反映）
+現在のバージョン：**`v0.9β (Build 8)`** （Phase 3.1 完了：ハイブリッドカメラ実装（CameraX ＋ 標準カメラ併用）＆ 拡大プレビュー原本取得ボタン上部移設・Build 8 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -76,10 +76,19 @@
 - [x] **フェーズ 2.17 (`v0.9β Build 7`) — 重大度「提案」改善（ポーリング最適化・孤立ファイル掃除・資産整理）** 【完了】
   - [x] `2.17-A` `DashboardHtml.cs` リビジョン検知ポーリング一本化・`SaveItemsDbToDisk` 条件付き保存・ロック保護＆未使用バッファ削除
   - [x] `2.17-B` `savePhotoFromUri` 失敗時null保証・`saveItem` 孤立ファイル掃除・デッドコード/旧スクリプト/未使用依存整理 ＋ `Build 7` 統一
+- [x] **フェーズ 3.1 (`v0.9β Build 8`) — ハイブリッドカメラ（CameraX ＋ 標準カメラ）＆ 拡大プレビュー原本取得ボタン上部移設** 【完了】
+  - [x] `ItemEditScreen.kt` 撮影ボタン横並び 2 分割（`52.dp` 維持：左側「アプリ内カメラ」＋右側「標準カメラ」＋ `CAMERA` 権限リクエスト／拒否時案内）
+  - [x] `CameraXCaptureDialog.kt` 新設（連続撮影・明るさEVスライダー・ズーム・タップフォーカス・フラッシュ/トーチ・3×3/1対1出品枠ガイド・`Camera2Interop` 対応範囲簡易マニュアル調整）
+  - [x] `PhotoPreviewDialog.kt` 「PCから高画質原本を取得」ボタンの上部ヘッダーエリア移設 ＋ `Build 8` 統一
 
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 3.1 完了 バージョン 0.9β (Build 8)
+- **ハイブリッドカメラ UI ＆ `rememberSaveable` 状態保護 (`ItemEditScreen.kt`, `AndroidManifest.xml`, `PhotoStorageManager.kt`)**：縦方向のレイアウト高さを増やさず従来の `52.dp` 高さのままで撮影ボタンを横並び 2 分割（「アプリ内カメラ」＋「標準カメラ」）へ改修。`AndroidManifest.xml` に `CAMERA` 権限と `STILL_IMAGE_CAMERA` 用 `<queries>` を追加し、左ボタンは `ActivityResultContracts.RequestPermission()` 経由で `CameraXCaptureDialog` を起動、右ボタンは `MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA` により POCO X6 Pro（HyperOS）標準カメラのフル機能（プロモード・マクロ・彩度調整等）を起動（非対応環境時は `TakePicture` へフォールバック）＋ギャラリー取込案内トーストを表示するよう実装。また一時撮影パス等の状態を `rememberSaveable` で保護。
+- **アプリ内 CameraX 撮影画面 (`CameraXCaptureDialog.kt`)**：`PreviewView` (`ImplementationMode.COMPATIBLE`) による安定プレビュー、画面タップAF/AE・フォーカスリング、ピンチ＆プリセットズーム、露出補正（明るさ EV）スライダー、フラッシュ/トーチ切替、利用可能レンズ切替、3×3 グリッド＆1対1出品枠ガイド、1枚取消対応の連続撮影バッチ追加、および `Camera2Interop` による対応端末向け簡易マニュアル調整（ISO・シャッター速度・WB・Auto戻し、非対応項目自動非表示）を実装。
+- **写真拡大プレビュー原本取得ボタンの上部移設 (`PhotoPreviewDialog.kt`) ＋ Build 8 統一**：「PCから高画質原本を取得」ボタンを画面最下部から上部ヘッダーエリア（`statusBarsPadding()` 適用）へ移設してシステムナビゲーションバーとの重なりを解消。`app/build.gradle.kts` (`versionCode = 8`, `targetSdk = 35` 維持)、`WebDashboardHtml.kt`、`tools/DashboardHtml.cs` を **`v0.9β (Build 8)`** へ統一し、`compile_applet` でコンパイル正常完了を確認。
 
 ### 2026/11/14 フェーズ 2.17 完了 バージョン 0.9β (Build 7)
 - **2.17-A (ポーリング最適化・ディスクI/O削減・ロック安全化)**：`DashboardHtml.cs` の3秒ポーリングを軽量な `/api/server/status` のみへ一本化（`document.hidden` 時は自動停止・復帰時即時確認）し、`dataRevision` / `settingsRevision` 変化時のみ `/api/items`・`/api/cleanup/preview`・`/api/settings` を取得するよう最適化。`FurimaServerNative.cs` では `HandleSyncItems` の `SaveItemsDbToDisk()` を `dataChanged` 時のみ実行へ限定し、`HandleSyncPhoto` の未使用 `byte[] buffer` 確保を削除し、`hashToFilePathMap.Count` / `itemsDb.Count` 参照をすべて `lock (lockObj)` 内に保護。
