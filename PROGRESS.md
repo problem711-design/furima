@@ -33,7 +33,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 4)`** （Phase 2.14 ゴミ箱機能・イベント駆動&リビジョン検知同期・Build 4 反映）
+現在のバージョン：**`v0.9β (Build 7)`** （安定化・最適化調整完了・Build 7 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -68,6 +68,10 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 バージョン 0.9β (Build 7) 安定化・同期調整完了
+- **Build 7 更新内容**：ゴミ箱・イベント駆動同期の安定化調整およびバージョン表記の統一。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 7`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を `v0.9β (Build 7)` へ統一。
 
 ### 2026/11/14 フェーズ 2.14 完了 バージョン 0.9β (Build 4)
 - **2.14-A (Room DB拡張 ＆ 論理削除/復元リポジトリ)**：`ItemEntity` に `syncUuid`・`deletedAt`・`isDirty` を追加し、`AppDatabase` を Version 6 (`MIGRATION_5_6`) へ移行。通常一覧/集計クエリへ `deletedAt IS NULL` を適用し、`FleaMarketRepository` に `moveToTrash`・`restoreFromTrash`・`permanentlyDeleteItem`・`emptyTrash`・`purgeExpiredTrash(30)`・`unmergeItem` 時トームストーン記録を実装。
