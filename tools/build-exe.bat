@@ -16,7 +16,7 @@ if not exist %CSC% (
 
 echo.
 echo [1/2] FurimaServerNative.exe をビルド中 (/target:winexe)...
-%CSC% /nologo /out:furima-server.exe /target:winexe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
+%CSC% /nologo /codepage:65001 /out:furima-server.exe /target:winexe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
 
 if %ERRORLEVEL% neq 0 (
     echo [失敗] furima-server.exe のビルドエラー。
@@ -27,7 +27,7 @@ echo [成功] furima-server.exe のビルド完了。
 
 echo.
 echo [2/2] FurimaSyncNative.exe をビルド中...
-%CSC% /nologo /out:furima-sync.exe /target:exe FurimaSyncNative.cs /reference:Newtonsoft.Json.dll /reference:System.Net.Http.dll
+%CSC% /nologo /codepage:65001 /out:furima-sync.exe /target:exe FurimaSyncNative.cs /reference:Newtonsoft.Json.dll /reference:System.Net.Http.dll
 
 if %ERRORLEVEL% neq 0 (
     echo [失敗] furima-sync.exe のビルドエラー。
