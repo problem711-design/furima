@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 
 public class FeePresetConfig
@@ -399,6 +400,28 @@ public static class SyncStore
         }
     }
 
+    public static List<Dictionary<string, object>> NormalizePhotosList(object rawPhotos)
+    {
+        var result = new List<Dictionary<string, object>>();
+        var enumerable = rawPhotos as System.Collections.IEnumerable;
+        if (enumerable == null || rawPhotos is string) return result;
+
+        foreach (var elem in enumerable)
+        {
+            if (elem == null) continue;
+            if (elem is Dictionary<string, object>)
+            {
+                result.Add(new Dictionary<string, object>((Dictionary<string, object>)elem));
+            }
+            else if (elem is JObject)
+            {
+                var converted = ((JObject)elem).ToObject<Dictionary<string, object>>();
+                if (converted != null) result.Add(converted);
+            }
+        }
+        return result;
+    }
+
     public static int CountMissingFiles(List<Dictionary<string, object>> itemsDb, Dictionary<string, string> hashToFilePathMap)
     {
         HashSet<string> missingHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -420,23 +443,18 @@ public static class SyncStore
 
             if (item.ContainsKey("photos") && item["photos"] != null)
             {
-                var photosList = item["photos"] as System.Collections.IEnumerable;
-                if (photosList != null)
+                foreach (var photo in NormalizePhotosList(item["photos"]))
                 {
-                    foreach (var photoObj in photosList)
+                    if (photo != null && photo.ContainsKey("md5Hash") && photo["md5Hash"] != null)
                     {
-                        var photo = photoObj as Dictionary<string, object>;
-                        if (photo != null && photo.ContainsKey("md5Hash") && photo["md5Hash"] != null)
+                        string hash = photo["md5Hash"].ToString().Trim();
+                        if (!string.IsNullOrEmpty(hash))
                         {
-                            string hash = photo["md5Hash"].ToString().Trim();
-                            if (!string.IsNullOrEmpty(hash))
+                            string filePath;
+                            bool exists = hashToFilePathMap.TryGetValue(hash, out filePath) && !string.IsNullOrEmpty(filePath) && File.Exists(filePath);
+                            if (!exists)
                             {
-                                string filePath;
-                                bool exists = hashToFilePathMap.TryGetValue(hash, out filePath) && !string.IsNullOrEmpty(filePath) && File.Exists(filePath);
-                                if (!exists)
-                                {
-                                    missingHashes.Add(hash);
-                                }
+                                missingHashes.Add(hash);
                             }
                         }
                     }
@@ -546,44 +564,39 @@ public static class SyncStore
 
             if (item.ContainsKey("photos") && item["photos"] != null)
             {
-                var photosList = item["photos"] as System.Collections.IEnumerable;
-                if (photosList != null)
+                foreach (var photo in NormalizePhotosList(item["photos"]))
                 {
-                    foreach (var photoObj in photosList)
+                    if (photo == null || !photo.ContainsKey("md5Hash") || photo["md5Hash"] == null) continue;
+
+                    string hash = photo["md5Hash"].ToString().Trim();
+                    if (string.IsNullOrEmpty(hash)) continue;
+
+                    string filePath;
+                    if (hashToFilePathMap.TryGetValue(hash, out filePath) && !string.IsNullOrEmpty(filePath) && File.Exists(filePath))
                     {
-                        var photo = photoObj as Dictionary<string, object>;
-                        if (photo == null || !photo.ContainsKey("md5Hash") || photo["md5Hash"] == null) continue;
+                        FileInfo fi = new FileInfo(filePath);
 
-                        string hash = photo["md5Hash"].ToString().Trim();
-                        if (string.IsNullOrEmpty(hash)) continue;
+                        DateTime targetDate = hasValidSoldAt ? soldDate : fi.LastWriteTime;
 
-                        string filePath;
-                        if (hashToFilePathMap.TryGetValue(hash, out filePath) && !string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+                        if (targetDate <= cutoff)
                         {
-                            FileInfo fi = new FileInfo(filePath);
+                            int id = item.ContainsKey("id") ? Convert.ToInt32(item["id"]) : 0;
+                            string title = item.ContainsKey("title") ? (item["title"] ?? "無題").ToString() : "無題";
 
-                            DateTime targetDate = hasValidSoldAt ? soldDate : fi.LastWriteTime;
-
-                            if (targetDate <= cutoff)
+                            result.candidates.Add(new CleanupCandidate
                             {
-                                int id = item.ContainsKey("id") ? Convert.ToInt32(item["id"]) : 0;
-                                string title = item.ContainsKey("title") ? (item["title"] ?? "無題").ToString() : "無題";
+                                itemId = id,
+                                title = title,
+                                status = statusLabel,
+                                soldAtText = targetDate.ToString("yyyy/MM/dd"),
+                                photoHash = hash,
+                                fileName = fi.Name,
+                                filePath = filePath,
+                                sizeBytes = fi.Length,
+                                sizeFormatted = FormatBytes(fi.Length)
+                            });
 
-                                result.candidates.Add(new CleanupCandidate
-                                {
-                                    itemId = id,
-                                    title = title,
-                                    status = statusLabel,
-                                    soldAtText = targetDate.ToString("yyyy/MM/dd"),
-                                    photoHash = hash,
-                                    fileName = fi.Name,
-                                    filePath = filePath,
-                                    sizeBytes = fi.Length,
-                                    sizeFormatted = FormatBytes(fi.Length)
-                                });
-
-                                result.reclaimableBytes += fi.Length;
-                            }
+                            result.reclaimableBytes += fi.Length;
                         }
                     }
                 }

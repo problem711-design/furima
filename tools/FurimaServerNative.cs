@@ -1173,21 +1173,17 @@ class FurimaServerNative
                         {
                             if (item.ContainsKey("photos") && item["photos"] != null)
                             {
-                                var photosList = item["photos"] as System.Collections.IEnumerable;
-                                if (photosList != null)
+                                foreach (var p in SyncStore.NormalizePhotosList(item["photos"]))
                                 {
-                                    foreach (var pObj in photosList)
+                                    if (p != null && p.ContainsKey("md5Hash") && p["md5Hash"] != null &&
+                                        string.Equals(p["md5Hash"].ToString().Trim(), computedHash, StringComparison.OrdinalIgnoreCase))
                                     {
-                                        var p = pObj as Dictionary<string, object>;
-                                        if (p != null && p.ContainsKey("md5Hash") && string.Equals(p["md5Hash"].ToString(), computedHash, StringComparison.OrdinalIgnoreCase))
-                                        {
-                                            int id = Convert.ToInt32(item["id"]);
-                                            string title = item.ContainsKey("title") ? item["title"].ToString() : "";
-                                            foreach (char c in Path.GetInvalidFileNameChars()) title = title.Replace(c, '_');
-                                            targetDirPath = Path.Combine(syncDir, id + "_" + title);
-                                            Directory.CreateDirectory(targetDirPath);
-                                            break;
-                                        }
+                                        int id = Convert.ToInt32(item["id"]);
+                                        string title = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "";
+                                        foreach (char c in Path.GetInvalidFileNameChars()) title = title.Replace(c, '_');
+                                        targetDirPath = Path.Combine(syncDir, id + "_" + title);
+                                        Directory.CreateDirectory(targetDirPath);
+                                        break;
                                     }
                                 }
                             }
@@ -2254,39 +2250,34 @@ class FurimaServerNative
                     }
                 }
 
-                // フォールバック: 写真内の childItemId や MERGED ステータスからの救済復元（#18 等の過去データ保護）
+                // フォールバック: 写真内の childItemId や MERGED ステータスからの救済復元
                 if (restoredCount == 0 && parentItem.ContainsKey("photos") && parentItem["photos"] != null)
                 {
-                    var pPhotos = parentItem["photos"] as System.Collections.IEnumerable;
-                    if (pPhotos != null)
+                    var childIdsFromPhotos = new HashSet<int>();
+                    foreach (var pDict in SyncStore.NormalizePhotosList(parentItem["photos"]))
                     {
-                        var childIdsFromPhotos = new HashSet<int>();
-                        foreach (var p in pPhotos)
+                        if (pDict != null && pDict.ContainsKey("childItemId"))
                         {
-                            var pDict = p as Dictionary<string, object>;
-                            if (pDict != null && pDict.ContainsKey("childItemId"))
-                            {
-                                int cid = ParseIntSafe(pDict["childItemId"], 0);
-                                if (cid > 0) childIdsFromPhotos.Add(cid);
-                            }
+                            int cid = ParseIntSafe(pDict["childItemId"], 0);
+                            if (cid > 0) childIdsFromPhotos.Add(cid);
                         }
+                    }
 
-                        foreach (int cid in childIdsFromPhotos)
+                    foreach (int cid in childIdsFromPhotos)
+                    {
+                        var cItem = itemsDb.Find(i => ParseIntSafe(i["id"]) == cid);
+                        if (cItem != null && (cItem.ContainsKey("status") && cItem["status"].ToString() == "MERGED"))
                         {
-                            var cItem = itemsDb.Find(i => ParseIntSafe(i["id"]) == cid);
-                            if (cItem != null && (cItem.ContainsKey("status") && cItem["status"].ToString() == "MERGED"))
-                            {
-                                EnsureItemSyncUuid(cItem);
-                                cItem["status"] = "LISTED";
-                                cItem["statusLabel"] = "出品中";
-                                cItem["mergedParentId"] = null;
-                                cItem["mergedParentSyncUuid"] = null;
-                                cItem["deletedAt"] = null;
-                                cItem["isDeleted"] = false;
-                                cItem["updatedAt"] = now;
-                                cItem["syncedToPhone"] = false;
-                                restoredCount++;
-                            }
+                            EnsureItemSyncUuid(cItem);
+                            cItem["status"] = "LISTED";
+                            cItem["statusLabel"] = "出品中";
+                            cItem["mergedParentId"] = null;
+                            cItem["mergedParentSyncUuid"] = null;
+                            cItem["deletedAt"] = null;
+                            cItem["isDeleted"] = false;
+                            cItem["updatedAt"] = now;
+                            cItem["syncedToPhone"] = false;
+                            restoredCount++;
                         }
                     }
                 }
@@ -2401,8 +2392,8 @@ class FurimaServerNative
 
                 hashToFilePathMap[computedHash] = photoFilePath;
 
-                var photosList = item.ContainsKey("photos") && item["photos"] is List<Dictionary<string, object>>
-                    ? (List<Dictionary<string, object>>)item["photos"]
+                var photosList = item.ContainsKey("photos") && item["photos"] != null
+                    ? SyncStore.NormalizePhotosList(item["photos"])
                     : new List<Dictionary<string, object>>();
 
                 bool exists = false;

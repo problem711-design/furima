@@ -34,7 +34,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 4)`** （Phase 2.14 ゴミ箱機能・イベント駆動&リビジョン検知同期・Build 4 反映）
+現在のバージョン：**`v0.9β (Build 5)`** （Phase 2.15 重大度「致命的」修復：JArray型不一致根絶・原本削除/MD5整合・build-exe復旧・Build 5 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -65,10 +65,10 @@
   - `2.14-A` Room DB 拡張 (`syncUuid`, `deletedAt`, `isDirty`, `MIGRATION_5_6`) ＆ 論理削除/復元/30日超過完全削除リポジトリ
   - `2.14-B` イベント駆動Push ＋ 軽量リビジョン検知 (`dataRevision`/`settingsRevision`) Pull ＋ `isDirty`/`updatedAt` 保護 ＋ UUID衝突防止同期エンジン
   - `2.14-C` スマホ＆PC共通「ゴミ箱」UI実装（復元・完全削除・一括削除・30日保持カウント表示）
-- [ ] **フェーズ 2.15 (`v0.9β Build 5`) — 重大度「致命的」バグ修復（型不一致・原本/MD5破壊・ビルド復旧）** 【計画策定済・未着手】
-  - `2.15-A` PCサーバー `items_data.json` 再読込後の型不一致 (`JArray`/`JObject` vs `Dictionary`) 根絶（写真追加時消去・フォルダ振り分け・欠損数・30日掃除の復旧）
-  - `2.15-B` スマホ側 `cleanupSharedOriginalPhotos` / `saveItem` / `syncDeltaToPcServer` / `mergeServerItemsFromJson` での `isOriginalDeleted` & `md5Hash` 破壊修復
-  - `2.15-C` `tools/build-exe.bat` への `TunnelQrForm.cs` 追加 ＋ DLL配置整理 ＋ `Build 5` 統一
+- [x] **フェーズ 2.15 (`v0.9β Build 5`) — 重大度「致命的」バグ修復（型不一致・原本/MD5破壊・ビルド復旧）** 【完了】
+  - [x] `2.15-A` PCサーバー `items_data.json` 再読込後の型不一致 (`JArray`/`JObject` vs `Dictionary`) 根絶（写真追加時消去・フォルダ振り分け・欠損数・30日掃除の復旧）
+  - [x] `2.15-B` スマホ側 `cleanupSharedOriginalPhotos` / `saveItem` / `syncDeltaToPcServer` / `mergeServerItemsFromJson` での `isOriginalDeleted` & `md5Hash` 破壊修復
+  - [x] `2.15-C` `tools/build-exe.bat` への `TunnelQrForm.cs` 追加 ＋ DLL配置整理 ＋ `Build 5` 統一
 - [ ] **フェーズ 2.16 (`v0.9β Build 6`) — 重大度「警告」修復（PC単独編集・同期整合・画像処理・UI修正）** 【計画策定済・未着手】
   - `2.16-A` デバッグ残骸 `#18` 撤去 ＋ まとめ買い子ステータス適正化＆30日クリーンアップ安全化
   - `2.16-B` PC単独編集向け案内文言刷新（ロック表記撤廃）・`lastHeartbeatSec` / `HandleRequest` / `JValue(null)` / UTF-8安全性・フォルダ分断解消・`soldPrice` / 復元パス修復
@@ -80,6 +80,11 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/14 フェーズ 2.15 完了 バージョン 0.9β (Build 5)
+- **2.15-A (PCサーバー `JArray`/`JObject` 型不一致根絶)**：`SyncStore.cs` に `NormalizePhotosList(object)` を新設し、`CountMissingFiles` / `GetCleanupCandidates` および `FurimaServerNative.cs` の `HandleSyncPhoto` / `HandleUnmergeItem` / `HandleAddPhoto` の全5箇所を正規化経由へ統一。再起動後の `items_data.json` 読込状態でも写真追加時の既存写真消失や欠損数・クリーンアップ・フォルダ配置の破損が発生しないよう修復。
+- **2.15-B (スマホ側 原本削除・再保存・共有写真の `isOriginalDeleted` / `md5Hash` 破壊修復)**：`ItemDao.kt` に同一 `filePath` 一括更新クエリ `markOriginalDeletedByFilePath` を追加し、`FleaMarketViewModel.cleanupSharedOriginalPhotos` および `PcServerClient.syncDeltaToPcServer` での原本削除時に親子双方の `PhotoEntity` を更新するよう修正。`FleaMarketRepository.saveItem` では `thumbnailPath` でも既存写真を照合して元の `md5Hash` と `isOriginalDeleted` を保持し、`PcServerClient.mergeServerItemsFromJson` では実原本の存在有無で `isOriginalDeleted` を正しく判定するよう修正。`Phase215PhotoIntegrityTest.kt`（3件）を追加し全テスト通過を確認。
+- **2.15-C (`tools/build-exe.bat` 復旧・DLL整理・Build 5 統一)**：`build-exe.bat` に `TunnelQrForm.cs` を追加し、重複していた `tools/lib/Newtonsoft.Json.dll` を整理して `tools/Newtonsoft.Json.dll` へ参照を一本化（`.NET Framework 4.6+` 要件を明記）。`app/build.gradle.kts` (`versionCode = 5`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を `v0.9β (Build 5)` へ統一し、`flea_market_app.apk` / `public/flea_market_app.apk` を更新（※Windows向け `.exe` 再生成は Windows 環境で `tools/build-exe.bat` 実行が必要）。
 
 ### [2026-11-14] コードレビュー総点検に基づく修復・改善計画書 (`PLAN_PHASE_2_15_TO_2_17.md`) 策定
 - 最新コミット (`3f87ea8`) の徹底コードレビュー結果に基づき、重大度「致命的」➔「警告」➔「提案」の優先順で順次修復するための詳細実装計画書を `PLAN_PHASE_2_15_TO_2_17.md` に策定。

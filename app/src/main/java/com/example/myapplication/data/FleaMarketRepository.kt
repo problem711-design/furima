@@ -148,14 +148,15 @@ class FleaMarketRepository(private val context: Context) {
 
         val currentSettings = defaultSettings.value
         val existingPhotos = if (id != 0) dao.getPhotosByItemId(itemId) else emptyList()
-        val existingPhotoMap = existingPhotos.associateBy { it.filePath }
+        val existingByFilePath = existingPhotos.filter { it.filePath.isNotBlank() }.associateBy { it.filePath }
+        val existingByThumbPath = existingPhotos.filter { !it.thumbnailPath.isNullOrBlank() }.associateBy { it.thumbnailPath!! }
 
         val newPhotoEntities = mutableListOf<PhotoEntity>()
         var orderIndex = 0
 
         // 既存写真の保持
         for (path in existingFilePaths) {
-            val existing = existingPhotoMap[path]
+            val existing = existingByFilePath[path] ?: existingByThumbPath[path]
             val md5 = if (existing != null && existing.md5Hash.isNotBlank()) {
                 existing.md5Hash
             } else {

@@ -28,7 +28,7 @@
 目標バージョン：**`v0.9β (Build 5)`**
 
 ### 2.1 サブフェーズ 2.15-A — PCサーバー `items_data.json` 再読込後の型不一致 (`JArray` / `JObject`) 根絶
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `tools/FurimaServerNative.cs`
   * `tools/SyncStore.cs`
@@ -41,7 +41,7 @@
   2. 上記5箇所の写真参照ロジックをすべて共通ヘルパー経由に統一し、サーバー再起動を挟んでも写真リスト・フォルダ配置・欠損数・クリーンアップ候補が完全に維持されるようにする。
 
 ### 2.2 サブフェーズ 2.15-B — スマホ側 原本削除・保存・まとめ買い共有写真の `isOriginalDeleted` / `md5Hash` 破壊修復
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `app/src/main/java/com/example/myapplication/data/local/ItemDao.kt`
   * `app/src/main/java/com/example/myapplication/data/FleaMarketRepository.kt`
@@ -58,7 +58,7 @@
   4. `PcServerClient.mergeServerItemsFromJson()` 876行目の `isOriginalDeleted` 判定を「実原本ファイル（`thumbnailPath` と異なるパス）が実在せず、かつ `thumbnailPath` が存在するか」へ修正する。
 
 ### 2.3 サブフェーズ 2.15-C — `tools/build-exe.bat` ビルド復旧 ＋ DLL配置整理 ＋ `Build 5` 統一
-- [ ] **未着手**
+- [x] **実装完了**
 * **対象ファイル**：
   * `tools/build-exe.bat`
   * `tools/Newtonsoft.Json.dll` / `tools/lib/Newtonsoft.Json.dll`
