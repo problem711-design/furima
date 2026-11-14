@@ -148,14 +148,15 @@ class FleaMarketRepository(private val context: Context) {
 
         val currentSettings = defaultSettings.value
         val existingPhotos = if (id != 0) dao.getPhotosByItemId(itemId) else emptyList()
-        val existingPhotoMap = existingPhotos.associateBy { it.filePath }
+        val existingByFilePath = existingPhotos.filter { it.filePath.isNotBlank() }.associateBy { it.filePath }
+        val existingByThumbPath = existingPhotos.filter { !it.thumbnailPath.isNullOrBlank() }.associateBy { it.thumbnailPath!! }
 
         val newPhotoEntities = mutableListOf<PhotoEntity>()
         var orderIndex = 0
 
         // 既存写真の保持
         for (path in existingFilePaths) {
-            val existing = existingPhotoMap[path]
+            val existing = existingByFilePath[path] ?: existingByThumbPath[path]
             val md5 = if (existing != null && existing.md5Hash.isNotBlank()) {
                 existing.md5Hash
             } else {
@@ -200,6 +201,47 @@ class FleaMarketRepository(private val context: Context) {
                         displayOrder = orderIndex++
                     )
                 )
+            }
+        }
+
+        if (id != 0 && existingPhotos.isNotEmpty()) {
+            val keptPaths = newPhotoEntities.flatMap {
+                listOfNotNull(
+                    it.filePath.takeIf { p -> p.isNotBlank() },
+                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                )
+            }.toSet()
+            val removedPhotos = existingPhotos.filter { old ->
+                (old.filePath.isNotBlank() && !keptPaths.contains(old.filePath)) ||
+                    (!old.thumbnailPath.isNullOrBlank() && !keptPaths.contains(old.thumbnailPath))
+            }
+            if (removedPhotos.isNotEmpty()) {
+                val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+                    listOfNotNull(
+                        it.filePath.takeIf { p -> p.isNotBlank() },
+                        it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                    )
+                }.toSet()
+                for (removed in removedPhotos) {
+                    if (removed.filePath.isNotBlank() &&
+                        !keptPaths.contains(removed.filePath) &&
+                        !otherReferencedPaths.contains(removed.filePath)
+                    ) {
+                        try {
+                            File(removed.filePath).delete()
+                        } catch (_: Exception) {
+                        }
+                    }
+                    if (!removed.thumbnailPath.isNullOrBlank() &&
+                        !keptPaths.contains(removed.thumbnailPath) &&
+                        !otherReferencedPaths.contains(removed.thumbnailPath)
+                    ) {
+                        try {
+                            File(removed.thumbnailPath).delete()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
             }
         }
 
@@ -433,20 +475,6 @@ class FleaMarketRepository(private val context: Context) {
             }
         }
         return purgedCount
-    }
-
-    /**
-     * PC送信済み写真の高解像度元ファイルを削除しサムネイルのみ保持して容量削減
-     */
-    suspend fun cleanupSharedPhotos(): Int {
-        val allItems = dao.getItemsWithPhotosByIds(
-            dao.getAllActiveItemsWithPhotos().let {
-                // query directly
-                emptyList()
-            }
-        )
-        // implemented via ViewModel batch list
-        return 0
     }
 
     fun getPhotoStorageManager(): PhotoStorageManager = photoStorageManager

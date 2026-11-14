@@ -696,9 +696,35 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             val items = itemsWithPhotos.value.filter { it.item.isShared }
             var totalDeleted = 0
             withContext(Dispatchers.IO) {
+                val storageManager = repository.getPhotoStorageManager()
+                val dao = repository.getDao()
+                val deletedOrigPaths = mutableSetOf<String>()
                 for (itemWithPhotos in items) {
-                    val count = repository.getPhotoStorageManager().deleteOriginalPhotosKeepThumbnails(itemWithPhotos.photos)
-                    totalDeleted += count
+                    for (photo in itemWithPhotos.photos) {
+                        val thumbPath = photo.thumbnailPath ?: continue
+                        if (!File(thumbPath).exists()) continue
+                        if (photo.filePath.isBlank() || photo.filePath.equals(thumbPath, ignoreCase = true)) continue
+                        if (deletedOrigPaths.contains(photo.filePath)) {
+                            dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
+                            continue
+                        }
+                        val origFile = File(photo.filePath)
+                        if (origFile.exists()) {
+                            if (photo.md5Hash.isBlank()) {
+                                val md5 = storageManager.calculateMd5(origFile)
+                                if (md5.isNotBlank()) {
+                                    dao.updatePhotoMd5Hash(photo.id, md5)
+                                }
+                            }
+                            if (origFile.delete()) {
+                                deletedOrigPaths.add(photo.filePath)
+                                totalDeleted++
+                                dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
+                            }
+                        } else if (!photo.isOriginalDeleted) {
+                            dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
+                        }
+                    }
                 }
             }
             onResult(totalDeleted)

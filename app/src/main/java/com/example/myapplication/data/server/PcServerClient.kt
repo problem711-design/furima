@@ -510,6 +510,7 @@ class PcServerClient(
             val isStoreIdValid = currentStoreId.isNotBlank() && currentStoreId.equals(respStoreId, ignoreCase = true)
 
             var missingOriginalCount = 0
+            val deletedOrigPaths = mutableSetOf<String>()
 
             for (itemWithPhotos in itemsWithPhotos) {
                 if (itemWithPhotos.item.deletedAt != null) continue
@@ -538,12 +539,15 @@ class PcServerClient(
                             val hasThumb = photo.thumbnailPath != null &&
                                            !photo.thumbnailPath.equals(photo.filePath, ignoreCase = true) &&
                                            File(photo.thumbnailPath).exists()
-                            if (file.exists() && hasThumb) {
+                            if (hasThumb && deletedOrigPaths.contains(photo.filePath)) {
+                                dao.markOriginalDeletedByFilePath(photo.filePath, photo.thumbnailPath!!)
+                            } else if (file.exists() && hasThumb) {
                                 val fileSize = file.length()
                                 if (file.delete()) {
+                                    deletedOrigPaths.add(photo.filePath)
                                     freedBytes += fileSize
                                     syncedPhotoCount++
-                                    dao.updatePhotoOriginalDeleted(photo.id, true, photo.thumbnailPath)
+                                    dao.markOriginalDeletedByFilePath(photo.filePath, photo.thumbnailPath!!)
                                 }
                             }
                         }
@@ -818,6 +822,7 @@ class PcServerClient(
                         val childId = pObj.optInt("childItemId", 0)
                         var localFilePath = ""
                         var localThumbPath: String? = null
+                        var isOrigMissing = false
 
                         if (md5.isNotBlank()) {
                             val matched = (currentPhotos + allExistingPhotos).firstOrNull {
@@ -828,15 +833,20 @@ class PcServerClient(
                             if (matched != null) {
                                 val origFile = if (matched.filePath.isNotBlank()) File(matched.filePath) else null
                                 val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) File(matched.thumbnailPath) else null
-                                if (origFile != null && origFile.exists()) {
+                                val origIsReal = origFile != null && origFile.exists() &&
+                                    !matched.filePath.equals(matched.thumbnailPath, ignoreCase = true)
+                                if (origIsReal) {
                                     localFilePath = matched.filePath
                                     localThumbPath = matched.thumbnailPath
+                                    isOrigMissing = false
                                 } else if (thumbFile != null && thumbFile.exists()) {
                                     localFilePath = matched.thumbnailPath ?: ""
                                     localThumbPath = matched.thumbnailPath
+                                    isOrigMissing = true
                                 } else {
                                     localFilePath = matched.filePath
                                     localThumbPath = matched.thumbnailPath
+                                    isOrigMissing = matched.isOriginalDeleted
                                 }
                             }
                         }
@@ -846,34 +856,46 @@ class PcServerClient(
                                 dao.getItemWithPhotosBySyncUuid(childUuid)?.item?.id
                             } ?: childId
                             val childPhotos = dao.getPhotosByItemId(resolvedChildId)
-                            val matchedChildPhoto = childPhotos.firstOrNull { cp ->
-                                (md5.isNotBlank() && cp.md5Hash.equals(md5, ignoreCase = true)) ||
+                            val matchedChildPhoto = (if (md5.isNotBlank()) {
+                                childPhotos.firstOrNull { it.md5Hash.equals(md5, ignoreCase = true) }
+                            } else null)
+                                ?: childPhotos.getOrNull(pIdx)
+                                ?: childPhotos.firstOrNull { cp ->
                                     (cp.filePath.isNotBlank() && File(cp.filePath).exists()) ||
-                                    (!cp.thumbnailPath.isNullOrBlank() && File(cp.thumbnailPath).exists())
-                            } ?: childPhotos.getOrNull(pIdx) ?: childPhotos.firstOrNull()
+                                        (!cp.thumbnailPath.isNullOrBlank() && File(cp.thumbnailPath).exists())
+                                }
 
                             if (matchedChildPhoto != null) {
                                 val cOrig = if (matchedChildPhoto.filePath.isNotBlank()) File(matchedChildPhoto.filePath) else null
                                 val cThumb = if (!matchedChildPhoto.thumbnailPath.isNullOrBlank()) File(matchedChildPhoto.thumbnailPath) else null
-                                if (cOrig != null && cOrig.exists()) {
+                                val cOrigIsReal = cOrig != null && cOrig.exists() &&
+                                    !matchedChildPhoto.filePath.equals(matchedChildPhoto.thumbnailPath, ignoreCase = true)
+                                if (cOrigIsReal) {
                                     localFilePath = matchedChildPhoto.filePath
                                     localThumbPath = matchedChildPhoto.thumbnailPath
+                                    isOrigMissing = false
                                 } else if (cThumb != null && cThumb.exists()) {
                                     localFilePath = matchedChildPhoto.thumbnailPath ?: ""
                                     localThumbPath = matchedChildPhoto.thumbnailPath
+                                    isOrigMissing = true
                                 } else {
                                     localFilePath = matchedChildPhoto.filePath
                                     localThumbPath = matchedChildPhoto.thumbnailPath
+                                    isOrigMissing = matchedChildPhoto.isOriginalDeleted
                                 }
                             }
                         }
+
+                        val hasRealOriginal = localFilePath.isNotBlank() &&
+                            !localFilePath.equals(localThumbPath, ignoreCase = true) &&
+                            File(localFilePath).exists()
 
                         newPhotoEntities.add(
                             PhotoEntity(
                                 itemId = targetItemId,
                                 filePath = localFilePath,
                                 thumbnailPath = localThumbPath,
-                                isOriginalDeleted = localFilePath.isBlank() && !localThumbPath.isNullOrBlank(),
+                                isOriginalDeleted = isOrigMissing || (!hasRealOriginal && !localThumbPath.isNullOrBlank()),
                                 isPcSynced = true,
                                 md5Hash = md5,
                                 syncStatus = "SYNCED",

@@ -5,7 +5,8 @@
 > **過去の開発進捗ログ・詳細計画書 アーカイブ & 現行計画書**:
 > - 第1世代〜初期ログ: [PROGRESS_ARCHIVE_PHASE1.md](PROGRESS_ARCHIVE_PHASE1.md)
 > - フェーズ2.0〜2.11全詳細ログ・計画書: [PROGRESS_ARCHIVE_PHASE2.md](PROGRESS_ARCHIVE_PHASE2.md)
-> - **現行実装計画書 (フェーズ 2.12〜2.14)**: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
+> - フェーズ 2.12〜2.14 計画書: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
+> - **現行実装計画書 (フェーズ 2.15〜2.17 / 総点検修復)**: [PLAN_PHASE_2_15_TO_2_17.md](PLAN_PHASE_2_15_TO_2_17.md)
 
 ---
 
@@ -33,7 +34,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v0.9β (Build 7)`** （安定化・最適化調整完了・Build 7 反映）
+現在のバージョン：**`v0.9β (Build 7)`** （Phase 2.15〜2.17 総点検修復完了：重大度「致命的」「警告」「提案」全項目対応・Build 7 反映）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -64,14 +65,39 @@
   - `2.14-A` Room DB 拡張 (`syncUuid`, `deletedAt`, `isDirty`, `MIGRATION_5_6`) ＆ 論理削除/復元/30日超過完全削除リポジトリ
   - `2.14-B` イベント駆動Push ＋ 軽量リビジョン検知 (`dataRevision`/`settingsRevision`) Pull ＋ `isDirty`/`updatedAt` 保護 ＋ UUID衝突防止同期エンジン
   - `2.14-C` スマホ＆PC共通「ゴミ箱」UI実装（復元・完全削除・一括削除・30日保持カウント表示）
+- [x] **フェーズ 2.15 (`v0.9β Build 5`) — 重大度「致命的」バグ修復（型不一致・原本/MD5破壊・ビルド復旧）** 【完了】
+  - [x] `2.15-A` PCサーバー `items_data.json` 再読込後の型不一致 (`JArray`/`JObject` vs `Dictionary`) 根絶（写真追加時消去・フォルダ振り分け・欠損数・30日掃除の復旧）
+  - [x] `2.15-B` スマホ側 `cleanupSharedOriginalPhotos` / `saveItem` / `syncDeltaToPcServer` / `mergeServerItemsFromJson` での `isOriginalDeleted` & `md5Hash` 破壊修復
+  - [x] `2.15-C` `tools/build-exe.bat` への `TunnelQrForm.cs` 追加 ＋ DLL配置整理 ＋ `Build 5` 統一
+- [x] **フェーズ 2.16 (`v0.9β Build 6`) — 重大度「警告」修復（PC単独編集・同期整合・画像処理・UI修正）** 【完了】
+  - [x] `2.16-A` デバッグ残骸 `#18` 撤去 ＋ まとめ買い子ステータス適正化＆30日クリーンアップ安全化
+  - [x] `2.16-B` PC単独編集向け案内文言刷新（ロック表記撤廃）・`lastHeartbeatSec` / `HandleRequest` / `JValue(null)` / UTF-8安全性・フォルダ分断解消・`soldPrice` / 復元パス修復
+  - [x] `2.16-C` 画像形式マジックバイト判定・Canvas経由クリップボードコピー・EXIF回転補正・旧モーダル整理 ＋ `Build 6` 統一
+- [x] **フェーズ 2.17 (`v0.9β Build 7`) — 重大度「提案」改善（ポーリング最適化・孤立ファイル掃除・資産整理）** 【完了】
+  - [x] `2.17-A` `DashboardHtml.cs` リビジョン検知ポーリング一本化・`SaveItemsDbToDisk` 条件付き保存・ロック保護＆未使用バッファ削除
+  - [x] `2.17-B` `savePhotoFromUri` 失敗時null保証・`saveItem` 孤立ファイル掃除・デッドコード/旧スクリプト/未使用依存整理 ＋ `Build 7` 統一
 
 ---
 
 ## 更新履歴 (Changelog)
 
-### 2026/11/14 バージョン 0.9β (Build 7) 安定化・同期調整完了
-- **Build 7 更新内容**：ゴミ箱・イベント駆動同期の安定化調整およびバージョン表記の統一。
-- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 7`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を `v0.9β (Build 7)` へ統一。
+### 2026/11/14 フェーズ 2.17 完了 バージョン 0.9β (Build 7)
+- **2.17-A (ポーリング最適化・ディスクI/O削減・ロック安全化)**：`DashboardHtml.cs` の3秒ポーリングを軽量な `/api/server/status` のみへ一本化（`document.hidden` 時は自動停止・復帰時即時確認）し、`dataRevision` / `settingsRevision` 変化時のみ `/api/items`・`/api/cleanup/preview`・`/api/settings` を取得するよう最適化。`FurimaServerNative.cs` では `HandleSyncItems` の `SaveItemsDbToDisk()` を `dataChanged` 時のみ実行へ限定し、`HandleSyncPhoto` の未使用 `byte[] buffer` 確保を削除し、`hashToFilePathMap.Count` / `itemsDb.Count` 参照をすべて `lock (lockObj)` 内に保護。
+- **2.17-B (ストレージ安全性・孤立ファイル掃除・不要資産/依存整理・Build 7 統一)**：`PhotoStorageManager.savePhotoFromUri` で `openInputStream` が `null` または書き出しサイズ `<= 0` 時に `null` を返却するよう保護。`FleaMarketRepository.saveItem` で編集時に外された写真について他商品未参照の端末ファイルを削除する孤立ファイル掃除を追加し、未実装スタブ `cleanupSharedPhotos()` と旧補助スクリプト (`tools/furima-sync.bat`, `tools/furima-sync.ps1`) を削除。`app/build.gradle.kts` から未使用依存（`retrofit`, `converter-moshi`, `logging-interceptor`, 未使用 `firebase-*`）をコメントアウト整理し、`v0.9β (Build 7)` (`versionCode = 7`) へ3箇所同時統一・APK更新・全ユニットテスト通過を確認。
+
+### 2026/11/14 フェーズ 2.16 完了 バージョン 0.9β (Build 6)
+- **2.16-A (デバッグ残骸撤去・まとめ買い子ステータス・クリーンアップ安全化)**：`DashboardHtml.cs` (`item.id === 18`) と `FurimaServerNative.cs` (`parentId == 18`) のテスト用ハードコードを撤去。`HandleMergeItems` の子 `statusLabel` を `asStatus` に応じて `"まとめ売却済"` / `"まとめ出品中"` へ適正化し、`SyncStore.GetCleanupCandidates` を `status == "SOLD"` のみに限定＋アクティブ他商品（`LISTED` / `DRAFT` / 未売却親に属する `MERGED` 子）が参照中のハッシュ・ファイル除外ガードを追加。
+- **2.16-B (PC単独編集整合・サーバー堅牢化・フォルダ/復元修復)**：`DashboardHtml.cs` の旧「操作・編集ロック中」バナーを「PC単独で編集可／スマホ再接続時に自動同期」へ刷新。`FurimaServerNative.cs` では `lastHeartbeatSec` の `-1` 保護、`HandleRequest` 終端 `catch` 保護、`ParseBoolSafe` 導入による `JValue(null)` 回避、`Encoding.UTF8` 統一、`ResolveOrCreateItemFolder` によるタイトル変更時フォルダ分断解消、`displayOrder`/`childItemId` 保持を実施。Android 側も `ItemEditScreen.kt` の非売却時 `soldPrice = 0` 化および `LocalWebServer.kt` の `/api/photos/{photoId}/restore` サムネイル上書き防止を実装。
+- **2.16-C (画像形式/EXIF/クリップボード対応・旧モーダル整理・Build 6 統一)**：`FurimaServerNative.cs` でマジックバイト判定 (`image/jpeg`, `image/png`, `image/webp`, `image/gif`) と `.jpg`/`.jpeg`/`.png`/`.webp` スキャンを実装。`DashboardHtml.cs` の `copyPhotoBlob` を Canvas 経由 `image/png` 変換へ改善し、旧 `openImageModal` / `#image-modal` を整理。`PhotoStorageManager.kt` に `ExifInterface` 回転補正を組み込み、`v0.9β (Build 6)` (`versionCode = 6`) へ3箇所同時統一・APK更新・全テスト通過を確認。
+
+### 2026/11/14 フェーズ 2.15 完了 バージョン 0.9β (Build 5)
+- **2.15-A (PCサーバー `JArray`/`JObject` 型不一致根絶)**：`SyncStore.cs` に `NormalizePhotosList(object)` を新設し、`CountMissingFiles` / `GetCleanupCandidates` および `FurimaServerNative.cs` の `HandleSyncPhoto` / `HandleUnmergeItem` / `HandleAddPhoto` の全5箇所を正規化経由へ統一。再起動後の `items_data.json` 読込状態でも写真追加時の既存写真消失や欠損数・クリーンアップ・フォルダ配置の破損が発生しないよう修復。
+- **2.15-B (スマホ側 原本削除・再保存・共有写真の `isOriginalDeleted` / `md5Hash` 破壊修復)**：`ItemDao.kt` に同一 `filePath` 一括更新クエリ `markOriginalDeletedByFilePath` を追加し、`FleaMarketViewModel.cleanupSharedOriginalPhotos` および `PcServerClient.syncDeltaToPcServer` での原本削除時に親子双方の `PhotoEntity` を更新するよう修正。`FleaMarketRepository.saveItem` では `thumbnailPath` でも既存写真を照合して元の `md5Hash` と `isOriginalDeleted` を保持し、`PcServerClient.mergeServerItemsFromJson` では実原本の存在有無で `isOriginalDeleted` を正しく判定するよう修正。`Phase215PhotoIntegrityTest.kt`（3件）を追加し全テスト通過を確認。
+- **2.15-C (`tools/build-exe.bat` 復旧・DLL整理・Build 5 統一)**：`build-exe.bat` に `TunnelQrForm.cs` を追加し、重複していた `tools/lib/Newtonsoft.Json.dll` を整理して `tools/Newtonsoft.Json.dll` へ参照を一本化（`.NET Framework 4.6+` 要件を明記）。`app/build.gradle.kts` (`versionCode = 5`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を `v0.9β (Build 5)` へ統一し、`flea_market_app.apk` / `public/flea_market_app.apk` を更新（※Windows向け `.exe` 再生成は Windows 環境で `tools/build-exe.bat` 実行が必要）。
+
+### [2026-11-14] コードレビュー総点検に基づく修復・改善計画書 (`PLAN_PHASE_2_15_TO_2_17.md`) 策定
+- 最新コミット (`3f87ea8`) の徹底コードレビュー結果に基づき、重大度「致命的」➔「警告」➔「提案」の優先順で順次修復するための詳細実装計画書を `PLAN_PHASE_2_15_TO_2_17.md` に策定。
+- 仕様変更点の反映：初期の「スマホ常時接続時のみPC操作許可」仕様から現在の「PC単独編集 ＋ ゴミ箱復元対応 ＋ 安全な双方向同期」方針への移行を明確化し、ロック表記の撤廃と逐次ハンドオーバー時の整合性修復を組み込んだ。
 
 ### 2026/11/14 フェーズ 2.14 完了 バージョン 0.9β (Build 4)
 - **2.14-A (Room DB拡張 ＆ 論理削除/復元リポジトリ)**：`ItemEntity` に `syncUuid`・`deletedAt`・`isDirty` を追加し、`AppDatabase` を Version 6 (`MIGRATION_5_6`) へ移行。通常一覧/集計クエリへ `deletedAt IS NULL` を適用し、`FleaMarketRepository` に `moveToTrash`・`restoreFromTrash`・`permanentlyDeleteItem`・`emptyTrash`・`purgeExpiredTrash(30)`・`unmergeItem` 時トームストーン記録を実装。

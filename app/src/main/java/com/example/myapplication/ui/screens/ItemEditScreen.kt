@@ -743,7 +743,7 @@ fun ItemEditScreen(
             Button(
                 onClick = {
                     val price = priceText.toIntOrNull() ?: 0
-                    val soldPrice = soldPriceText.toIntOrNull() ?: price
+                    val soldPrice = if (status == "SOLD") (soldPriceText.toIntOrNull() ?: price) else 0
                     val shippingCost = if (useCustomSettings) {
                         shippingCostText.toIntOrNull() ?: defaultSettings.defaultShippingCost
                     } else {

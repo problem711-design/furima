@@ -29,7 +29,7 @@ public static class DashboardHtml
     <div id='status-banner' class='bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40'>
         <div class='flex items-center gap-2'>
             <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
-            <span id='status-text'>スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。</span>
+            <span id='status-text'>スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）。スマホアプリの「PC連携」画面から接続できます。</span>
         </div>
         <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v0.9β (Build 7)</span>
     </div>
@@ -374,17 +374,6 @@ public static class DashboardHtml
                     <i class='fa-solid fa-trash-can'></i> クリーンアップを実行
                 </button>
             </div>
-        </div>
-    </div>
-
-    <!-- 写真拡大プレビューモーダル -->
-    <div id='image-modal' class='fixed inset-0 bg-black/85 z-50 hidden flex flex-col items-center justify-center p-4' onclick='closeImageModal()'>
-        <div class='relative max-w-5xl max-h-[92vh] flex flex-col items-center justify-center' onclick='event.stopPropagation()'>
-            <button onclick='closeImageModal()' class='absolute -top-10 right-0 text-white hover:text-slate-300 text-2xl font-bold p-2 transition'><i class='fa-solid fa-xmark'></i></button>
-            <div class='bg-slate-900 rounded-lg p-2 shadow-2xl flex items-center justify-center overflow-hidden max-h-[80vh]'>
-                <img id='modal-img' src='' class='max-h-[76vh] max-w-full object-contain rounded'>
-            </div>
-            <div id='modal-thumbs' class='flex gap-2 mt-3 overflow-x-auto max-w-full p-1 custom-scroll'></div>
         </div>
     </div>
 
@@ -765,8 +754,9 @@ public static class DashboardHtml
         const AUTH_TOKEN = '"" + authToken + @""';
         let allItems = [];
         let currentFilter = 'ALL';
-        let currentModalPhotos = [];
         let selectedItemIds = new Set();
+        let lastKnownDataRevision = null;
+        let lastKnownSettingsRevision = null;
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
         let pendingAddPhotoFiles = [];
@@ -831,8 +821,37 @@ public static class DashboardHtml
                 const res = await fetch(url);
                 const blob = await res.blob();
                 if (navigator.clipboard && navigator.clipboard.write) {
+                    let pngBlob = blob;
+                    if (blob.type !== 'image/png') {
+                        pngBlob = await new Promise((resolve, reject) => {
+                            const img = new Image();
+                            const objUrl = URL.createObjectURL(blob);
+                            img.onload = () => {
+                                try {
+                                    const canvas = document.createElement('canvas');
+                                    canvas.width = img.naturalWidth || img.width;
+                                    canvas.height = img.naturalHeight || img.height;
+                                    const ctx = canvas.getContext('2d');
+                                    ctx.drawImage(img, 0, 0);
+                                    canvas.toBlob((outBlob) => {
+                                        URL.revokeObjectURL(objUrl);
+                                        if (outBlob) resolve(outBlob);
+                                        else reject(new Error('toBlob failed'));
+                                    }, 'image/png');
+                                } catch (err) {
+                                    URL.revokeObjectURL(objUrl);
+                                    reject(err);
+                                }
+                            };
+                            img.onerror = (err) => {
+                                URL.revokeObjectURL(objUrl);
+                                reject(err);
+                            };
+                            img.src = objUrl;
+                        });
+                    }
                     await navigator.clipboard.write([
-                        new ClipboardItem({ [blob.type]: blob })
+                        new ClipboardItem({ 'image/png': pngBlob })
                     ]);
                     showToast('画像をクリップボードにコピーしました！');
                     return;
@@ -882,7 +901,12 @@ public static class DashboardHtml
         document.addEventListener('DOMContentLoaded', () => {
             fetchSettings();
             fetchItems();
-            setInterval(fetchItems, 3000);
+            setInterval(pollServerRevisions, 3000);
+            document.addEventListener('visibilitychange', () => {
+                if (!document.hidden) {
+                    pollServerRevisions();
+                }
+            });
 
             // ドラッグ＆ドロップ写真アップロードの初期化 (ギャラリー・新規追加・編集モーダル)
             setupDropZone();
@@ -1212,34 +1236,68 @@ public static class DashboardHtml
             await savePcSettingsPayload(next, 'テンプレートを削除しました');
         }
 
-        async function fetchItems() {
+        function updateStatusBannerFromData(statusData) {
+            if (!statusData) return;
+            const banner = document.getElementById('status-banner');
+            const statusText = document.getElementById('status-text');
+            const statusIcon = document.getElementById('status-icon');
+            const missingCount = statusData.missingFileCount || 0;
+            const missingBadge = missingCount > 0 ? ' | 原本なし: ' + missingCount + '件' : '';
+            if (statusData.appConnected) {
+                banner.className = 'bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
+                statusIcon.className = 'fa-solid fa-circle-check text-base';
+                statusText.innerText = 'スマホアプリ接続中 (' + statusData.indexedPhotosCount + '枚の写真インデックス完了' + missingBadge + ')';
+            } else {
+                banner.className = 'bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
+                statusIcon.className = 'fa-solid fa-triangle-exclamation text-base animate-bounce';
+                statusText.innerText = 'スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）' + missingBadge;
+            }
+        }
+
+        async function fetchItemsOnly() {
             try {
-                fetchSettings();
                 const res = await fetch('/api/items', { headers: getHeaders() });
                 if (!res.ok) return;
                 allItems = await res.json();
                 updateStats();
                 renderItems();
             } catch (e) {}
+        }
+
+        async function pollServerRevisions() {
+            if (document.hidden) return;
+            try {
+                const statusRes = await fetch('/api/server/status', { headers: getHeaders() });
+                if (!statusRes.ok) return;
+                const statusData = await statusRes.json();
+                updateStatusBannerFromData(statusData);
+
+                const srvDataRev = typeof statusData.dataRevision === 'number' ? statusData.dataRevision : null;
+                const srvSettingsRev = typeof statusData.settingsRevision === 'number' ? statusData.settingsRevision : null;
+
+                if (srvSettingsRev !== null && srvSettingsRev !== lastKnownSettingsRevision) {
+                    lastKnownSettingsRevision = srvSettingsRev;
+                    fetchSettings();
+                }
+                if (srvDataRev === null || srvDataRev !== lastKnownDataRevision) {
+                    lastKnownDataRevision = srvDataRev;
+                    await fetchItemsOnly();
+                    fetchCleanupPreview();
+                }
+            } catch (e) {}
+        }
+
+        async function fetchItems() {
+            fetchSettings();
+            await fetchItemsOnly();
 
             try {
                 const statusRes = await fetch('/api/server/status', { headers: getHeaders() });
                 if (statusRes.ok) {
                     const statusData = await statusRes.json();
-                    const banner = document.getElementById('status-banner');
-                    const statusText = document.getElementById('status-text');
-                    const statusIcon = document.getElementById('status-icon');
-                    const missingCount = statusData.missingFileCount || 0;
-                    const missingBadge = missingCount > 0 ? ' | 原本なし: ' + missingCount + '件' : '';
-                    if (statusData.appConnected) {
-                        banner.className = 'bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
-                        statusIcon.className = 'fa-solid fa-circle-check text-base';
-                        statusText.innerText = 'スマホアプリ接続中 (' + statusData.indexedPhotosCount + '枚の写真インデックス完了' + missingBadge + ')';
-                    } else {
-                        banner.className = 'bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
-                        statusIcon.className = 'fa-solid fa-triangle-exclamation text-base animate-bounce';
-                        statusText.innerText = 'スマホアプリ未接続（操作・編集ロック中）。スマホアプリの「PC連携」画面から接続を開始してください。' + missingBadge;
-                    }
+                    updateStatusBannerFromData(statusData);
+                    if (typeof statusData.dataRevision === 'number') lastKnownDataRevision = statusData.dataRevision;
+                    if (typeof statusData.settingsRevision === 'number') lastKnownSettingsRevision = statusData.settingsRevision;
                 }
             } catch (e) {}
 
@@ -1374,7 +1432,6 @@ public static class DashboardHtml
             const title = item.title || '';
             if (title.startsWith('【まとめ買い】') || title.startsWith('まとめ買いセット') || title.includes('まとめ買い') || title.includes('まとめセット')) return true;
             if (item.photos && item.photos.some(p => p.childItemId && p.childItemId > 0)) return true;
-            if (item.id === 18) return true;
             return false;
         }
 
@@ -1832,46 +1889,6 @@ public static class DashboardHtml
             } catch (e) {
                 alert('通信エラー: ' + e.message);
             }
-        }
-
-        function openImageModal(itemIdx, photoIdx) {
-            const query = document.getElementById('search-input').value.trim().toLowerCase();
-            let filteredItems = allItems.filter(item => {
-                if (currentFilter === 'TRASH') {
-                    if (!isItemTrashed(item)) return false;
-                } else {
-                    if (isItemTrashed(item)) return false;
-                    if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                    if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT' && item.isShared) return false;
-                    if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
-                }
-                if (query) {
-                    const title = (item.title || '').toLowerCase();
-                    const desc = (item.description || '').toLowerCase();
-                    return title.includes(query) || desc.includes(query);
-                }
-                return true;
-            });
-
-            const item = filteredItems[itemIdx];
-            if (!item || !item.photos || item.photos.length === 0) return;
-
-            currentModalPhotos = item.photos;
-            const modalImg = document.getElementById('modal-img');
-            const initialPhoto = currentModalPhotos[photoIdx] || currentModalPhotos[0];
-            modalImg.src = initialPhoto.md5Hash ? '/api/photos/' + initialPhoto.md5Hash : initialPhoto.photoUrl;
-
-            const thumbsContainer = document.getElementById('modal-thumbs');
-            thumbsContainer.innerHTML = currentModalPhotos.map((p, idx) => {
-                const src = p.md5Hash ? '/api/photos/' + p.md5Hash : p.photoUrl;
-                return `<img src='${src}' onclick='document.getElementById(""modal-img"").src=""${src}""' class='w-12 h-12 object-cover rounded cursor-pointer border-2 border-slate-600 hover:border-white transition shrink-0'>`;
-            }).join('');
-
-            document.getElementById('image-modal').classList.remove('hidden');
-        }
-
-        function closeImageModal() {
-            document.getElementById('image-modal').classList.add('hidden');
         }
 
         function setupModalPhotoDropZone(zoneId, onFilesDropped) {
