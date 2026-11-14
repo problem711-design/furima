@@ -91,6 +91,8 @@ import com.example.myapplication.data.PhotoStorageManager
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.components.CameraXCaptureDialog
+import com.example.myapplication.ui.components.ListingValidationBanner
+import com.example.myapplication.ui.components.evaluateListingWarnings
 import com.example.myapplication.ui.components.PhotoPreviewDialog
 import com.example.myapplication.ui.components.PreviewPhotoItem
 import com.example.myapplication.ui.components.toPreviewPhotoItem
@@ -335,20 +337,6 @@ fun ItemEditScreen(
         }
     }
 
-    if (showCameraXDialog) {
-        CameraXCaptureDialog(
-            itemTitle = title.ifBlank { "Unassigned" },
-            onPhotosCaptured = { paths ->
-                if (paths.isNotEmpty()) {
-                    existingFilePaths.addAll(paths)
-                    createdTempCameraPaths.addAll(paths)
-                }
-                showCameraXDialog = false
-            },
-            onDismiss = { showCameraXDialog = false }
-        )
-    }
-
     if (showCameraPermissionDeniedDialog) {
         AlertDialog(
             onDismissRequest = { showCameraPermissionDeniedDialog = false },
@@ -381,6 +369,7 @@ fun ItemEditScreen(
         )
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -885,7 +874,20 @@ fun ItemEditScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
+
+            val editWarnings = evaluateListingWarnings(
+                title = title,
+                description = description,
+                photoCount = existingFilePaths.size + newImageUris.size,
+                price = priceText.toIntOrNull() ?: 0,
+                estimatedProfit = estimatedProfit,
+                status = status
+            )
+            if (editWarnings.isNotEmpty()) {
+                ListingValidationBanner(warnings = editWarnings)
+                Spacer(modifier = Modifier.height(14.dp))
+            }
 
             Button(
                 onClick = {
@@ -934,6 +936,21 @@ fun ItemEditScreen(
                 Text("保存する", fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
+    }
+
+    if (showCameraXDialog) {
+        CameraXCaptureDialog(
+            itemTitle = title.ifBlank { "Unassigned" },
+            onPhotosCaptured = { paths ->
+                if (paths.isNotEmpty()) {
+                    existingFilePaths.addAll(paths)
+                    createdTempCameraPaths.addAll(paths)
+                }
+                showCameraXDialog = false
+            },
+            onDismiss = { showCameraXDialog = false }
+        )
+    }
     }
 }
 

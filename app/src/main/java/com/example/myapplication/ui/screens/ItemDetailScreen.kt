@@ -69,7 +69,9 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.ui.FleaMarketViewModel
+import com.example.myapplication.ui.components.ListingValidationBanner
 import com.example.myapplication.ui.components.PhotoPreviewDialog
+import com.example.myapplication.ui.components.evaluateListingWarnings
 import com.example.myapplication.ui.components.toPreviewPhotoItem
 import java.io.File
 import java.text.NumberFormat
@@ -549,6 +551,19 @@ fun ItemDetailScreen(
                         )
                     }
                 }
+                Spacer(modifier = Modifier.height(14.dp))
+            }
+
+            val detailWarnings = evaluateListingWarnings(
+                title = currentItem.title,
+                description = currentItem.description,
+                photoCount = photos.size,
+                price = currentItem.price,
+                estimatedProfit = calculatedProfit,
+                status = currentItem.status
+            )
+            if (detailWarnings.isNotEmpty()) {
+                ListingValidationBanner(warnings = detailWarnings)
                 Spacer(modifier = Modifier.height(14.dp))
             }
 

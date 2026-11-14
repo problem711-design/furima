@@ -102,8 +102,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
@@ -374,19 +373,20 @@ fun CameraXCaptureDialog(
         )
     }
 
-    Dialog(
-        onDismissRequest = handleCloseRequest,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(100f)
+            .background(Color.Black)
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        awaitPointerEvent()
+                    }
+                }
+            }
+            .testTag("camerax_capture_dialog")
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-                .testTag("camerax_capture_dialog")
-        ) {
             // 1. カメラプレビュー (TextureView 互換モードで Xiaomi HyperOS の Dialog 重畳を安定化)
             AndroidView(
                 factory = { ctx ->
@@ -678,7 +678,7 @@ fun CameraXCaptureDialog(
                     .align(Alignment.BottomCenter)
                     .background(Color.Black.copy(alpha = 0.62f))
                     .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // ズーム倍率 & レンズ選択ピル
@@ -942,7 +942,6 @@ fun CameraXCaptureDialog(
                 }
             }
         }
-    }
 }
 
 @Composable

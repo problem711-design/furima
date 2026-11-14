@@ -4,7 +4,10 @@ import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -323,6 +326,7 @@ private fun ZoomablePhotoPage(
             scale = 1f
             offsetX = 0f
             offsetY = 0f
+            onScaleChanged(1f)
         }
     }
 
@@ -345,20 +349,31 @@ private fun ZoomablePhotoPage(
                 )
             }
             .pointerInput(model) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val nextScale = (scale * zoom).coerceIn(1f, 4f)
-                    if (nextScale <= 1.01f) {
-                        scale = 1f
-                        offsetX = 0f
-                        offsetY = 0f
-                    } else {
-                        scale = nextScale
-                        val maxOffsetX = (containerSize.width * (scale - 1f)) / 2f
-                        val maxOffsetY = (containerSize.height * (scale - 1f)) / 2f
-                        offsetX = (offsetX + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
-                        offsetY = (offsetY + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
-                    }
-                    onScaleChanged(scale)
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    do {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        val zoomChange = event.calculateZoom()
+                        val panChange = event.calculatePan()
+                        val isMultiTouch = pressedCount >= 2 || kotlin.math.abs(zoomChange - 1f) > 0.01f
+                        if (isMultiTouch || scale > 1.05f) {
+                            val nextScale = (scale * zoomChange).coerceIn(1f, 4f)
+                            if (nextScale <= 1.02f) {
+                                scale = 1f
+                                offsetX = 0f
+                                offsetY = 0f
+                            } else {
+                                scale = nextScale
+                                val maxOffsetX = (containerSize.width * (scale - 1f)) / 2f
+                                val maxOffsetY = (containerSize.height * (scale - 1f)) / 2f
+                                offsetX = (offsetX + panChange.x).coerceIn(-maxOffsetX, maxOffsetX)
+                                offsetY = (offsetY + panChange.y).coerceIn(-maxOffsetY, maxOffsetY)
+                            }
+                            onScaleChanged(scale)
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
                 }
             },
         contentAlignment = Alignment.Center
