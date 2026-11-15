@@ -36,7 +36,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 4)** （フェーズ 4-1 重大バグ・エラー緊急修復完了、フェーズ 4-2 へ移行）
+現在のバージョン：**`v1.0.0` (Build 5)** （フェーズ 4-2 PC写真ギャラリー改良＆写真ゴミ箱完了、フェーズ 4-3 へ移行）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -91,7 +91,7 @@
 - [x] **フェーズ 4-1 (`v1.0.0 Build 4`) — 重大なバグ・エラーの緊急修復（最優先）** 【完了】
   - コミット `48a42ba` 混入不具合の修復（`WebDashboardHtml.kt` JS構文エラー解消、`FleaMarketRepository` 写真ID再採番回避、`LocalWebServer` 型変換安全化＆表記整合）
   - `PcServerClient.kt` 写真0枚同期漏れ修正、PC/スマホ両Web画面のドロップゾーン二重発火防止、`openCleanupModal` XSS修正、スマホWeb側フォルダ同期 (`WebPhotoDto.filePath`) 修復、`FurimaServerNative.cs` `CS0219` 警告解消
-- [ ] **フェーズ 4-2 (`v1.0.0 Build 5`) — PCブラウザ管理画面の写真ギャラリー改良・原寸送り戻し・写真単位ゴミ箱（案A）**
+- [x] **フェーズ 4-2 (`v1.0.0 Build 5`) — PCブラウザ管理画面の写真ギャラリー改良・原寸送り戻し・写真単位ゴミ箱（案A）** 【完了】
   - `4-2a` PC母艦バックエンド（`SyncStore.cs` / `FurimaServerNative.cs`）：`_photo_trash` 退避＋`photo_trash.json` 管理、写真一括ゴミ箱移動/復元/完全削除/空にするAPI
   - `4-2b` PCブラウザUI（`DashboardHtml.cs`）：ギャラリー開時限定サムネイル右上チェックボックス、全画面原寸ライトボックス（`<`/`>`、キーボード `←`/`→`/`Esc`、下部ミニサムネ帯）、写真ゴミ箱モーダル
 - [ ] **フェーズ 4-3 (`v1.0.0 Build 6`) — 同期ステータス可視化 ＆ メモリ消費・アプリ安定性の抜本改善**
@@ -101,6 +101,16 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/15 フェーズ 4-2 完了 バージョン 1.0.0 (Build 5)
+- **PC母艦バックエンド 写真単位ゴミ箱ストア＆API（案A / `tools/SyncStore.cs`, `tools/FurimaServerNative.cs`）**：
+  - `_syncDir/_photo_trash` および `photo_trash.json` を新設し、`ScanAndIndexLocalPhotos` で `_photo_trash` をインデックス除外。
+  - `POST /api/items/{id}/photos/delete` / `POST /api/photos/trash-batch` で商品（まとめ親・子双方の参照対応）から写真参照を外し、他アクティブ商品未参照の実ファイルのみ `_photo_trash` へ退避＋`syncedToPhone = false` + `BumpDataRevision()` を実行。
+  - `GET /api/photo-trash`、`GET /api/photo-trash/{trashId}/image`、`POST /api/photo-trash/restore`、`POST /api/photo-trash/delete`、`POST /api/photo-trash/empty` を実装。
+- **PCブラウザ管理画面 写真ギャラリー改良・原寸ライトボックス・写真ゴミ箱UI（`tools/DashboardHtml.cs`）**：
+  - `#photo-viewer-modal` 内サムネイルのみ右上にチェックボックスを表示し、「全選択/解除」「選択した写真をゴミ箱へ移動」バーを追加（まとめ親商品では本来の所有子商品IDを保持）。
+  - 全画面原寸ライトボックス（`<` / `>` ボタン、キーボード `←` / `→` / `Esc`、`1 / N` 表示、下部ミニサムネ帯、画像コピー、別タブ、ゴミ箱移動）および「写真ゴミ箱」モーダル（復元・完全削除・空にする）を追加。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 5`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 5)`** へ3箇所統一（※PCサーバー反映には Windows 側で `tools/build-exe.bat` の再ビルドが必要）。
 
 ### 2026/11/15 フェーズ 4-1 完了 バージョン 1.0.0 (Build 4)
 - **スマホ緊急Web管理画面 JS 構文エラー・削除整合修復 (`WebDashboardHtml.kt`, `LocalWebServer.kt`, `FleaMarketRepository.kt`, `ItemDao.kt`)**：

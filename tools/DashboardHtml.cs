@@ -157,10 +157,13 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 4)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 5)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
+                    </button>
+                    <button onclick='openPhotoTrashModal()' class='w-full bg-rose-600 hover:bg-rose-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-trash-can-arrow-up text-xs'></i> 写真ゴミ箱 (<span id='sidebar-photo-trash-count'>0</span>)
                     </button>
                 </div>
 
@@ -381,6 +384,25 @@ public static class DashboardHtml
                 <span id='viewer-photo-count' class='text-[11px] font-mono text-slate-500'>0枚の写真</span>
             </div>
 
+            <!-- ギャラリー操作ツールバー (選択削除・全選択・ゴミ箱移動) -->
+            <div id='viewer-action-bar' class='bg-indigo-50/80 px-5 py-2 border-b border-indigo-100 flex flex-wrap items-center justify-between gap-2'>
+                <div class='flex items-center gap-2 text-[11px] text-slate-700'>
+                    <span id='viewer-photo-count-badge' class='font-mono font-bold text-indigo-700 bg-white px-2 py-0.5 rounded border border-indigo-200'>0枚</span>
+                    <button type='button' onclick='toggleSelectAllViewerPhotos()' class='px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold transition text-[11px]'>
+                        すべて選択/解除
+                    </button>
+                    <span class='text-slate-500 hidden sm:inline'>サムネイル右上のチェックボックスで写真ゴミ箱へ移動できます</span>
+                </div>
+                <div class='flex items-center gap-2'>
+                    <button type='button' id='viewer-trash-selected-btn' onclick='trashSelectedViewerPhotos()' disabled class='bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1.5'>
+                        <i class='fa-solid fa-trash-can'></i> 選択した写真をゴミ箱へ移動 (<span id='viewer-selected-count'>0</span>枚)
+                    </button>
+                    <button type='button' onclick='openPhotoTrashModal()' class='bg-white hover:bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold px-2.5 py-1.5 rounded-lg transition flex items-center gap-1'>
+                        <i class='fa-solid fa-trash-can-arrow-up'></i> 写真ゴミ箱 (<span id='viewer-photo-trash-count'>0</span>)
+                    </button>
+                </div>
+            </div>
+
             <div class='p-4 flex-1 overflow-y-auto custom-scroll space-y-4'>
                 <!-- 写真ドラッグ＆ドロップ追加ゾーン -->
                 <div id='photo-drop-zone' class='border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 rounded-xl p-3 text-center transition cursor-pointer'>
@@ -397,8 +419,90 @@ public static class DashboardHtml
             </div>
 
             <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500'>
-                <span class='flex items-center gap-1.5'><i class='fa-solid fa-circle-info text-indigo-500'></i> 画像を長押しドラッグするか、「画像コピー」ボタンで出品画面に貼り付けられます。</span>
+                <span class='flex items-center gap-1.5'><i class='fa-solid fa-circle-info text-indigo-500'></i> サムネイルクリックまたは「原寸表示」で全画面送り戻しビューアーが開きます。</span>
                 <button onclick='closePhotoViewer()' class='px-4 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全画面原寸写真ライトボックスモーダル (次の写真 / 前の写真 送り戻し対応) -->
+    <div id='photo-lightbox-modal' class='fixed inset-0 bg-black/95 z-[60] hidden flex flex-col justify-between p-3 sm:p-5' onclick='closePhotoLightbox()'>
+        <div class='w-full max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 text-white shadow-xl' onclick='event.stopPropagation()'>
+            <div class='flex items-center gap-2.5 overflow-hidden'>
+                <span id='lightbox-counter' class='text-xs font-mono font-bold bg-indigo-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
+                <span id='lightbox-title' class='text-xs sm:text-sm font-bold text-slate-100 truncate max-w-xs sm:max-w-md'></span>
+            </div>
+            <div class='flex items-center gap-2 shrink-0'>
+                <button type='button' onclick='copyCurrentLightboxPhoto()' class='bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-regular fa-copy text-indigo-300'></i> 画像コピー
+                </button>
+                <a id='lightbox-newtab-link' href='#' target='_blank' class='bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-solid fa-up-right-from-square'></i> 別タブ
+                </a>
+                <button type='button' onclick='trashCurrentLightboxPhoto()' class='bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-solid fa-trash-can'></i> ゴミ箱へ
+                </button>
+                <button type='button' onclick='closePhotoLightbox()' class='text-slate-300 hover:text-white text-xl p-1 transition' title='閉じる (Esc)'>
+                    <i class='fa-solid fa-xmark'></i>
+                </button>
+            </div>
+        </div>
+
+        <div class='relative flex-1 w-full max-w-6xl mx-auto flex items-center justify-center my-2 min-h-0' onclick='event.stopPropagation()'>
+            <button id='lightbox-prev-btn' type='button' onclick='prevLightboxPhoto()' class='absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 bg-black/70 hover:bg-black text-white w-12 h-12 rounded-full flex items-center justify-center text-xl border border-white/25 shadow-lg transition disabled:opacity-30 disabled:cursor-not-allowed' title='前の写真 (←キー)'>
+                <i class='fa-solid fa-chevron-left'></i>
+            </button>
+            <img id='lightbox-main-img' src='' alt='原寸プレビュー' class='max-w-full max-h-[72vh] rounded-lg shadow-2xl object-contain border border-slate-800 select-none'>
+            <button id='lightbox-next-btn' type='button' onclick='nextLightboxPhoto()' class='absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-black/70 hover:bg-black text-white w-12 h-12 rounded-full flex items-center justify-center text-xl border border-white/25 shadow-lg transition disabled:opacity-30 disabled:cursor-not-allowed' title='次の写真 (→キー)'>
+                <i class='fa-solid fa-chevron-right'></i>
+            </button>
+        </div>
+
+        <div class='w-full max-w-6xl mx-auto bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 text-white' onclick='event.stopPropagation()'>
+            <div class='flex items-center justify-between text-[10px] text-slate-400 mb-1.5 px-1'>
+                <span>下のサムネイルまたは左右ボタンで写真を切り替えできます</span>
+                <span>キーボード: [←]前へ / [→]次へ / [Esc]閉じる</span>
+            </div>
+            <div id='lightbox-thumbs-strip' class='flex gap-2 overflow-x-auto custom-scroll py-1 px-1'></div>
+        </div>
+    </div>
+
+    <!-- 写真単位ゴミ箱モーダル (案A: _photo_trash 復元・完全削除) -->
+    <div id='photo-trash-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5' onclick='closePhotoTrashModal()'>
+        <div class='bg-white rounded-xl max-w-4xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-rose-800 text-white px-5 py-3 flex items-center justify-between border-b border-rose-900'>
+                <div class='flex items-center gap-2.5'>
+                    <i class='fa-solid fa-trash-can-arrow-up text-rose-200 text-lg'></i>
+                    <div>
+                        <h3 class='font-bold text-sm tracking-tight'>写真ゴミ箱 (_photo_trash)</h3>
+                        <p id='photo-trash-subtitle' class='text-[11px] text-rose-200'>ギャラリーから削除した写真を元の商品へ復元、または完全削除できます</p>
+                    </div>
+                </div>
+                <button type='button' onclick='closePhotoTrashModal()' class='text-rose-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='bg-rose-50 px-5 py-2.5 border-b border-rose-100 flex flex-wrap items-center justify-between gap-2'>
+                <div class='flex items-center gap-2 text-xs'>
+                    <button type='button' onclick='toggleSelectAllPhotoTrash()' class='px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded font-bold text-slate-700 transition'>すべて選択/解除</button>
+                    <span id='photo-trash-summary-text' class='font-mono text-slate-600'>0枚 (0 B)</span>
+                </div>
+                <div class='flex flex-wrap items-center gap-2'>
+                    <button type='button' id='photo-trash-restore-btn' onclick='restoreSelectedPhotoTrash()' disabled class='bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 disabled:text-slate-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1'>
+                        <i class='fa-solid fa-rotate-left'></i> 選択を復元 (<span id='photo-trash-selected-count'>0</span>)
+                    </button>
+                    <button type='button' id='photo-trash-perm-btn' onclick='deleteSelectedPhotoTrashPermanent()' disabled class='bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:text-slate-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1'>
+                        <i class='fa-solid fa-fire'></i> 完全削除
+                    </button>
+                    <button type='button' onclick='emptyPhotoTrash()' class='bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition'>
+                        空にする
+                    </button>
+                </div>
+            </div>
+            <div id='photo-trash-grid' class='p-4 flex-1 overflow-y-auto custom-scroll grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'>
+                <!-- JSで動的描画 -->
+            </div>
+            <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500'>
+                <span>復元すると元の商品（まとめ商品の場合は内訳含む）へ戻ります。</span>
+                <button type='button' onclick='closePhotoTrashModal()' class='px-4 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>閉じる</button>
             </div>
         </div>
     </div>
@@ -859,6 +963,11 @@ public static class DashboardHtml
         let lastKnownSettingsRevision = null;
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
+        let selectedViewerPhotoIndices = new Set();
+        let lightboxPhotos = [];
+        let lightboxIndex = 0;
+        let photoTrashEntries = [];
+        let selectedPhotoTrashIds = new Set();
         let pendingAddPhotoFiles = [];
         let pcSettings = {
             defaultFeeRatePercent: 5,
@@ -1015,10 +1124,44 @@ public static class DashboardHtml
         document.addEventListener('DOMContentLoaded', () => {
             fetchSettings();
             fetchItems();
+            refreshPhotoTrashCount();
             setInterval(pollServerRevisions, 3000);
             document.addEventListener('visibilitychange', () => {
                 if (!document.hidden) {
                     pollServerRevisions();
+                }
+            });
+
+            // キーボードショートカット (ライトボックス送り戻し / Esc)
+            document.addEventListener('keydown', (e) => {
+                const lightbox = document.getElementById('photo-lightbox-modal');
+                if (lightbox && !lightbox.classList.contains('hidden')) {
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        prevLightboxPhoto();
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        nextLightboxPhoto();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closePhotoLightbox();
+                    }
+                    return;
+                }
+                const photoTrashModal = document.getElementById('photo-trash-modal');
+                if (photoTrashModal && !photoTrashModal.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closePhotoTrashModal();
+                    }
+                    return;
+                }
+                const viewerModal = document.getElementById('photo-viewer-modal');
+                if (viewerModal && !viewerModal.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closePhotoViewer();
+                    }
                 }
             });
 
@@ -1427,6 +1570,7 @@ public static class DashboardHtml
                     lastKnownDataRevision = srvDataRev;
                     await fetchItemsOnly();
                     fetchCleanupPreview();
+                    refreshPhotoTrashCount();
                 }
             } catch (e) {}
         }
@@ -1446,6 +1590,7 @@ public static class DashboardHtml
             } catch (e) {}
 
             fetchCleanupPreview();
+            refreshPhotoTrashCount();
         }
 
         function isItemTrashed(item) {
@@ -1944,6 +2089,7 @@ public static class DashboardHtml
 
             currentViewerItemId = itemId;
             currentViewerTab = 'group';
+            selectedViewerPhotoIndices.clear();
 
             document.getElementById('viewer-title').innerText = '写真ギャラリー: ' + (item.title || '無題');
             const isBundle = checkIsBundle(item);
@@ -1951,22 +2097,25 @@ public static class DashboardHtml
 
             if (isBundle) {
                 tabsBar.classList.remove('hidden');
-                document.getElementById('viewer-subtitle').innerText = 'まとめ商品 (' + (item.mergedChildCount || '複数') + '点同梱) - 写真の直接プレビュー・D&D・コピーが可能です';
+                document.getElementById('viewer-subtitle').innerText = 'まとめ商品 (' + (item.mergedChildCount || '複数') + '点同梱) - プレビュー・送り戻し・1枚削除（写真ゴミ箱）が可能です';
             } else {
                 tabsBar.classList.add('hidden');
-                document.getElementById('viewer-subtitle').innerText = '商品写真のプレビュー・出品画面へのドラッグ＆ドロップ・コピーが可能です';
+                document.getElementById('viewer-subtitle').innerText = '商品写真のプレビュー・原寸送り戻し・1枚削除（写真ゴミ箱）が可能です';
             }
 
             const folderBtn = document.getElementById('viewer-open-folder-btn');
             folderBtn.onclick = () => openFolder(itemId);
 
             renderViewerPhotos();
+            refreshPhotoTrashCount();
             document.getElementById('photo-viewer-modal').classList.remove('hidden');
         }
 
         function closePhotoViewer() {
+            closePhotoLightbox();
             document.getElementById('photo-viewer-modal').classList.add('hidden');
             currentViewerItemId = null;
+            selectedViewerPhotoIndices.clear();
         }
 
         function switchViewerTab(tab) {
@@ -1983,6 +2132,83 @@ public static class DashboardHtml
             renderViewerPhotos();
         }
 
+        function updateViewerSelectionBar(totalCount) {
+            const countBadge = document.getElementById('viewer-photo-count-badge');
+            const selCountSpan = document.getElementById('viewer-selected-count');
+            const trashBtn = document.getElementById('viewer-trash-selected-btn');
+            if (countBadge) countBadge.innerText = totalCount + '枚';
+            const selSize = selectedViewerPhotoIndices.size;
+            if (selCountSpan) selCountSpan.innerText = selSize;
+            if (trashBtn) trashBtn.disabled = (selSize === 0);
+        }
+
+        function toggleViewerPhotoSelect(index, event) {
+            if (event) event.stopPropagation();
+            if (selectedViewerPhotoIndices.has(index)) {
+                selectedViewerPhotoIndices.delete(index);
+            } else {
+                selectedViewerPhotoIndices.add(index);
+            }
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            updateViewerSelectionBar(item && item.photos ? item.photos.length : 0);
+        }
+
+        function toggleSelectAllViewerPhotos() {
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            const photos = (item && item.photos) ? item.photos : [];
+            if (photos.length === 0) return;
+            if (selectedViewerPhotoIndices.size >= photos.length) {
+                selectedViewerPhotoIndices.clear();
+            } else {
+                photos.forEach((_, idx) => selectedViewerPhotoIndices.add(idx));
+            }
+            renderViewerPhotos();
+        }
+
+        async function trashSelectedViewerPhotos() {
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            const photos = (item && item.photos) ? item.photos : [];
+            if (!item || selectedViewerPhotoIndices.size === 0) return;
+
+            const targets = [];
+            selectedViewerPhotoIndices.forEach(idx => {
+                const p = photos[idx];
+                if (p && p.md5Hash) {
+                    targets.push({
+                        itemId: item.id,
+                        md5Hash: p.md5Hash,
+                        childItemId: p.childItemId || 0
+                    });
+                }
+            });
+            if (targets.length === 0) {
+                showToast('MD5ハッシュ未確定の写真は移動できません（先に同期してください）');
+                return;
+            }
+            if (!confirm('選択した写真 ' + targets.length + '枚を写真ゴミ箱へ移動しますか？（写真ゴミ箱から復元可能です）')) return;
+
+            try {
+                const res = await fetch('/api/photos/trash-batch', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ targets })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') {
+                    throw new Error(data.message || '削除に失敗しました');
+                }
+                selectedViewerPhotoIndices.clear();
+                showToast((data.movedToTrashCount || targets.length) + '枚の写真を写真ゴミ箱へ移動しました');
+                await fetchItems();
+                refreshPhotoTrashCount();
+                if (currentViewerItemId === item.id) {
+                    renderViewerPhotos();
+                }
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
         function renderViewerPhotos() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             if (!item) return;
@@ -1990,6 +2216,12 @@ public static class DashboardHtml
             const container = document.getElementById('viewer-photos-container');
             const photos = item.photos || [];
             document.getElementById('viewer-photo-count').innerText = photos.length + '枚の写真';
+
+            // 存在しないインデックスを掃除
+            Array.from(selectedViewerPhotoIndices).forEach(idx => {
+                if (idx < 0 || idx >= photos.length) selectedViewerPhotoIndices.delete(idx);
+            });
+            updateViewerSelectionBar(photos.length);
 
             if (photos.length === 0) {
                 container.innerHTML = '<div class=\'text-center py-8 text-slate-400 text-xs\'>登録されている写真がありません。上の枠から画像ファイルをドラッグ＆ドロップして追加してください。</div>';
@@ -2032,20 +2264,335 @@ public static class DashboardHtml
 
         function renderSinglePhotoCard(photo, index) {
             const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
-            return `<div class='bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm flex flex-col justify-between'>
-                <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-grab group'>
+            const isChecked = selectedViewerPhotoIndices.has(index);
+            return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between transition'>
+                <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openPhotoLightbox(${index})'>
                     <img src='${url}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${url}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>
-                    <span class='absolute top-1 left-1 bg-black/60 text-white text-[9px] font-mono px-1 rounded'>#${index + 1}</span>
+                    <span class='absolute top-1 left-1 bg-black/65 text-white text-[9px] font-mono px-1.5 py-0.5 rounded pointer-events-none'>#${index + 1}</span>
+                    <!-- ギャラリー開時限定チェックボックス (右上配置: サムネイルの左上以外) -->
+                    <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black/95 p-1 rounded shadow cursor-pointer flex items-center justify-center border border-white/30' title='選択して写真ゴミ箱へ移動'>
+                        <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='toggleViewerPhotoSelect(${index}, event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
+                    </label>
                 </div>
                 <div class='p-1.5 bg-slate-50 border-t border-slate-100 flex items-center gap-1 text-[10px]'>
-                    <button onclick='copyPhotoBlob(""${url}"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-1 rounded font-bold transition flex items-center justify-center gap-1' title='クリップボードに画像をコピー'>
+                    <button type='button' onclick='copyPhotoBlob(""${url}"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-1 rounded font-bold transition flex items-center justify-center gap-1' title='クリップボードに画像をコピー'>
                         <i class='fa-regular fa-copy text-indigo-600'></i> 画像コピー
                     </button>
-                    <a href='${url}' target='_blank' class='bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-2 py-1 rounded font-bold transition flex items-center justify-center' title='原寸表示'>
-                        <i class='fa-solid fa-up-right-from-square'></i>
-                    </a>
+                    <button type='button' onclick='openPhotoLightbox(${index})' class='bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-2 py-1 rounded font-bold transition flex items-center justify-center' title='原寸表示 (送り・戻し)'>
+                        <i class='fa-solid fa-expand'></i>
+                    </button>
                 </div>
             </div>`;
+        }
+
+        function openPhotoLightbox(startIndex) {
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            if (!item || !item.photos || item.photos.length === 0) return;
+            lightboxPhotos = item.photos;
+            lightboxIndex = Math.max(0, Math.min(startIndex || 0, lightboxPhotos.length - 1));
+            updateLightboxView();
+            document.getElementById('photo-lightbox-modal').classList.remove('hidden');
+        }
+
+        function closePhotoLightbox() {
+            const modal = document.getElementById('photo-lightbox-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function updateLightboxView() {
+            if (!lightboxPhotos || lightboxPhotos.length === 0) {
+                closePhotoLightbox();
+                return;
+            }
+            if (lightboxIndex < 0) lightboxIndex = 0;
+            if (lightboxIndex >= lightboxPhotos.length) lightboxIndex = lightboxPhotos.length - 1;
+
+            const photo = lightboxPhotos[lightboxIndex];
+            const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            const titlePrefix = item ? (item.title || '無題') : '';
+            const childSuffix = photo.childItemTitle ? (' / ' + photo.childItemTitle) : '';
+
+            document.getElementById('lightbox-counter').innerText = (lightboxIndex + 1) + ' / ' + lightboxPhotos.length;
+            document.getElementById('lightbox-title').innerText = titlePrefix + childSuffix;
+            document.getElementById('lightbox-main-img').src = url;
+            document.getElementById('lightbox-newtab-link').href = url;
+            document.getElementById('lightbox-prev-btn').disabled = (lightboxIndex <= 0);
+            document.getElementById('lightbox-next-btn').disabled = (lightboxIndex >= lightboxPhotos.length - 1);
+
+            const strip = document.getElementById('lightbox-thumbs-strip');
+            strip.innerHTML = lightboxPhotos.map((p, idx) => {
+                const pUrl = p.md5Hash ? '/api/photos/' + p.md5Hash : p.photoUrl;
+                const activeCls = (idx === lightboxIndex)
+                    ? 'border-indigo-400 ring-2 ring-indigo-400/60 opacity-100 scale-105'
+                    : 'border-slate-700 opacity-60 hover:opacity-100';
+                return `<button type='button' onclick='selectLightboxPhoto(${idx})' class='relative w-12 h-12 rounded-md overflow-hidden border-2 shrink-0 transition ${activeCls}'>
+                    <img src='${pUrl}' class='w-full h-full object-cover'>
+                    <span class='absolute bottom-0 right-0 bg-black/70 text-white text-[8px] font-mono px-1'>${idx + 1}</span>
+                </button>`;
+            }).join('');
+        }
+
+        function selectLightboxPhoto(idx) {
+            lightboxIndex = idx;
+            updateLightboxView();
+        }
+
+        function prevLightboxPhoto() {
+            if (lightboxIndex > 0) {
+                lightboxIndex--;
+                updateLightboxView();
+            }
+        }
+
+        function nextLightboxPhoto() {
+            if (lightboxIndex < lightboxPhotos.length - 1) {
+                lightboxIndex++;
+                updateLightboxView();
+            }
+        }
+
+        function copyCurrentLightboxPhoto() {
+            if (!lightboxPhotos || !lightboxPhotos[lightboxIndex]) return;
+            const photo = lightboxPhotos[lightboxIndex];
+            const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
+            copyPhotoBlob(url);
+        }
+
+        async function trashCurrentLightboxPhoto() {
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            if (!item || !lightboxPhotos || !lightboxPhotos[lightboxIndex]) return;
+            const photo = lightboxPhotos[lightboxIndex];
+            if (!photo.md5Hash) {
+                showToast('MD5ハッシュ未確定の写真は移動できません');
+                return;
+            }
+            if (!confirm('表示中のこの写真を写真ゴミ箱へ移動しますか？（写真ゴミ箱から復元可能です）')) return;
+
+            try {
+                const res = await fetch('/api/photos/trash-batch', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({
+                        targets: [{
+                            itemId: item.id,
+                            md5Hash: photo.md5Hash,
+                            childItemId: photo.childItemId || 0
+                        }]
+                    })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') {
+                    throw new Error(data.message || '移動に失敗しました');
+                }
+                showToast('写真を写真ゴミ箱へ移動しました');
+                selectedViewerPhotoIndices.clear();
+                await fetchItems();
+                refreshPhotoTrashCount();
+                const updatedItem = allItems.find(i => i.id === currentViewerItemId);
+                if (updatedItem && updatedItem.photos && updatedItem.photos.length > 0) {
+                    lightboxPhotos = updatedItem.photos;
+                    if (lightboxIndex >= lightboxPhotos.length) lightboxIndex = lightboxPhotos.length - 1;
+                    updateLightboxView();
+                    renderViewerPhotos();
+                } else {
+                    closePhotoLightbox();
+                    if (updatedItem) renderViewerPhotos();
+                }
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        function formatBytesSimple(bytes) {
+            if (!bytes || bytes <= 0) return '0 B';
+            const units = ['B', 'KB', 'MB', 'GB'];
+            let val = bytes;
+            let idx = 0;
+            while (val >= 1024 && idx < units.length - 1) {
+                val /= 1024;
+                idx++;
+            }
+            return (idx === 0 ? val : val.toFixed(1)) + ' ' + units[idx];
+        }
+
+        async function refreshPhotoTrashCount() {
+            try {
+                const res = await fetch('/api/photo-trash', { headers: getHeaders() });
+                if (!res.ok) return;
+                const data = await res.json();
+                const cnt = data.count || 0;
+                const sEl = document.getElementById('sidebar-photo-trash-count');
+                const vEl = document.getElementById('viewer-photo-trash-count');
+                if (sEl) sEl.innerText = cnt;
+                if (vEl) vEl.innerText = cnt;
+            } catch (e) {}
+        }
+
+        async function openPhotoTrashModal() {
+            selectedPhotoTrashIds.clear();
+            document.getElementById('photo-trash-modal').classList.remove('hidden');
+            await loadPhotoTrashEntries();
+        }
+
+        function closePhotoTrashModal() {
+            document.getElementById('photo-trash-modal').classList.add('hidden');
+            selectedPhotoTrashIds.clear();
+        }
+
+        async function loadPhotoTrashEntries() {
+            const grid = document.getElementById('photo-trash-grid');
+            grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>読み込み中...</div>';
+            try {
+                const res = await fetch('/api/photo-trash', { headers: getHeaders() });
+                const data = await res.json();
+                photoTrashEntries = data.entries || [];
+                const totalBytes = data.totalSizeBytes || 0;
+                document.getElementById('photo-trash-summary-text').innerText = photoTrashEntries.length + '枚 (' + formatBytesSimple(totalBytes) + ')';
+                const sEl = document.getElementById('sidebar-photo-trash-count');
+                const vEl = document.getElementById('viewer-photo-trash-count');
+                if (sEl) sEl.innerText = photoTrashEntries.length;
+                if (vEl) vEl.innerText = photoTrashEntries.length;
+                renderPhotoTrashGrid();
+            } catch (e) {
+                grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-rose-500 text-xs\'>読み込みに失敗しました</div>';
+            }
+        }
+
+        function updatePhotoTrashButtons() {
+            const cnt = selectedPhotoTrashIds.size;
+            document.getElementById('photo-trash-selected-count').innerText = cnt;
+            document.getElementById('photo-trash-restore-btn').disabled = (cnt === 0);
+            document.getElementById('photo-trash-perm-btn').disabled = (cnt === 0);
+        }
+
+        function togglePhotoTrashSelect(trashId, event) {
+            if (event) event.stopPropagation();
+            if (selectedPhotoTrashIds.has(trashId)) {
+                selectedPhotoTrashIds.delete(trashId);
+            } else {
+                selectedPhotoTrashIds.add(trashId);
+            }
+            updatePhotoTrashButtons();
+        }
+
+        function toggleSelectAllPhotoTrash() {
+            if (photoTrashEntries.length === 0) return;
+            if (selectedPhotoTrashIds.size >= photoTrashEntries.length) {
+                selectedPhotoTrashIds.clear();
+            } else {
+                photoTrashEntries.forEach(e => selectedPhotoTrashIds.add(e.trashId));
+            }
+            renderPhotoTrashGrid();
+        }
+
+        function renderPhotoTrashGrid() {
+            const grid = document.getElementById('photo-trash-grid');
+            updatePhotoTrashButtons();
+            if (photoTrashEntries.length === 0) {
+                grid.innerHTML = '<div class=\'col-span-full text-center py-12 text-slate-400 text-xs\'>写真ゴミ箱は空です</div>';
+                return;
+            }
+            grid.innerHTML = photoTrashEntries.map(e => {
+                const isChecked = selectedPhotoTrashIds.has(e.trashId);
+                const dt = e.trashedAt ? new Date(e.trashedAt).toLocaleString('ja-JP') : '';
+                const safeTitle = escapeHtml(e.originalItemTitle || '無題');
+                const safeChild = e.originalChildItemTitle ? (' / ' + escapeHtml(e.originalChildItemTitle)) : '';
+                return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between'>
+                    <div class='relative aspect-square bg-slate-100 overflow-hidden'>
+                        <img src='${e.imageUrl}' class='w-full h-full object-cover'>
+                        <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black p-1 rounded cursor-pointer flex items-center justify-center border border-white/30'>
+                            <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='togglePhotoTrashSelect(""${escapeHtml(e.trashId)}"", event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
+                        </label>
+                    </div>
+                    <div class='p-2 space-y-1 text-[10px]'>
+                        <p class='font-bold text-slate-800 line-clamp-1' title='${safeTitle.replace(/'/g, '&#39;')}'>${safeTitle}${safeChild}</p>
+                        <p class='text-slate-400 font-mono'>${escapeHtml(dt)} ・ ${formatBytesSimple(e.fileSizeBytes)}</p>
+                        <div class='flex gap-1 pt-1'>
+                            <button type='button' onclick='restoreSinglePhotoTrash(""${escapeHtml(e.trashId)}"")' class='flex-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 py-1 rounded font-bold transition'>復元</button>
+                            <button type='button' onclick='deleteSinglePhotoTrashPermanent(""${escapeHtml(e.trashId)}"")' class='bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 px-2 py-1 rounded font-bold transition'>削除</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function restorePhotoTrashIds(ids) {
+            if (!ids || ids.length === 0) return;
+            try {
+                const res = await fetch('/api/photo-trash/restore', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ trashIds: ids })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') {
+                    throw new Error(data.message || '復元に失敗しました');
+                }
+                selectedPhotoTrashIds.clear();
+                showToast(data.message || (data.restoredCount + '枚を復元しました'));
+                await fetchItems();
+                await loadPhotoTrashEntries();
+                if (currentViewerItemId) renderViewerPhotos();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        function restoreSelectedPhotoTrash() {
+            restorePhotoTrashIds(Array.from(selectedPhotoTrashIds));
+        }
+
+        function restoreSinglePhotoTrash(trashId) {
+            restorePhotoTrashIds([trashId]);
+        }
+
+        async function deletePhotoTrashIdsPermanent(ids) {
+            if (!ids || ids.length === 0) return;
+            if (!confirm('選択した写真 ' + ids.length + '枚を PC の _photo_trash から完全に削除しますか？（元に戻せません）')) return;
+            try {
+                const res = await fetch('/api/photo-trash/delete', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ trashIds: ids })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '削除に失敗しました');
+                selectedPhotoTrashIds.clear();
+                showToast((data.deletedCount || ids.length) + '枚の写真を完全削除しました');
+                await loadPhotoTrashEntries();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        function deleteSelectedPhotoTrashPermanent() {
+            deletePhotoTrashIdsPermanent(Array.from(selectedPhotoTrashIds));
+        }
+
+        function deleteSinglePhotoTrashPermanent(trashId) {
+            deletePhotoTrashIdsPermanent([trashId]);
+        }
+
+        async function emptyPhotoTrash() {
+            if (photoTrashEntries.length === 0) {
+                showToast('写真ゴミ箱はすでに空です');
+                return;
+            }
+            if (!confirm('写真ゴミ箱内の ' + photoTrashEntries.length + '枚をすべて完全削除しますか？（元に戻せません）')) return;
+            try {
+                const res = await fetch('/api/photo-trash/empty', {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '削除に失敗しました');
+                selectedPhotoTrashIds.clear();
+                showToast('写真ゴミ箱を空にしました (' + (data.deletedCount || 0) + '枚削除)');
+                await loadPhotoTrashEntries();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
         }
 
         function setupDropZone() {
