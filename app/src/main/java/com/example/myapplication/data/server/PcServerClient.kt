@@ -20,6 +20,27 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeUnit
 
+enum class SyncPhase {
+    IDLE,
+    SYNCING_ITEMS,
+    UPLOADING_PHOTOS,
+    FETCHING_ITEMS,
+    SUCCESS,
+    ERROR
+}
+
+data class PcSyncProgress(
+    val phase: SyncPhase = SyncPhase.IDLE,
+    val currentPhotoIndex: Int = 0,
+    val totalPhotoCount: Int = 0,
+    val bytesSent: Long = 0L,
+    val totalBytes: Long = 0L,
+    val progressPercent: Int = 0,
+    val detailMessage: String = "",
+    val errorDetail: String? = null,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 data class PcSyncResult(
     val isSuccess: Boolean,
     val errorMessage: String? = null,
@@ -301,20 +322,33 @@ class PcServerClient(
     /**
      * プロトコル v4 syncUuid / deletedAt / tombstone / isDirty 保護付き差分双方向同期
      */
-    suspend fun syncDeltaToPcServer(baseUrl: String, token: String = getSavedAuthToken()): PcSyncResult = withContext(Dispatchers.IO) {
+    suspend fun syncDeltaToPcServer(
+        baseUrl: String,
+        token: String = getSavedAuthToken(),
+        onProgress: (PcSyncProgress) -> Unit = {}
+    ): PcSyncResult = withContext(Dispatchers.IO) {
         var syncedPhotoCount = 0
         var freedBytes = 0L
 
         val cleanUrl = baseUrl.trimEnd('/')
         if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) {
+            val msg = "PCサーバーURLが正しく設定されていません ($baseUrl)"
+            onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "URL未設定", errorDetail = msg))
             return@withContext PcSyncResult(
                 isSuccess = false,
-                errorMessage = "PCサーバーURLが正しく設定されていません ($baseUrl)"
+                errorMessage = msg
             )
         }
 
         try {
             android.util.Log.i("PC_SYNC", "=== プロトコル v4 同期開始 ($cleanUrl) ===")
+            onProgress(
+                PcSyncProgress(
+                    phase = SyncPhase.SYNCING_ITEMS,
+                    progressPercent = 5,
+                    detailMessage = "商品メタデータを準備中..."
+                )
+            )
             val savedStoreId = getSavedStoreId()
             val dao = repository.getDao()
 
@@ -416,28 +450,44 @@ class PcServerClient(
             val neededHashesSet = mutableSetOf<String>()
             val serverDeletedUuids = mutableSetOf<String>()
 
+            onProgress(
+                PcSyncProgress(
+                    phase = SyncPhase.SYNCING_ITEMS,
+                    progressPercent = 10,
+                    detailMessage = "商品データ (${dtoList.size}件) をPCへ送信中..."
+                )
+            )
+
             client.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
+                    val errMsg = "サーバーエラー応答 (POST /api/sync/items): HTTP ${response.code}"
+                    onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "メタデータ送信失敗", errorDetail = errMsg))
                     return@withContext PcSyncResult(
                         isSuccess = false,
-                        errorMessage = "サーバーエラー応答 (POST /api/sync/items): HTTP ${response.code}"
+                        errorMessage = errMsg
                     )
                 }
 
                 val respStr = response.body?.string() ?: ""
                 val respDto = syncItemsResponseAdapter.fromJson(respStr)
-                    ?: return@withContext PcSyncResult(
-                        isSuccess = false,
-                        errorMessage = "サーバー応答のパースに失敗しました"
-                    )
+                    ?: run {
+                        val errMsg = "サーバー応答のパースに失敗しました"
+                        onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "応答パース失敗", errorDetail = errMsg))
+                        return@withContext PcSyncResult(
+                            isSuccess = false,
+                            errorMessage = errMsg
+                        )
+                    }
 
                 respStoreId = respDto.storeId ?: ""
 
                 // 応答 storeId の一致検証
                 if (savedStoreId.isNotBlank() && respStoreId.isNotBlank() && !savedStoreId.equals(respStoreId, ignoreCase = true)) {
+                    val errMsg = "別の保存先です (Store ID不一致)"
+                    onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "Store ID不一致", errorDetail = errMsg))
                     return@withContext PcSyncResult(
                         isSuccess = false,
-                        errorMessage = "別の保存先です (Store ID不一致)"
+                        errorMessage = errMsg
                     )
                 }
 
@@ -472,35 +522,65 @@ class PcServerClient(
 
             // 2. neededHashes のうち、元ファイルがあるものを POST /api/sync/photo で個別送信
             val newlyStoredHashes = mutableSetOf<String>()
+            val photosToUpload = photoFileMap.values
+                .distinctBy { it.second.lowercase() }
+                .filter { (file, md5) -> neededHashesSet.contains(md5) && file.exists() }
+            val totalUploadCount = photosToUpload.size
+            val totalUploadBytes = photosToUpload.sumOf { it.first.length() }.coerceAtLeast(1L)
+            var uploadedBytesSoFar = 0L
 
-            for ((_, pair) in photoFileMap) {
-                val file = pair.first
-                val md5 = pair.second
+            photosToUpload.forEachIndexed { idx, (file, md5) ->
+                val photoIndex = idx + 1
+                val fileSize = file.length()
+                val basePct = (15 + (uploadedBytesSoFar * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
+                onProgress(
+                    PcSyncProgress(
+                        phase = SyncPhase.UPLOADING_PHOTOS,
+                        currentPhotoIndex = photoIndex,
+                        totalPhotoCount = totalUploadCount,
+                        bytesSent = uploadedBytesSoFar,
+                        totalBytes = totalUploadBytes,
+                        progressPercent = basePct,
+                        detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
+                    )
+                )
 
-                if (neededHashesSet.contains(md5) && file.exists()) {
-                    val photoBytes = file.readBytes()
-                    val photoUrl = "$cleanUrl/api/sync/photo"
-                    val photoBody = photoBytes.toRequestBody("application/octet-stream".toMediaType())
+                val photoBytes = file.readBytes()
+                val photoUrl = "$cleanUrl/api/sync/photo"
+                val photoBody = photoBytes.toRequestBody("application/octet-stream".toMediaType())
 
-                    val photoReqBuilder = Request.Builder()
-                        .url(photoUrl)
-                        .addHeader("X-Photo-Hash", md5)
-                        .post(photoBody)
+                val photoReqBuilder = Request.Builder()
+                    .url(photoUrl)
+                    .addHeader("X-Photo-Hash", md5)
+                    .post(photoBody)
 
-                    if (token.isNotBlank()) photoReqBuilder.addHeader("Authorization", "Bearer $token")
+                if (token.isNotBlank()) photoReqBuilder.addHeader("Authorization", "Bearer $token")
 
-                    client.newCall(photoReqBuilder.build()).execute().use { photoResp ->
-                        if (photoResp.isSuccessful) {
-                            val photoRespStr = photoResp.body?.string() ?: ""
-                            val photoRespDto = syncPhotoResponseAdapter.fromJson(photoRespStr)
-                            if (photoRespDto != null && photoRespDto.stored && photoRespDto.hash != null) {
-                                newlyStoredHashes.add(photoRespDto.hash.lowercase())
-                            }
-                        } else {
-                            android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5 $md5): HTTP ${photoResp.code}")
+                client.newCall(photoReqBuilder.build()).execute().use { photoResp ->
+                    if (photoResp.isSuccessful) {
+                        val photoRespStr = photoResp.body?.string() ?: ""
+                        val photoRespDto = syncPhotoResponseAdapter.fromJson(photoRespStr)
+                        if (photoRespDto != null && photoRespDto.stored && photoRespDto.hash != null) {
+                            newlyStoredHashes.add(photoRespDto.hash.lowercase())
                         }
+                    } else {
+                        android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5 $md5): HTTP ${photoResp.code}")
                     }
                 }
+
+                uploadedBytesSoFar += fileSize
+                val donePct = (15 + (uploadedBytesSoFar * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
+                onProgress(
+                    PcSyncProgress(
+                        phase = SyncPhase.UPLOADING_PHOTOS,
+                        currentPhotoIndex = photoIndex,
+                        totalPhotoCount = totalUploadCount,
+                        bytesSent = uploadedBytesSoFar,
+                        totalBytes = totalUploadBytes,
+                        progressPercent = donePct,
+                        detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
+                    )
+                )
             }
 
             val allConfirmedHashes = syncedHashesSet + newlyStoredHashes
@@ -555,6 +635,17 @@ class PcServerClient(
                 }
             }
 
+            onProgress(
+                PcSyncProgress(
+                    phase = SyncPhase.SUCCESS,
+                    currentPhotoIndex = totalUploadCount,
+                    totalPhotoCount = totalUploadCount,
+                    bytesSent = uploadedBytesSoFar,
+                    totalBytes = if (totalUploadCount > 0) totalUploadBytes else 0L,
+                    progressPercent = 100,
+                    detailMessage = "送信完了 (${itemsWithPhotos.size}件)"
+                )
+            )
             return@withContext PcSyncResult(
                 isSuccess = true,
                 syncedItemsCount = itemsWithPhotos.size,
@@ -565,9 +656,11 @@ class PcServerClient(
             )
         } catch (e: Exception) {
             android.util.Log.e("PC_SYNC", "プロトコル v4 同期例外: ${e.message}", e)
+            val errMsg = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
+            onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "同期通信エラー", errorDetail = errMsg))
             return@withContext PcSyncResult(
                 isSuccess = false,
-                errorMessage = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
+                errorMessage = errMsg
             )
         }
     }

@@ -93,13 +93,13 @@ PCブラウザ管理画面の写真ギャラリーを開いたとき限定で、
 
 従来の `PLAN_SYNC_STATUS_AND_MEMORY.md`（コミット `266f3d5`）の設計を、フェーズ 4-1 / 4-2 適用後の最新コードベースへ統合して実施する。
 
-### サブフェーズ 4-3a：上部ヘッダースリム化 ＆ リアルタイム同期ステータス・進捗％表示
-- [ ] **4-3a-1: 同期進捗・エラー状態モデルの導入 (`PcServerClient.kt`, `FleaMarketViewModel.kt`)**
+### サブフェーズ 4-3a：上部ヘッダースリム化 ＆ リアルタイム同期ステータス・進捗％表示 【完了】
+- [x] **4-3a-1: 同期進捗・エラー状態モデルの導入 (`PcServerClient.kt`, `FleaMarketViewModel.kt`)**
   - `SyncPhase` 列挙型（`IDLE`, `SYNCING_ITEMS`, `UPLOADING_PHOTOS`, `FETCHING_ITEMS`, `SUCCESS`, `ERROR`）および `PcSyncProgress` データクラス（`phase`, `currentPhotoIndex`, `totalPhotoCount`, `bytesSent`, `totalBytes`, `progressPercent`, `detailMessage`, `errorDetail`, `updatedAt`）を定義。
   - `syncDeltaToPcServer` に `onProgress: (PcSyncProgress) -> Unit = {}` コールバックを追加し、メタデータ送信・写真1枚ずつのストリーミング進捗（バイト単位）・結果判定を逐次通知。
   - `FleaMarketViewModel` に `syncStatusState: StateFlow<PcSyncProgress>` を公開し、`triggerAutoSync()`、再接続時ハンドシェイク、`syncDeltaToPcServer()` の全経路でリアルタイム更新。
   - `triggerAutoSync()` 内の `catch (_: Exception) {}` サイレント握りつぶしを廃止し、`SyncPhase.ERROR` として詳細メッセージ付きで画面へ保持（再同期成功まで維持）。成功時は数秒後に `IDLE`（接続中・同期済）へ戻る。
-- [ ] **4-3a-2: 一覧画面ヘッダースリム化 ＆ ステータスバッジ UI (`ItemListScreen.kt`)**
+- [x] **4-3a-2: 一覧画面ヘッダースリム化 ＆ ステータスバッジ UI (`ItemListScreen.kt`)**
   - 内側 `Scaffold` に `contentWindowInsets = WindowInsets(0)` を明示し、外側 `MainActivity.kt` との二重インセット余白を排除。
   - 上部 `Surface` 内 `Row` の縦パディングを `vertical = 2.dp` へ削減、タイトル `16.sp`、ゴミ箱アイコンボタン視覚サイズをコンパクト化（タッチ領域 `48.dp` は `minimumInteractiveComponentSize()` で維持）。
   - タイトルとゴミ箱アイコン間に同期ステータスバッジを配置（「未接続」「同期済」「送信 XX% (n/m)」「同期失敗 ⚠」等）＋ `testTag("header_sync_status_badge")`。
