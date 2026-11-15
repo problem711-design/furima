@@ -335,6 +335,19 @@ fun ItemEditScreen(
                 isPcServerConnected = isPcServerConnected,
                 onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },
                 onFetchOriginal = { hash -> viewModel.fetchOriginalPhotoCacheFile(hash) },
+                onDeletePhoto = { deleteIdx ->
+                    if (deleteIdx in existingFilePaths.indices) {
+                        existingFilePaths.removeAt(deleteIdx)
+                    } else {
+                        val newIdx = deleteIdx - existingFilePaths.size
+                        if (newIdx in newImageUris.indices) {
+                            newImageUris.removeAt(newIdx)
+                        }
+                    }
+                    if (existingFilePaths.isEmpty() && newImageUris.isEmpty()) {
+                        previewStartIndex = null
+                    }
+                },
                 onDismiss = { previewStartIndex = null }
             )
         }

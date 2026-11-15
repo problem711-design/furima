@@ -28,7 +28,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Hd
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -37,6 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -94,6 +97,7 @@ fun PhotoPreviewDialog(
     isPcServerConnected: Boolean = false,
     onFindCachedOriginal: (String) -> File? = { null },
     onFetchOriginal: suspend (String) -> File? = { null },
+    onDeletePhoto: ((Int) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     if (photos.isEmpty()) return
@@ -105,6 +109,13 @@ fun PhotoPreviewDialog(
 
     val cachedOriginals = remember { mutableStateMapOf<String, File>() }
     var isFetchingHash by remember { mutableStateOf<String?>(null) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(photos.size) {
+        if (photos.isEmpty()) {
+            onDismiss()
+        }
+    }
 
     // すでにキャッシュ取得済みの原本があれば自動セット
     LaunchedEffect(pagerState.currentPage, photos) {
@@ -120,6 +131,33 @@ fun PhotoPreviewDialog(
     var currentScale by remember { mutableFloatStateOf(1f) }
     LaunchedEffect(pagerState.currentPage) {
         currentScale = 1f
+    }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color.Red) },
+            title = { Text("写真を削除") },
+            text = { Text("この写真を一覧から削除しますか？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        val deleteIdx = pagerState.currentPage
+                        onDeletePhoto?.invoke(deleteIdx)
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    modifier = Modifier.testTag("confirm_delete_photo_preview_button")
+                ) {
+                    Text("削除する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
     }
 
     Dialog(
@@ -156,8 +194,8 @@ fun PhotoPreviewDialog(
                 )
             }
 
-            // 上部ヘッダーエリア (ページ番号 + 原本/サムネ表示バッジ + 閉じるボタン + 原本取得ボタン)
-            val activePhoto = photos[pagerState.currentPage]
+            // 上部ヘッダーエリア (ページ番号 + 原本/サムネ表示バッジ + 削除ボタン + 閉じるボタン + 原本取得ボタン)
+            val activePhoto = photos.getOrNull(pagerState.currentPage) ?: photos.first()
             val activeHash = activePhoto.md5Hash.trim().lowercase()
             val hasLoadedOriginal = activePhoto.hasLocalOriginal || cachedOriginals.containsKey(activeHash)
 
@@ -222,19 +260,41 @@ fun PhotoPreviewDialog(
                         }
                     }
 
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.16f))
-                            .testTag("photo_preview_close_button")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "閉じる",
-                            tint = Color.White
-                        )
+                        if (onDeletePhoto != null) {
+                            IconButton(
+                                onClick = { showDeleteConfirmDialog = true },
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Red.copy(alpha = 0.25f))
+                                    .testTag("photo_preview_delete_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = "写真を削除",
+                                    tint = Color.Red
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.16f))
+                                .testTag("photo_preview_close_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "閉じる",
+                                tint = Color.White
+                            )
+                        }
                     }
                 }
 
@@ -300,7 +360,10 @@ fun PhotoPreviewDialog(
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "ピンチで拡大縮小・ダブルタップでズーム切替・左右スワイプで移動",
+                    text = if (onDeletePhoto != null)
+                        "ピンチで拡大縮小・ダブルタップでズーム・右上の赤ボタンで写真削除"
+                    else
+                        "ピンチで拡大縮小・ダブルタップでズーム切替・左右スワイプで移動",
                     color = Color.White.copy(alpha = 0.75f),
                     fontSize = 11.sp
                 )
