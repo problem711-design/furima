@@ -35,15 +35,14 @@ public static class DashboardHtml
     </div>
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
-    <header class='bg-indigo-700 text-white shadow-md sticky top-7 z-30'>
-        <div class='max-w-[1800px] mx-auto px-3 sm:px-4 h-12 flex items-center justify-between gap-3'>
+    <header class='bg-indigo-700 text-white shadow-md sticky top-0 z-30'>
+        <div class='max-w-[1800px] mx-auto px-3 sm:px-4 h-10 flex items-center justify-between gap-3'>
             <!-- 左側: タイトル & Yahoo!フリマショートカット -->
             <div class='flex items-center space-x-2 shrink-0'>
-                <i class='fa-solid fa-boxes-stacked text-lg text-indigo-200'></i>
+                <i class='fa-solid fa-boxes-stacked text-base text-indigo-200'></i>
                 <h1 class='font-black text-sm tracking-tight whitespace-nowrap'>フリマ商品PC管理</h1>
-                <span class='bg-indigo-800/90 text-indigo-100 text-[10px] px-1.5 py-0.5 rounded font-mono font-semibold border border-indigo-500'>母艦サーバー</span>
-                <button onclick='openYahooSplit()' class='bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-2.5 py-1 rounded-md shadow-sm transition flex items-center gap-1.5 ml-2 border border-rose-400/50' title='Yahoo!フリマ出品画面を通常タブで開きます（タブを切り離して Win + ← / → で左右に並べて利用できます）'>
-                    <i class='fa-solid fa-up-right-from-square text-[10px]'></i> Yahoo!フリマ出品画面を開く
+                <button onclick='openYahooSplit()' class='bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm transition flex items-center gap-1 ml-1 border border-rose-400/50' title='Yahoo!フリマ出品画面を通常タブで開きます（タブを切り離して Win + ← / → で左右に並べて利用できます）'>
+                    <i class='fa-solid fa-up-right-from-square text-[9px]'></i> Yahoo!フリマ出品画面を開く
                 </button>
             </div>
 
@@ -151,11 +150,15 @@ public static class DashboardHtml
 
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
-                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真整理
+                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & システム
                     </h2>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between'>
                         <span class='text-[11px] text-slate-600 font-medium'>保存フォルダ容量</span>
                         <span id='stat-storage-size' class='text-xs font-black text-slate-800'>...</span>
+                    </div>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between'>
+                        <span class='text-[11px] text-slate-600 font-medium'>バージョン</span>
+                        <span class='text-[11px] font-mono font-bold text-slate-700'>v1.0.0 (Build 100)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -474,13 +477,14 @@ public static class DashboardHtml
                         </label>
                         <span class='text-[10px] text-slate-400'>※ 登録確定時にアップロードされます</span>
                     </div>
-                    <div id='add-photo-drop-zone' class='border-2 border-dashed border-emerald-200 hover:border-emerald-400 bg-emerald-50/30 rounded-xl p-3 text-center transition cursor-pointer'>
-                        <i class='fa-solid fa-cloud-arrow-up text-emerald-500 text-lg mb-0.5'></i>
-                        <p class='text-xs font-bold text-slate-700'>クリックして画像を選択、またはここにドラッグ＆ドロップ</p>
-                        <p class='text-[10px] text-slate-400'>JPG, PNG 等の複数選択に対応しています</p>
-                        <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
+                    <div class='flex flex-wrap gap-2 items-center'>
+                        <div id='add-photo-drop-zone' class='w-20 h-20 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
+                            <i class='fa-solid fa-plus text-emerald-600 text-sm mb-0.5'></i>
+                            <span class='text-[9px] font-bold text-emerald-800'>写真追加</span>
+                            <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
+                        </div>
+                        <div id='add-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                     </div>
-                    <div id='add-photo-preview-grid' class='flex flex-wrap gap-2'></div>
                 </div>
 
                 <!-- ② 商品基本情報 -->
@@ -504,7 +508,7 @@ public static class DashboardHtml
                             <option value=''>説明定型文を挿入...</option>
                         </select>
                     </div>
-                    <textarea id='add-description' rows='3' oninput='updateModalValidation(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                    <textarea id='add-description' rows='8' oninput='updateModalValidation(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
                 </div>
 
                 <!-- ステータス選択チップ -->
@@ -620,13 +624,14 @@ public static class DashboardHtml
                             <i class='fa-regular fa-folder-open'></i> PCフォルダを開く
                         </button>
                     </div>
-                    <div id='edit-photo-drop-zone' class='border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/30 rounded-xl p-3 text-center transition cursor-pointer'>
-                        <i class='fa-solid fa-cloud-arrow-up text-indigo-500 text-lg mb-0.5'></i>
-                        <p class='text-xs font-bold text-slate-700'>クリックして写真を追加、またはここにドラッグ＆ドロップ</p>
-                        <p class='text-[10px] text-slate-400'>追加・削除は即座にPCフォルダとスマホ同期へ反映されます</p>
-                        <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
+                    <div class='flex flex-wrap gap-2 items-center'>
+                        <div id='edit-photo-drop-zone' class='w-20 h-20 border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
+                            <i class='fa-solid fa-plus text-indigo-600 text-sm mb-0.5'></i>
+                            <span class='text-[9px] font-bold text-indigo-800'>写真追加</span>
+                            <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
+                        </div>
+                        <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                     </div>
-                    <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2'></div>
                 </div>
 
                 <!-- ② 商品基本情報 -->
@@ -658,7 +663,7 @@ public static class DashboardHtml
                             </select>
                         </div>
                     </div>
-                    <textarea id='edit-description' rows='4' oninput='updateModalValidation(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
+                    <textarea id='edit-description' rows='8' oninput='updateModalValidation(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
                 </div>
 
                 <!-- ステータス選択チップ -->
