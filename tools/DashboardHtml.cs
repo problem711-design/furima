@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 3)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 4)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -387,7 +387,7 @@ public static class DashboardHtml
                     <i class='fa-solid fa-cloud-arrow-up text-indigo-500 text-xl mb-1'></i>
                     <p class='text-xs font-bold text-slate-700'>PCから画像ファイルをドラッグ＆ドロップして写真を追加</p>
                     <p class='text-[10px] text-slate-400'>JPG, PNG 等の画像ファイルを直接ドロップして本商品に追加できます</p>
-                    <input type='file' id='photo-drop-file-input' accept='image/*' multiple class='hidden' onchange='handleFileInputChange(event)'>
+                    <input type='file' id='photo-drop-file-input' accept='image/*' multiple class='hidden' onclick='event.stopPropagation()' onchange='handleFileInputChange(event)'>
                 </div>
 
                 <!-- 写真プレビュー表示グリッド -->
@@ -2497,7 +2497,7 @@ public static class DashboardHtml
             const dropZoneHtml = `<div id='edit-photo-drop-zone' onclick='document.getElementById(""edit-photo-input"").click()' class='w-20 h-20 border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
                 <i class='fa-solid fa-plus text-indigo-600 text-sm mb-0.5'></i>
                 <span class='text-[9px] font-bold text-indigo-800'>写真追加</span>
-                <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
+                <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onclick='event.stopPropagation()' onchange='handleEditPhotoInputChange(event)'>
             </div>`;
 
             const thumbnailsHtml = photos.map((p, idx) => {
@@ -2793,7 +2793,7 @@ public static class DashboardHtml
             const dropZoneHtml = `<div id='add-photo-drop-zone' onclick='document.getElementById(""add-photo-input"").click()' class='w-20 h-20 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
                 <i class='fa-solid fa-plus text-emerald-600 text-sm mb-0.5'></i>
                 <span class='text-[9px] font-bold text-emerald-800'>写真追加</span>
-                <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
+                <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onclick='event.stopPropagation()' onchange='handleAddPhotoInputChange(event)'>
             </div>`;
 
             const thumbnailsHtml = pendingAddPhotoFiles.map((entry, idx) => `
@@ -2934,14 +2934,20 @@ public static class DashboardHtml
                 countBadge.innerText = data.candidateCount + '件のファイル';
 
                 if (data.candidates && data.candidates.length > 0) {
-                    table.innerHTML = data.candidates.map(c => `
+                    table.innerHTML = data.candidates.map(c => {
+                        const safeTitle = escapeHtml(c.title || '無題');
+                        const safeStatus = escapeHtml(c.status || '売却済');
+                        const safeSoldAt = escapeHtml(c.soldAtText || '');
+                        const safeSize = escapeHtml(c.sizeFormatted || '');
+                        return `
                         <tr class='hover:bg-amber-50/50 transition'>
-                            <td class='p-2 font-bold line-clamp-1 max-w-[200px]' title='${c.title}'>${c.title}</td>
-                            <td class='p-2'><span class='bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[10px] font-bold'>${c.status || '売却済'}</span></td>
-                            <td class='p-2 text-slate-500 font-mono text-[11px]'>${c.soldAtText}</td>
-                            <td class='p-2 text-right font-mono font-bold text-amber-800'>${c.sizeFormatted}</td>
+                            <td class='p-2 font-bold line-clamp-1 max-w-[200px]' title='${safeTitle.replace(/'/g, '&#39;')}'>${safeTitle}</td>
+                            <td class='p-2'><span class='bg-rose-100 text-rose-700 px-1.5 py-0.5 rounded text-[10px] font-bold'>${safeStatus}</span></td>
+                            <td class='p-2 text-slate-500 font-mono text-[11px]'>${safeSoldAt}</td>
+                            <td class='p-2 text-right font-mono font-bold text-amber-800'>${safeSize}</td>
                         </tr>
-                    `).join('');
+                    `;
+                    }).join('');
                     executeBtn.disabled = false;
                 } else {
                     table.innerHTML = `<tr><td colspan='4' class='p-4 text-center text-slate-400'>売却から30日以上経過した削除対象の写真はありません。</td></tr>`;

@@ -904,8 +904,8 @@ class PcServerClient(
                         )
                     }
 
+                    dao.deletePhotosByItemId(targetItemId)
                     if (newPhotoEntities.isNotEmpty()) {
-                        dao.deletePhotosByItemId(targetItemId)
                         dao.insertPhotos(newPhotoEntities)
                     }
                 }

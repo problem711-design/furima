@@ -449,61 +449,73 @@ class FleaMarketRepository(private val context: Context) {
     }
 
     /**
-     * 写真を1枚単位で削除（DBおよび不要ファイル削除、isDirtyフラグ更新）
+     * 写真を1枚単位で削除（残存PhotoEntityのID再採番を行わず、対象のみ削除＋未参照ファイル整理＋isDirty更新）
      */
     suspend fun deletePhotoById(photoId: Int): Boolean {
-        val photo = dao.getPhotoById(photoId) ?: return false
-        val itemWithPhotos = dao.getItemWithPhotosById(photo.itemId) ?: return false
-
-        val updatedPhotos = itemWithPhotos.photos.filter { it.id != photoId }
-        val remainingFilePaths = updatedPhotos.map { it.filePath }
-
-        saveItem(
-            id = itemWithPhotos.item.id,
-            title = itemWithPhotos.item.title,
-            description = itemWithPhotos.item.description,
-            status = itemWithPhotos.item.status,
-            price = itemWithPhotos.item.price,
-            soldPrice = itemWithPhotos.item.soldPrice,
-            shippingCost = itemWithPhotos.item.shippingCost,
-            feeRatePercent = itemWithPhotos.item.feeRatePercent,
-            expenseCost = itemWithPhotos.item.expenseCost,
-            useCustomSettings = itemWithPhotos.item.useCustomSettings,
-            imageUris = emptyList(),
-            existingFilePaths = remainingFilePaths
-        )
-        return true
+        return deletePhotosByIds(listOf(photoId)) > 0
     }
 
     /**
-     * 複数写真を一括削除
+     * 複数写真を一括削除（残存PhotoEntityのID・md5Hash・isOriginalDeletedを保持したまま対象のみ削除）
      */
     suspend fun deletePhotosByIds(photoIds: List<Int>): Int {
         if (photoIds.isEmpty()) return 0
         val photos = photoIds.distinct().mapNotNull { dao.getPhotoById(it) }
+        if (photos.isEmpty()) return 0
         val groupedByItem = photos.groupBy { it.itemId }
+        val now = System.currentTimeMillis()
         var count = 0
+
         for ((itemId, photoGroup) in groupedByItem) {
             val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: continue
             val removeSet = photoGroup.map { it.id }.toSet()
+            val toRemove = itemWithPhotos.photos.filter { it.id in removeSet }
+            if (toRemove.isEmpty()) continue
             val remaining = itemWithPhotos.photos.filter { it.id !in removeSet }
-            val remainingPaths = remaining.map { it.filePath }
 
-            saveItem(
-                id = itemWithPhotos.item.id,
-                title = itemWithPhotos.item.title,
-                description = itemWithPhotos.item.description,
-                status = itemWithPhotos.item.status,
-                price = itemWithPhotos.item.price,
-                soldPrice = itemWithPhotos.item.soldPrice,
-                shippingCost = itemWithPhotos.item.shippingCost,
-                feeRatePercent = itemWithPhotos.item.feeRatePercent,
-                expenseCost = itemWithPhotos.item.expenseCost,
-                useCustomSettings = itemWithPhotos.item.useCustomSettings,
-                imageUris = emptyList(),
-                existingFilePaths = remainingPaths
-            )
-            count += photoGroup.size
+            val keptPaths = remaining.flatMap {
+                listOfNotNull(
+                    it.filePath.takeIf { p -> p.isNotBlank() },
+                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                )
+            }.toSet()
+            val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+                listOfNotNull(
+                    it.filePath.takeIf { p -> p.isNotBlank() },
+                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                )
+            }.toSet()
+
+            for (targetPhoto in toRemove) {
+                if (targetPhoto.filePath.isNotBlank() &&
+                    !keptPaths.contains(targetPhoto.filePath) &&
+                    !otherReferencedPaths.contains(targetPhoto.filePath)
+                ) {
+                    try {
+                        File(targetPhoto.filePath).delete()
+                    } catch (_: Exception) {
+                    }
+                }
+                if (!targetPhoto.thumbnailPath.isNullOrBlank() &&
+                    !keptPaths.contains(targetPhoto.thumbnailPath) &&
+                    !otherReferencedPaths.contains(targetPhoto.thumbnailPath)
+                ) {
+                    try {
+                        File(targetPhoto.thumbnailPath).delete()
+                    } catch (_: Exception) {
+                    }
+                }
+            }
+
+            dao.deletePhotosByIds(toRemove.map { it.id })
+            if (remaining.isNotEmpty()) {
+                val reindexed = remaining.mapIndexed { idx, photo ->
+                    photo.copy(displayOrder = idx, updatedAt = now)
+                }
+                dao.updatePhotos(reindexed)
+            }
+            dao.updateItem(itemWithPhotos.item.copy(updatedAt = now, isDirty = true))
+            count += toRemove.size
         }
         return count
     }

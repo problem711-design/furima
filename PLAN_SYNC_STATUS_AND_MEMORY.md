@@ -1,7 +1,7 @@
 # 統合実装計画書（フェーズ 4）：重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱（案A） ➔ 同期ステータス％表示＆メモリ安定化
 
 対象：個人利用のフリマ出品・売上管理システム（Androidアプリ ＋ PC母艦サーバー ＋ スマホ緊急Web管理画面）
-現行バージョン：**`v1.0.0 (Build 3)`**（直近コミット `48a42ba` の修復対象を含む）
+現行バージョン：**`v1.0.0 (Build 4)`**（フェーズ 4-1 完了済み）
 改定日：**2026-11-15**（優先順位再編成 ＆ 案A採用による統合版）
 
 > **進行・引き継ぎルール（必須）**
@@ -13,7 +13,7 @@
 
 ## 0. 全体フェーズ構成と現在地
 
-- [ ] **フェーズ 4-1 (`v1.0.0 Build 4`) — 重大なバグ・エラーの緊急修復（最優先）**
+- [x] **フェーズ 4-1 (`v1.0.0 Build 4`) — 重大なバグ・エラーの緊急修復（最優先）** 【完了】
   - コミット `48a42ba` 混入バグの修復（JS構文エラー・ID再採番回避・型変換安全化・表記整合）
   - PC ⇄ スマホ間の写真0枚同期漏れ修復（`PcServerClient.kt`）
   - PC/スマホWeb管理画面のドロップゾーン二重クリック防止・XSS修正・フォルダ同期修復・C#未使用変数警告解消
@@ -26,28 +26,28 @@
 
 ---
 
-## 1. 【フェーズ 4-1】重大なバグ・エラーの修復（最優先 / Target: `v1.0.0 Build 4`）
+## 1. 【フェーズ 4-1】重大なバグ・エラーの修復（最優先 / Target: `v1.0.0 Build 4`）【完了】
 
 ### 背景（コミット `48a42ba` 精査結果）
 `48a42ba` はコミットメッセージ上「PC管理画面の写真ギャラリー機能拡張」となっているが、実際にはスマホ側緊急Webサーバーのみを変更し、JS構文エラーや写真ID再採番等の重大不具合を含んでいる。履歴削除ではなく、`48a42ba` で追加されたスマホ側ギャラリー送り戻しUIを活かした上で以下の通り修復し、既知の重大バグを一掃する。
 
 ### 実装タスクチェックリスト
-- [ ] **4-1-1: スマホWeb管理画面 JS 構文エラー解消 (`WebDashboardHtml.kt`)**
+- [x] **4-1-1: スマホWeb管理画面 JS 構文エラー解消 (`WebDashboardHtml.kt`)**
   - 1280〜1281行目付近の `closeImageViewer()` 直後に重複残留している `currentViewingPhoto = null; }` を削除する。
   - `<script>` ブロックを抽出し `node --check` で構文エラーゼロを確認する。
-- [ ] **4-1-2: スマホ側写真削除ロジックの安全化 (`FleaMarketRepository.kt`, `LocalWebServer.kt`, `WebDashboardHtml.kt`)**
+- [x] **4-1-2: スマホ側写真削除ロジックの安全化 (`ItemDao.kt`, `FleaMarketRepository.kt`, `LocalWebServer.kt`, `WebDashboardHtml.kt`)**
   - `FleaMarketRepository.kt` の `deletePhotoById(photoId)` / `deletePhotosByIds(photoIds)` が `saveItem(...)` を経由して残存写真の `PhotoEntity.id` を毎回再採番してしまう問題を修正する（残存写真の `id`・`md5Hash`・`isOriginalDeleted` 等を破壊せず、対象写真のみ削除＋未参照ファイル削除＋`displayOrder` 再採番＋`item.updatedAt` & `isDirty = true` 更新を行う安全な単体/一括削除処理へ統一）。
   - `LocalWebServer.kt`（598行目付近）の `POST /api/photos/delete-batch` における `body["photoIds"] as? List<Number>` を `as? List<*>` ＋ `.mapNotNull { (it as? Number)?.toInt() }` に変更し、不正ペイロードでの `ClassCastException` (500) を防止する。
   - スマホ緊急Web管理画面・ログ上の表記が物理削除の実態と矛盾しないよう文言を整合させる（「削除（端末・DBから削除）」等、復元できないことを明示）。
-- [ ] **4-1-3: PC ⇄ スマホ間の写真0枚同期バグ修復 (`PcServerClient.kt`)**
+- [x] **4-1-3: PC ⇄ スマホ間の写真0枚同期バグ修復 (`PcServerClient.kt`)**
   - `mergeServerItemsFromJson`（907行目付近）の `if (newPhotoEntities.isNotEmpty())` 条件により、PC側で写真を最後の1枚まで削除してもスマホ側に旧写真が残ってしまうバグを修正する。
   - サーバー応答のアイテムに `photos` 配列が含まれている場合、`newPhotoEntities` が空（0枚）であっても `dao.deletePhotosByItemId(targetItemId)` を実行して0枚状態を正しく同期反映する（ローカル未同期写真 `!isPcSynced` がある既存スキップガードは維持）。
-- [ ] **4-1-4: PC/スマホWeb管理画面の操作不具合・XSS・フォルダ同期・警告修復**
+- [x] **4-1-4: PC/スマホWeb管理画面の操作不具合・XSS・フォルダ同期・警告修復**
   - **ドロップゾーン二重クリック防止** (`tools/DashboardHtml.cs` の `#photo-drop-file-input`, `#edit-photo-input`, `#add-photo-input`、および `WebDashboardHtml.kt` の `#form-photos`, `#restore-file-input`, `#folder-sync-input`)：`<input type="file">` に `onclick="event.stopPropagation()"` を付与し、親要素クリック時のファイル選択ダイアログ二重起動を防止する。
   - **HTMLエスケープ漏れ (XSS/表示崩れ) 修復** (`tools/DashboardHtml.cs` 2939行目付近 `openCleanupModal()`)：`${c.title}` および `${c.status}` / `${c.soldAtText}` / `${c.sizeFormatted}` に `escapeHtml(...)` を適用する。
   - **スマホWeb側フォルダ差分同期修復** (`LocalWebServer.kt` `WebPhotoDto` / `WebDashboardHtml.kt` `handleFolderSync`)：`WebPhotoDto` に `filePath: String`（または照合用ファイル名フィールド）を追加し、既存の `handleFolderSync` による重複判定が機能するようにする。
   - **C# コンパイル警告整理** (`tools/FurimaServerNative.cs` 1058行目付近)：未使用変数 `bool settingsChanged = false;` および代入箇所を削除し `warning CS0219` を解消する。
-- [ ] **4-1-5: バージョン統一更新 (`Build 4`) ＆ 検証**
+- [x] **4-1-5: バージョン統一更新 (`Build 4`) ＆ 検証**
   - `app/build.gradle.kts` (`versionCode = 4`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を **`v1.0.0 (Build 4)`** へ統一更新。
   - `node --check`（PC側・スマホ側双方の `<script>`）および `compile_applet` 実行・GitHub `main` コミット/プッシュ。
 

@@ -36,7 +36,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 3)** （直近コミット `48a42ba` までの精査・統合計画再編成完了、フェーズ 4-1 着手待機）
+現在のバージョン：**`v1.0.0` (Build 4)** （フェーズ 4-1 重大バグ・エラー緊急修復完了、フェーズ 4-2 へ移行）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -88,7 +88,7 @@
   - [x] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
 
 ### フェーズ 4 統合マイルストーン (詳細仕様は `PLAN_SYNC_STATUS_AND_MEMORY.md` を参照)
-- [ ] **フェーズ 4-1 (`v1.0.0 Build 4`) — 重大なバグ・エラーの緊急修復（最優先）**
+- [x] **フェーズ 4-1 (`v1.0.0 Build 4`) — 重大なバグ・エラーの緊急修復（最優先）** 【完了】
   - コミット `48a42ba` 混入不具合の修復（`WebDashboardHtml.kt` JS構文エラー解消、`FleaMarketRepository` 写真ID再採番回避、`LocalWebServer` 型変換安全化＆表記整合）
   - `PcServerClient.kt` 写真0枚同期漏れ修正、PC/スマホ両Web画面のドロップゾーン二重発火防止、`openCleanupModal` XSS修正、スマホWeb側フォルダ同期 (`WebPhotoDto.filePath`) 修復、`FurimaServerNative.cs` `CS0219` 警告解消
 - [ ] **フェーズ 4-2 (`v1.0.0 Build 5`) — PCブラウザ管理画面の写真ギャラリー改良・原寸送り戻し・写真単位ゴミ箱（案A）**
@@ -101,6 +101,17 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/15 フェーズ 4-1 完了 バージョン 1.0.0 (Build 4)
+- **スマホ緊急Web管理画面 JS 構文エラー・削除整合修復 (`WebDashboardHtml.kt`, `LocalWebServer.kt`, `FleaMarketRepository.kt`, `ItemDao.kt`)**：
+  - `WebDashboardHtml.kt` の `closeImageViewer()` 直後に残留していた重複記述 `currentViewingPhoto = null; }` を削除し、`node --check` 通過を確認。
+  - `FleaMarketRepository.deletePhotoById` / `deletePhotosByIds` から `saveItem(...)` 経由を廃止し、残存 `PhotoEntity.id`・`md5Hash`・`isOriginalDeleted` を保持したまま対象写真のみ削除（`ItemDao.deletePhotosByIds`）＋未参照ファイル削除＋`displayOrder` 再採番を行う安全な実装へ修正。
+  - `LocalWebServer.kt` の `/api/photos/delete-batch` で `photoIds` を `List<*>` ＋ `mapNotNull` で安全キャストし、`WebPhotoDto` に `filePath` を追加してフォルダ差分同期を復旧、削除表記も実態に合わせて統一。
+- **PC ⇄ スマホ写真0枚同期バグ ＆ Web管理画面不具合修復 (`PcServerClient.kt`, `tools/DashboardHtml.cs`, `tools/FurimaServerNative.cs`)**：
+  - `PcServerClient.mergeServerItemsFromJson` でサーバー側 `photos` が空配列（0枚）の場合でも `dao.deletePhotosByItemId` を実行して同期反映するよう修正。
+  - `DashboardHtml.cs` / `WebDashboardHtml.kt` の各 `<input type="file">` に `onclick="event.stopPropagation()"` を追加してクリック二重発火を解消し、`openCleanupModal()` へ `escapeHtml` を適用。
+  - `FurimaServerNative.cs` の未使用変数 `settingsChanged` を削除（`CS0219` 解消）。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 4`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 4)`** へ3箇所統一。
 
 ### [2026-11-15] フェーズ 4 統合実装計画の再編成 ＆ 案A（写真単位ゴミ箱）確定 (`PLAN_SYNC_STATUS_AND_MEMORY.md`)
 - `48a42ba` の実態調査（変更対象がスマホ側ローカルWeb管理画面のみでPC側未反映、かつ `WebDashboardHtml.kt` にJS構文エラー等を含む）を踏まえ、ユーザー指定の優先順位（①重大バグ修復 ➔ ②PC管理画面写真ギャラリー改良＋案A写真ゴミ箱 ➔ ③同期ステータス％表示＆メモリ安定化）へ `PLAN_SYNC_STATUS_AND_MEMORY.md` を統合再編成。

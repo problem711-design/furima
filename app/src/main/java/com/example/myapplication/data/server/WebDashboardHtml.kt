@@ -25,7 +25,7 @@ object WebDashboardHtml {
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.0.0 (Build 3)</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.0.0 (Build 4)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -47,7 +47,7 @@ object WebDashboardHtml {
 
                 <!-- ヘッダー右側アクションボタン -->
                 <div class="flex items-center gap-1.5 shrink-0">
-                    <input type="file" id="folder-sync-input" webkitdirectory class="hidden" onchange="handleFolderSync(event)">
+                    <input type="file" id="folder-sync-input" webkitdirectory class="hidden" onclick="event.stopPropagation()" onchange="handleFolderSync(event)">
                     <button onclick="openCreateModal()" class="bg-emerald-500 hover:bg-emerald-600 text-white px-3 py-1 rounded-lg text-xs font-bold shadow flex items-center gap-1 transition">
                         <i class="fa-solid fa-plus"></i> 出品
                     </button>
@@ -222,7 +222,7 @@ object WebDashboardHtml {
                         <div class="w-20 h-20 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-center hover:bg-slate-50 transition cursor-pointer relative shrink-0" onclick="document.getElementById('form-photos').click()" title="クリックして写真を選択">
                             <i class="fa-solid fa-plus text-indigo-500 text-sm mb-0.5"></i>
                             <span class="text-[9px] font-bold text-slate-600">写真追加</span>
-                            <input type="file" id="form-photos" multiple accept="image/*" class="hidden" onchange="previewUploadPhotos(event)">
+                            <input type="file" id="form-photos" multiple accept="image/*" class="hidden" onclick="event.stopPropagation()" onchange="previewUploadPhotos(event)">
                         </div>
                     </div>
                 </div>
@@ -343,7 +343,7 @@ object WebDashboardHtml {
                     <button onclick="document.getElementById('restore-file-input').click()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded font-bold transition">
                         <i class="fa-solid fa-upload"></i> PCから高画質元画像を復元
                     </button>
-                    <input type="file" id="restore-file-input" accept="image/*" class="hidden" onchange="uploadRestoredPhoto(event)">
+                    <input type="file" id="restore-file-input" accept="image/*" class="hidden" onclick="event.stopPropagation()" onchange="uploadRestoredPhoto(event)">
                 </div>
             </div>
 
@@ -356,7 +356,7 @@ object WebDashboardHtml {
         <!-- 下部: サムネイルギャラリーバー (ギャラリー閲覧時のみ表示されるサムネイルリスト＆右上チェックボックス付き) -->
         <div class="w-full max-w-5xl bg-slate-900/80 p-3 rounded-xl backdrop-blur-sm z-20 border border-slate-800" onclick="event.stopPropagation()">
             <div class="flex items-center justify-between text-slate-400 text-[11px] mb-1.5 px-1">
-                <span class="font-medium flex items-center gap-1.5"><i class="fa-solid fa-square-check text-rose-400"></i> サムネイル右上のチェックボックスで1枚単位の削除（ゴミ箱移動）が可能です</span>
+                <span class="font-medium flex items-center gap-1.5"><i class="fa-solid fa-square-check text-rose-400"></i> サムネイル右上のチェックボックスで1枚単位の削除が可能です</span>
                 <span class="text-slate-400 text-[10px]">キーボード: [←][→]移動 / [Esc]閉じる</span>
             </div>
             <div id="gallery-thumbnails-list" class="flex gap-2.5 overflow-x-auto custom-scroll pb-1 pt-1 px-1 items-center">
@@ -1178,12 +1178,12 @@ object WebDashboardHtml {
                     <img src="` + (photo.thumbUrl || photo.url) + `" onclick="selectGalleryPhotoIndex(` + idx + `)" class="w-16 h-16 object-cover cursor-pointer hover:opacity-90 transition">
                     
                     <!-- チェックボックス (サムネイル右上配置: absolute top-1 right-1 - サムネイルの左上以外!) -->
-                    <label class="absolute top-1 right-1 z-10 cursor-pointer bg-slate-900/80 hover:bg-slate-900 p-0.5 rounded shadow border border-slate-600 flex items-center justify-center" onclick="event.stopPropagation()" title="選択してゴミ箱移動">
+                    <label class="absolute top-1 right-1 z-10 cursor-pointer bg-slate-900/80 hover:bg-slate-900 p-0.5 rounded shadow border border-slate-600 flex items-center justify-center" onclick="event.stopPropagation()" title="選択して削除">
                         <input type="checkbox" ` + (isChecked ? 'checked' : '') + ` onchange="togglePhotoDeleteSelection(` + photo.id + `, event)" class="w-4 h-4 accent-rose-500 cursor-pointer rounded">
                     </label>
 
                     <!-- 個別削除ボタン (右下配置: bottom-1 right-1) -->
-                    <button onclick="event.stopPropagation(); deleteSinglePhotoDirect(` + photo.id + `)" class="absolute bottom-1 right-1 z-10 bg-rose-600/90 hover:bg-rose-600 text-white text-[10px] w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition shadow" title="この写真をゴミ箱へ移動">
+                    <button onclick="event.stopPropagation(); deleteSinglePhotoDirect(` + photo.id + `)" class="absolute bottom-1 right-1 z-10 bg-rose-600/90 hover:bg-rose-600 text-white text-[10px] w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition shadow" title="この写真を削除">
                         <i class="fa-solid fa-trash-can"></i>
                     </button>
 
@@ -1203,11 +1203,11 @@ object WebDashboardHtml {
         }
 
         async function deleteSinglePhotoDirect(photoId) {
-            if (!confirm('この写真を削除（ゴミ箱へ移動）しますか？')) return;
+            if (!confirm('この写真を削除しますか？（※スマホDBおよびファイルから削除されます）')) return;
             try {
                 const res = await fetch('/api/photos/' + photoId, { method: 'DELETE' });
                 if (!res.ok) throw new Error('写真の削除に失敗しました');
-                showToast('写真を削除（ゴミ箱移動）しました');
+                showToast('写真を削除しました');
 
                 selectedPhotoIdsForDelete.delete(photoId);
 
@@ -1230,7 +1230,7 @@ object WebDashboardHtml {
         async function deleteSelectedPhotos() {
             const count = selectedPhotoIdsForDelete.size;
             if (count === 0) return;
-            if (!confirm('選択した写真 ' + count + '枚を削除（ゴミ箱へ移動）しますか？')) return;
+            if (!confirm('選択した写真 ' + count + '枚を削除しますか？（※スマホDBおよびファイルから削除されます）')) return;
 
             try {
                 const res = await fetch('/api/photos/delete-batch', {
@@ -1239,7 +1239,7 @@ object WebDashboardHtml {
                     body: JSON.stringify({ photoIds: Array.from(selectedPhotoIdsForDelete) })
                 });
                 if (!res.ok) throw new Error('写真の一括削除に失敗しました');
-                showToast('選択した写真 ' + count + '枚を削除（ゴミ箱移動）しました');
+                showToast('選択した写真 ' + count + '枚を削除しました');
 
                 const deletedIds = new Set(selectedPhotoIdsForDelete);
                 selectedPhotoIdsForDelete.clear();
@@ -1276,8 +1276,6 @@ object WebDashboardHtml {
             currentViewingPhoto = null;
             currentGalleryItem = null;
             selectedPhotoIdsForDelete.clear();
-        }
-            currentViewingPhoto = null;
         }
 
         async function uploadRestoredPhoto(e) {

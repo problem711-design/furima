@@ -97,6 +97,9 @@ interface ItemDao {
     @Query("DELETE FROM photos WHERE itemId = :itemId")
     suspend fun deletePhotosByItemId(itemId: Int)
 
+    @Query("DELETE FROM photos WHERE id IN (:photoIds)")
+    suspend fun deletePhotosByIds(photoIds: List<Int>)
+
     @Query("SELECT * FROM photos WHERE itemId = :itemId ORDER BY displayOrder ASC")
     suspend fun getPhotosByItemId(itemId: Int): List<PhotoEntity>
 

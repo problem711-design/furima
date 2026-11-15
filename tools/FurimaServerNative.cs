@@ -1055,7 +1055,6 @@ class FurimaServerNative
                 List<string> syncedHashes = new List<string>();
                 List<string> neededHashes = new List<string>();
                 bool dataChanged = false;
-                bool settingsChanged = false;
 
                 lock (lockObj)
                 {
@@ -1374,7 +1373,6 @@ class FurimaServerNative
                         {
                             SyncStore.SaveDefaultSettings(incomingCfg);
                             BumpSettingsRevision();
-                            settingsChanged = true;
                         }
                     }
                     catch (Exception ex)
