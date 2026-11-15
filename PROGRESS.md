@@ -8,7 +8,7 @@
 > - フェーズ 2.12〜2.14 計画書: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
 > - フェーズ 3.1 計画書: [PLAN_CAMERA_AND_PREVIEW_FIX.md](PLAN_CAMERA_AND_PREVIEW_FIX.md)
 > - フェーズ 3.2 計画書: [PLAN_PHASE_3_2.md](PLAN_PHASE_3_2.md)
-> - **現行実装計画書 (フェーズ 4 / 上部ヘッダースリム化・同期ステータス％表示・メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
+> - **現行実装計画書 (フェーズ 4 / 重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱[案A] ➔ 同期ステータス％表示＆メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
 
 ---
 
@@ -36,7 +36,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 3)** （スタジオ撮影向けアプリ内カメラ完全設定記憶 ＋ プレビュー即削除・連続選別完了）
+現在のバージョン：**`v1.0.0` (Build 3)** （直近コミット `48a42ba` までの精査・統合計画再編成完了、フェーズ 4-1 着手待機）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -87,9 +87,24 @@
   - [x] `3.2-B` テンプレート選択ドロップダウン化＆フルウィンドウ編集・`{title}`/`{price}`変数展開・PCワンクリックコピー強化
   - [x] `3.2-C` 選択モード拡張・ゴミ箱一括復元/完全削除・一括ゴミ箱移動(`batch-trash`)・部分一括編集(`batch-update`, 0円クランプ) ＋ `Build 9` 統一
 
+### フェーズ 4 統合マイルストーン (詳細仕様は `PLAN_SYNC_STATUS_AND_MEMORY.md` を参照)
+- [ ] **フェーズ 4-1 (`v1.0.0 Build 4`) — 重大なバグ・エラーの緊急修復（最優先）**
+  - コミット `48a42ba` 混入不具合の修復（`WebDashboardHtml.kt` JS構文エラー解消、`FleaMarketRepository` 写真ID再採番回避、`LocalWebServer` 型変換安全化＆表記整合）
+  - `PcServerClient.kt` 写真0枚同期漏れ修正、PC/スマホ両Web画面のドロップゾーン二重発火防止、`openCleanupModal` XSS修正、スマホWeb側フォルダ同期 (`WebPhotoDto.filePath`) 修復、`FurimaServerNative.cs` `CS0219` 警告解消
+- [ ] **フェーズ 4-2 (`v1.0.0 Build 5`) — PCブラウザ管理画面の写真ギャラリー改良・原寸送り戻し・写真単位ゴミ箱（案A）**
+  - `4-2a` PC母艦バックエンド（`SyncStore.cs` / `FurimaServerNative.cs`）：`_photo_trash` 退避＋`photo_trash.json` 管理、写真一括ゴミ箱移動/復元/完全削除/空にするAPI
+  - `4-2b` PCブラウザUI（`DashboardHtml.cs`）：ギャラリー開時限定サムネイル右上チェックボックス、全画面原寸ライトボックス（`<`/`>`、キーボード `←`/`→`/`Esc`、下部ミニサムネ帯）、写真ゴミ箱モーダル
+- [ ] **フェーズ 4-3 (`v1.0.0 Build 6`) — 同期ステータス可視化 ＆ メモリ消費・アプリ安定性の抜本改善**
+  - `4-3a` 一覧画面ヘッダースリム化 ＆ リアルタイム同期ステータス・進捗％バッジ＆詳細ダイアログ
+  - `4-3b` メモリ安定化 5本柱（保存IO完全移行＆ロック、16KBストリーミング送信、Coil上限設定、CameraX連写最適化＆`2048px/フル`切替記憶、サムネ`RGB_565`＋一時キャッシュ自動掃除＋`largeHeap`）
+
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-15] フェーズ 4 統合実装計画の再編成 ＆ 案A（写真単位ゴミ箱）確定 (`PLAN_SYNC_STATUS_AND_MEMORY.md`)
+- `48a42ba` の実態調査（変更対象がスマホ側ローカルWeb管理画面のみでPC側未反映、かつ `WebDashboardHtml.kt` にJS構文エラー等を含む）を踏まえ、ユーザー指定の優先順位（①重大バグ修復 ➔ ②PC管理画面写真ギャラリー改良＋案A写真ゴミ箱 ➔ ③同期ステータス％表示＆メモリ安定化）へ `PLAN_SYNC_STATUS_AND_MEMORY.md` を統合再編成。
+- 各サブフェーズ完了ごとの計画書更新＆GitHub `main` 即時同期ルールを明文化。
 
 ### [2026-11-15] ヘッダースリム化・同期％表示・メモリ安定化 詳細実装計画書 (`PLAN_SYNC_STATUS_AND_MEMORY.md`) 策定
 - 一覧画面上部ヘッダーの縦幅スリム化およびタイトル横のリアルタイムPC同期ステータス（％・枚数・エラー詳細＆再同期ダイアログ）の実装計画を策定。
