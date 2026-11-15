@@ -179,7 +179,7 @@ object WebDashboardHtml {
 
                 <div>
                     <label class="block text-xs font-bold text-slate-700 mb-1">商品説明文</label>
-                    <textarea id="form-description" rows="4" placeholder="商品の状態、サイズ、購入時期、注意事項などを記入（メルカリ出品時にワンクリックコピーできます）" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none custom-scroll"></textarea>
+                    <textarea id="form-description" rows="8" placeholder="商品の状態、サイズ、購入時期、注意事項などを記入（メルカリ出品時にワンクリックコピーできます）" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none custom-scroll"></textarea>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
@@ -217,13 +217,14 @@ object WebDashboardHtml {
 
                 <div id="photos-input-container">
                     <label class="block text-xs font-bold text-slate-700 mb-1">商品写真アップロード (複数可)</label>
-                    <div class="border-2 border-dashed border-slate-300 rounded-xl p-4 text-center hover:bg-slate-50 transition cursor-pointer relative" onclick="document.getElementById('form-photos').click()">
-                        <i class="fa-solid fa-cloud-arrow-up text-3xl text-indigo-400 mb-2"></i>
-                        <p class="text-xs text-slate-600 font-medium">クリックしてPCから写真を選択、またはドラッグ＆ドロップ</p>
-                        <p class="text-[10px] text-slate-400 mt-1">JPEG, PNG形式対応 (スマホ端末のギャラリーにも自動保存されます)</p>
-                        <input type="file" id="form-photos" multiple accept="image/*" class="hidden" onchange="previewUploadPhotos(event)">
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <div class="w-20 h-20 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-center hover:bg-slate-50 transition cursor-pointer relative shrink-0" onclick="document.getElementById('form-photos').click()" title="クリックして写真を選択">
+                            <i class="fa-solid fa-plus text-indigo-500 text-sm mb-0.5"></i>
+                            <span class="text-[9px] font-bold text-slate-600">写真追加</span>
+                            <input type="file" id="form-photos" multiple accept="image/*" class="hidden" onchange="previewUploadPhotos(event)">
+                        </div>
+                        <div id="photo-preview-grid" class="flex flex-wrap gap-2 items-center"></div>
                     </div>
-                    <div id="photo-preview-grid" class="flex flex-wrap gap-2 mt-3"></div>
                 </div>
 
                 <div class="pt-4 border-t border-slate-200 flex justify-end gap-3">
