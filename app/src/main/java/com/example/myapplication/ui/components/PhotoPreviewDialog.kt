@@ -72,6 +72,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.example.myapplication.data.local.PhotoEntity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -545,8 +547,16 @@ private fun ZoomablePhotoPage(
         contentAlignment = Alignment.Center
     ) {
         if (model != null) {
+            val context = LocalContext.current
+            val imageRequest = remember(model) {
+                ImageRequest.Builder(context)
+                    .data(model)
+                    .size(2048)
+                    .precision(Precision.INEXACT)
+                    .build()
+            }
             AsyncImage(
-                model = model,
+                model = imageRequest,
                 contentDescription = contentDescription,
                 contentScale = ContentScale.Fit,
                 modifier = Modifier

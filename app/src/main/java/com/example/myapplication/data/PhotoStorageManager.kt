@@ -295,27 +295,118 @@ class PhotoStorageManager(private val context: Context) {
         }
     }
 
+    private fun calculatePowerOfTwoSampleSize(width: Int, height: Int, maxDim: Int): Int {
+        if (maxDim <= 0 || width <= 0 || height <= 0) return 1
+        var inSampleSize = 1
+        val maxOrig = maxOf(width, height)
+        while ((maxOrig / (inSampleSize * 2)) >= maxDim) {
+            inSampleSize *= 2
+        }
+        return inSampleSize.coerceAtLeast(1)
+    }
+
     /**
-     * 既存の写真ファイルからサムネイルを生成
+     * 撮影済み高解像度写真の安全な長辺リサイズ（EXIF回転適用済みJPEGで上書き）
+     */
+    fun downscaleCapturedPhotoIfNeeded(file: File, maxDim: Int = 2048, quality: Int = 90): Boolean {
+        if (!file.exists() || !file.isFile || maxDim <= 0) return false
+        var decodedBitmap: Bitmap? = null
+        var orientedBitmap: Bitmap? = null
+        var scaledBitmap: Bitmap? = null
+        return try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            val maxOrig = maxOf(bounds.outWidth, bounds.outHeight)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || maxOrig <= maxDim) {
+                return false
+            }
+
+            val orientation = try {
+                ExifInterface(file.absolutePath).getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+                )
+            } catch (_: Exception) {
+                ExifInterface.ORIENTATION_NORMAL
+            }
+
+            val sampleSize = calculatePowerOfTwoSampleSize(bounds.outWidth, bounds.outHeight, maxDim)
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            decodedBitmap = BitmapFactory.decodeFile(file.absolutePath, decodeOptions) ?: return false
+            orientedBitmap = applyExifOrientation(decodedBitmap, orientation)
+            if (orientedBitmap != decodedBitmap) {
+                decodedBitmap = null
+            }
+
+            val src = orientedBitmap!!
+            val w = src.width
+            val h = src.height
+            val scale = minOf(maxDim.toFloat() / w, maxDim.toFloat() / h, 1.0f)
+            val targetW = (w * scale).toInt().coerceAtLeast(1)
+            val targetH = (h * scale).toInt().coerceAtLeast(1)
+            scaledBitmap = if (targetW < w || targetH < h) {
+                Bitmap.createScaledBitmap(src, targetW, targetH, true)
+            } else {
+                src
+            }
+
+            val tmpFile = File(file.parentFile, "${file.name}.resize_tmp")
+            FileOutputStream(tmpFile).use { out ->
+                scaledBitmap!!.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(50, 100), out)
+            }
+            if (tmpFile.exists() && tmpFile.length() > 0L) {
+                if (file.exists()) file.delete()
+                if (!tmpFile.renameTo(file)) {
+                    FileInputStream(tmpFile).use { inp ->
+                        FileOutputStream(file).use { out -> inp.copyTo(out) }
+                    }
+                    tmpFile.delete()
+                }
+                true
+            } else {
+                tmpFile.delete()
+                false
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        } finally {
+            if (scaledBitmap != null && scaledBitmap != orientedBitmap && !scaledBitmap!!.isRecycled) {
+                scaledBitmap!!.recycle()
+            }
+            if (orientedBitmap != null && orientedBitmap != decodedBitmap && !orientedBitmap!!.isRecycled) {
+                orientedBitmap!!.recycle()
+            }
+            if (decodedBitmap != null && !decodedBitmap!!.isRecycled) {
+                decodedBitmap!!.recycle()
+            }
+        }
+    }
+
+    /**
+     * 既存の写真ファイルからサムネイルを生成 (RGB_565 + 2のべき乗サンプリング)
      */
     fun createThumbnail(sourceFile: File, maxDim: Int = 480, quality: Int = 75): String? {
         if (!sourceFile.exists()) return null
+        var decodedBitmap: Bitmap? = null
+        var bitmap: Bitmap? = null
+        var scaledBitmap: Bitmap? = null
         return try {
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
             BitmapFactory.decodeFile(sourceFile.absolutePath, options)
+            if (options.outWidth <= 0 || options.outHeight <= 0) return null
 
-            var inSampleSize = 1
-            val maxOriginal = maxOf(options.outWidth, options.outHeight)
-            if (maxOriginal > maxDim) {
-                inSampleSize = maxOriginal / maxDim
-            }
-
+            val sampleSize = calculatePowerOfTwoSampleSize(options.outWidth, options.outHeight, maxDim)
             val decodeOptions = BitmapFactory.Options().apply {
-                this.inSampleSize = inSampleSize.coerceAtLeast(1)
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
             }
-            val decodedBitmap = BitmapFactory.decodeFile(sourceFile.absolutePath, decodeOptions) ?: return null
+            decodedBitmap = BitmapFactory.decodeFile(sourceFile.absolutePath, decodeOptions) ?: return null
             val orientation = try {
                 ExifInterface(sourceFile.absolutePath).getAttributeInt(
                     ExifInterface.TAG_ORIENTATION,
@@ -324,29 +415,43 @@ class PhotoStorageManager(private val context: Context) {
             } catch (_: Exception) {
                 ExifInterface.ORIENTATION_NORMAL
             }
-            val bitmap = applyExifOrientation(decodedBitmap, orientation)
+            bitmap = applyExifOrientation(decodedBitmap, orientation)
+            if (bitmap != decodedBitmap) {
+                decodedBitmap = null
+            }
 
             // アスペクト比を保ってリサイズ
-            val w = bitmap.width
-            val h = bitmap.height
+            val w = bitmap!!.width
+            val h = bitmap!!.height
             val scale = minOf(maxDim.toFloat() / w, maxDim.toFloat() / h, 1.0f)
             val targetW = (w * scale).toInt().coerceAtLeast(1)
             val targetH = (h * scale).toInt().coerceAtLeast(1)
 
-            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+            scaledBitmap = if (targetW < w || targetH < h) {
+                Bitmap.createScaledBitmap(bitmap!!, targetW, targetH, true)
+            } else {
+                bitmap
+            }
 
             val thumbFile = File(getThumbnailDir(), "THUMB_${sourceFile.name}")
             FileOutputStream(thumbFile).use { out ->
-                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(30, 100), out)
+                scaledBitmap!!.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(30, 100), out)
             }
-
-            if (scaledBitmap != bitmap) bitmap.recycle()
-            scaledBitmap.recycle()
 
             thumbFile.absolutePath
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        } finally {
+            if (scaledBitmap != null && scaledBitmap != bitmap && !scaledBitmap!!.isRecycled) {
+                scaledBitmap!!.recycle()
+            }
+            if (bitmap != null && bitmap != decodedBitmap && !bitmap!!.isRecycled) {
+                bitmap!!.recycle()
+            }
+            if (decodedBitmap != null && !decodedBitmap!!.isRecycled) {
+                decodedBitmap!!.recycle()
+            }
         }
     }
 
@@ -408,20 +513,20 @@ class PhotoStorageManager(private val context: Context) {
         quality: Int = 75
     ): String? {
         if (bytes.isEmpty()) return null
+        var decodedBitmap: Bitmap? = null
+        var bitmap: Bitmap? = null
+        var scaledBitmap: Bitmap? = null
         return try {
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             if (options.outWidth <= 0 || options.outHeight <= 0) return null
 
-            var inSampleSize = 1
-            val maxOriginal = maxOf(options.outWidth, options.outHeight)
-            if (maxOriginal > maxDim) {
-                inSampleSize = maxOriginal / maxDim
-            }
+            val sampleSize = calculatePowerOfTwoSampleSize(options.outWidth, options.outHeight, maxDim)
             val decodeOptions = BitmapFactory.Options().apply {
-                this.inSampleSize = inSampleSize.coerceAtLeast(1)
+                inSampleSize = sampleSize
+                inPreferredConfig = Bitmap.Config.RGB_565
             }
-            val decodedBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions) ?: return null
+            decodedBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions) ?: return null
             val orientation = try {
                 ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
                     ExifInterface.TAG_ORIENTATION,
@@ -430,28 +535,42 @@ class PhotoStorageManager(private val context: Context) {
             } catch (_: Exception) {
                 ExifInterface.ORIENTATION_NORMAL
             }
-            val bitmap = applyExifOrientation(decodedBitmap, orientation)
+            bitmap = applyExifOrientation(decodedBitmap, orientation)
+            if (bitmap != decodedBitmap) {
+                decodedBitmap = null
+            }
 
-            val w = bitmap.width
-            val h = bitmap.height
+            val w = bitmap!!.width
+            val h = bitmap!!.height
             val scale = minOf(maxDim.toFloat() / w, maxDim.toFloat() / h, 1.0f)
             val targetW = (w * scale).toInt().coerceAtLeast(1)
             val targetH = (h * scale).toInt().coerceAtLeast(1)
-            val scaledBitmap = Bitmap.createScaledBitmap(bitmap, targetW, targetH, true)
+            scaledBitmap = if (targetW < w || targetH < h) {
+                Bitmap.createScaledBitmap(bitmap!!, targetW, targetH, true)
+            } else {
+                bitmap
+            }
 
             val safeHint = fileNameHint.replace(Regex("[^a-zA-Z0-9_.\\-]"), "_").ifBlank { "repaired.jpg" }
             val thumbFile = File(getThumbnailDir(), "THUMB_$safeHint")
             FileOutputStream(thumbFile).use { out ->
-                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(30, 100), out)
+                scaledBitmap!!.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(30, 100), out)
             }
-
-            if (scaledBitmap != bitmap) bitmap.recycle()
-            scaledBitmap.recycle()
 
             thumbFile.absolutePath
         } catch (e: Exception) {
             e.printStackTrace()
             null
+        } finally {
+            if (scaledBitmap != null && scaledBitmap != bitmap && !scaledBitmap!!.isRecycled) {
+                scaledBitmap!!.recycle()
+            }
+            if (bitmap != null && bitmap != decodedBitmap && !bitmap!!.isRecycled) {
+                bitmap!!.recycle()
+            }
+            if (decodedBitmap != null && !decodedBitmap!!.isRecycled) {
+                decodedBitmap!!.recycle()
+            }
         }
     }
 
@@ -618,6 +737,48 @@ class PhotoStorageManager(private val context: Context) {
             }
         }
         return count
+    }
+
+    /**
+     * 一時キャッシュ (shared_zips / preview_originals) の自動掃除 (24時間超過 または 合計50MB超過)
+     */
+    fun cleanupTemporaryCaches(
+        maxAgeHours: Int = 24,
+        maxTotalBytes: Long = 50L * 1024L * 1024L
+    ): Int {
+        var deletedCount = 0
+        val now = System.currentTimeMillis()
+        val maxAgeMillis = maxAgeHours * 60L * 60L * 1000L
+        val dirs = listOf(
+            File(context.cacheDir, "shared_zips"),
+            File(context.cacheDir, "preview_originals")
+        )
+        val remainingFiles = mutableListOf<File>()
+        for (dir in dirs) {
+            if (!dir.exists() || !dir.isDirectory) continue
+            dir.listFiles()?.forEach { file ->
+                if (file.isFile) {
+                    if (now - file.lastModified() > maxAgeMillis) {
+                        if (file.delete()) deletedCount++
+                    } else {
+                        remainingFiles.add(file)
+                    }
+                }
+            }
+        }
+        var totalBytes = remainingFiles.sumOf { it.length() }
+        if (totalBytes > maxTotalBytes) {
+            val sortedOldest = remainingFiles.sortedBy { it.lastModified() }
+            for (file in sortedOldest) {
+                if (totalBytes <= maxTotalBytes) break
+                val len = file.length()
+                if (file.delete()) {
+                    totalBytes -= len
+                    deletedCount++
+                }
+            }
+        }
+        return deletedCount
     }
 
     /**

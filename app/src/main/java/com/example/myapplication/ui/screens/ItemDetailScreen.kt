@@ -69,6 +69,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.components.ListingValidationBanner
@@ -276,7 +278,13 @@ fun ItemDetailScreen(
                                     .testTag("gallery_photo_choice_${photo.id}")
                             ) {
                                 AsyncImage(
-                                    model = photo.displayFile,
+                                    model = remember(photo.displayFile) {
+                                        ImageRequest.Builder(context)
+                                            .data(photo.displayFile)
+                                            .size(480)
+                                            .precision(Precision.INEXACT)
+                                            .build()
+                                    },
                                     contentDescription = "ギャラリー保存候補写真 ${photo.displayOrder + 1}",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -675,7 +683,13 @@ fun ItemDetailScreen(
                                 .testTag("detail_photo_${photo.id}")
                         ) {
                             AsyncImage(
-                                model = displayFile,
+                                model = remember(displayFile) {
+                                    ImageRequest.Builder(context)
+                                        .data(displayFile)
+                                        .size(480)
+                                        .precision(Precision.INEXACT)
+                                        .build()
+                                },
                                 contentDescription = "商品写真 ${index + 1}",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()

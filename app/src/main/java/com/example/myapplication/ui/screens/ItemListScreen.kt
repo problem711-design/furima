@@ -88,6 +88,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.data.server.PcSyncProgress
 import com.example.myapplication.data.server.SyncPhase
@@ -808,8 +810,15 @@ fun CompactItemCard(
                     .background(Color.LightGray)
             ) {
                 if (displayImageFile != null && displayImageFile.exists()) {
+                    val cardContext = LocalContext.current
                     AsyncImage(
-                        model = displayImageFile,
+                        model = remember(displayImageFile) {
+                            ImageRequest.Builder(cardContext)
+                                .data(displayImageFile)
+                                .size(480)
+                                .precision(Precision.INEXACT)
+                                .build()
+                        },
                         contentDescription = item.title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()

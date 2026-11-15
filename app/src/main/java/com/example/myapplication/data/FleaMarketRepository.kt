@@ -9,9 +9,11 @@ import com.example.myapplication.data.local.ItemEntity
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.data.local.SalesSummary
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withContext
 import java.io.File
 
 enum class BatchPriceMode {
@@ -120,7 +122,7 @@ class FleaMarketRepository(private val context: Context) {
         useCustomSettings: Boolean,
         imageUris: List<Uri>,
         existingFilePaths: List<String> = emptyList()
-    ): Long {
+    ): Long = withContext(Dispatchers.IO) {
         val existingItem = if (id != 0) dao.getItemWithPhotosById(id)?.item else null
         val now = System.currentTimeMillis()
         val soldAt = if (status == "SOLD") {
@@ -266,7 +268,7 @@ class FleaMarketRepository(private val context: Context) {
         dao.deletePhotosByItemId(itemId)
         dao.insertPhotos(newPhotoEntities)
 
-        return itemId.toLong()
+        return@withContext itemId.toLong()
     }
 
     suspend fun removePhotoFromItem(itemId: Int, photoId: Int): Boolean {

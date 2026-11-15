@@ -84,6 +84,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -106,8 +107,13 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.example.myapplication.data.PhotoStorageManager
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.TimeUnit
@@ -155,6 +161,7 @@ fun CameraXCaptureDialog(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = rememberCoroutineScope()
     val storageManager = remember(context) { PhotoStorageManager(context) }
     val savedSettings = remember(context) { CameraXCapturePreferences.load(context) }
 
@@ -164,6 +171,7 @@ fun CameraXCaptureDialog(
     var lastDeletedShot by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var flashMode by rememberSaveable { mutableIntStateOf(savedSettings.flashMode) }
     var isTorchOn by rememberSaveable { mutableStateOf(false) }
+    var isHighResMode by rememberSaveable { mutableStateOf(savedSettings.isHighResMode) }
     var guideModeOrdinal by rememberSaveable { mutableIntStateOf(savedSettings.guideModeOrdinal) }
     val guideMode = CameraGuideMode.entries.getOrElse(guideModeOrdinal) { CameraGuideMode.GRID_3X3 }
 
@@ -322,7 +330,7 @@ fun CameraXCaptureDialog(
                 surfaceProvider = previewView.surfaceProvider
             }
             val capture = ImageCapture.Builder()
-                .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setFlashMode(flashMode)
                 .build()
 
@@ -456,7 +464,8 @@ fun CameraXCaptureDialog(
         showProPanel,
         manualIso,
         manualShutterNanos,
-        manualAwbMode
+        manualAwbMode,
+        isHighResMode
     ) {
         if (!isCameraSettingsReady) return@LaunchedEffect
         CameraXCapturePreferences.save(
@@ -470,7 +479,8 @@ fun CameraXCaptureDialog(
                 showProPanel = showProPanel,
                 manualIso = manualIso,
                 manualShutterNanos = manualShutterNanos,
-                manualAwbMode = manualAwbMode
+                manualAwbMode = manualAwbMode,
+                isHighResMode = isHighResMode
             )
         )
     }
@@ -754,6 +764,43 @@ fun CameraXCaptureDialog(
                     }
                 }
 
+                // 保存解像度切替バー (標準 2048px / フル解像度)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "保存解像度:",
+                        color = Color.White.copy(alpha = 0.78f),
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(end = 6.dp)
+                    )
+                    Surface(
+                        color = if (isHighResMode) Color(0xFF0284C7) else Color.White.copy(alpha = 0.18f),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable {
+                                val next = !isHighResMode
+                                isHighResMode = next
+                                val label = if (next) "保存解像度: フル解像度" else "保存解像度: 標準 2048px (高速・省メモリ)"
+                                Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+                            }
+                            .testTag("camerax_resolution_toggle_button")
+                    ) {
+                        Text(
+                            text = if (isHighResMode) "フル解像度" else "標準 2048px",
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+
                 // 折りたたみ詳細設定バー (Camera2Interop 対応範囲のみ表示)
                 AnimatedVisibility(visible = showProPanel && hasProSupport) {
                     Camera2ProControlsPanel(
@@ -905,7 +952,13 @@ fun CameraXCaptureDialog(
                                     .testTag("camerax_thumbnail_preview_button")
                             ) {
                                 AsyncImage(
-                                    model = File(latestPath),
+                                    model = remember(latestPath) {
+                                        ImageRequest.Builder(context)
+                                            .data(File(latestPath))
+                                            .size(360)
+                                            .precision(Precision.INEXACT)
+                                            .build()
+                                    },
                                     contentDescription = "直前の撮影写真を拡大プレビュー・選別",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
@@ -984,8 +1037,22 @@ fun CameraXCaptureDialog(
                                     ContextCompat.getMainExecutor(context),
                                     object : ImageCapture.OnImageSavedCallback {
                                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                                            isCapturing = false
-                                            capturedPaths = capturedPaths + outFile.absolutePath
+                                            if (isHighResMode) {
+                                                isCapturing = false
+                                                capturedPaths = capturedPaths + outFile.absolutePath
+                                            } else {
+                                                coroutineScope.launch {
+                                                    withContext(Dispatchers.IO) {
+                                                        storageManager.downscaleCapturedPhotoIfNeeded(
+                                                            file = outFile,
+                                                            maxDim = 2048,
+                                                            quality = 90
+                                                        )
+                                                    }
+                                                    isCapturing = false
+                                                    capturedPaths = capturedPaths + outFile.absolutePath
+                                                }
+                                            }
                                         }
 
                                         override fun onError(exception: ImageCaptureException) {
@@ -1341,7 +1408,8 @@ private data class SavedCameraSettings(
     val showProPanel: Boolean = false,
     val manualIso: Int? = null,
     val manualShutterNanos: Long? = null,
-    val manualAwbMode: Int? = null
+    val manualAwbMode: Int? = null,
+    val isHighResMode: Boolean = false
 )
 
 private object CameraXCapturePreferences {
@@ -1355,6 +1423,7 @@ private object CameraXCapturePreferences {
     private const val KEY_MANUAL_ISO = "manual_iso"
     private const val KEY_MANUAL_SHUTTER_NANOS = "manual_shutter_nanos"
     private const val KEY_MANUAL_AWB_MODE = "manual_awb_mode"
+    private const val KEY_HIGH_RES_MODE = "high_res_mode"
 
     fun load(context: Context): SavedCameraSettings {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -1382,7 +1451,8 @@ private object CameraXCapturePreferences {
             showProPanel = prefs.getBoolean(KEY_SHOW_PRO_PANEL, false),
             manualIso = if (isoVal > 0) isoVal else null,
             manualShutterNanos = if (shutterVal > 0L) shutterVal else null,
-            manualAwbMode = if (awbVal >= 0) awbVal else null
+            manualAwbMode = if (awbVal >= 0) awbVal else null,
+            isHighResMode = prefs.getBoolean(KEY_HIGH_RES_MODE, false)
         )
     }
 
@@ -1402,6 +1472,7 @@ private object CameraXCapturePreferences {
             putInt(KEY_MANUAL_ISO, settings.manualIso ?: -1)
             putLong(KEY_MANUAL_SHUTTER_NANOS, settings.manualShutterNanos ?: -1L)
             putInt(KEY_MANUAL_AWB_MODE, settings.manualAwbMode ?: -1)
+            putBoolean(KEY_HIGH_RES_MODE, settings.isHighResMode)
             apply()
         }
     }

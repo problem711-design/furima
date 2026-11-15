@@ -36,7 +36,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 5)** （フェーズ 4-2 PC写真ギャラリー改良＆写真ゴミ箱完了、フェーズ 4-3 へ移行）
+現在のバージョン：**`v1.0.0` (Build 6)** （フェーズ 4-1・4-2・4-3 完了）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -94,13 +94,25 @@
 - [x] **フェーズ 4-2 (`v1.0.0 Build 5`) — PCブラウザ管理画面の写真ギャラリー改良・原寸送り戻し・写真単位ゴミ箱（案A）** 【完了】
   - `4-2a` PC母艦バックエンド（`SyncStore.cs` / `FurimaServerNative.cs`）：`_photo_trash` 退避＋`photo_trash.json` 管理、写真一括ゴミ箱移動/復元/完全削除/空にするAPI
   - `4-2b` PCブラウザUI（`DashboardHtml.cs`）：ギャラリー開時限定サムネイル右上チェックボックス、全画面原寸ライトボックス（`<`/`>`、キーボード `←`/`→`/`Esc`、下部ミニサムネ帯）、写真ゴミ箱モーダル
-- [ ] **フェーズ 4-3 (`v1.0.0 Build 6`) — 同期ステータス可視化 ＆ メモリ消費・アプリ安定性の抜本改善**
+- [x] **フェーズ 4-3 (`v1.0.0 Build 6`) — 同期ステータス可視化 ＆ メモリ消費・アプリ安定性の抜本改善** 【完了】
   - `4-3a` 一覧画面ヘッダースリム化 ＆ リアルタイム同期ステータス・進捗％バッジ＆詳細ダイアログ
   - `4-3b` メモリ安定化 5本柱（保存IO完全移行＆ロック、16KBストリーミング送信、Coil上限設定、CameraX連写最適化＆`2048px/フル`切替記憶、サムネ`RGB_565`＋一時キャッシュ自動掃除＋`largeHeap`）
 
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/15 フェーズ 4-3 完了 バージョン 1.0.0 (Build 6)
+- **一覧画面ヘッダースリム化 ＆ リアルタイム同期ステータス／進捗％可視化 (`PcServerClient.kt`, `FleaMarketViewModel.kt`, `ItemListScreen.kt`)**：
+  - `SyncPhase` / `PcSyncProgress` を新設し、`syncDeltaToPcServer`・`triggerAutoSync`・接続ハンドシェイクからバイト単位の送信進捗％と写真枚数（`n/m`）・エラー詳細をリアルタイム通知（従来のサイレント `catch` を廃止）。
+  - `ItemListScreen.kt` 内側 `Scaffold` に `WindowInsets(0)` を適用して二重余白を排除し、ヘッダー縦幅を大幅スリム化。タイトル横に同期ステータスバッジ（`testTag("header_sync_status_badge")`）を配置し、タップで接続状態・最終同期時刻・進捗バー・エラー詳細・「今すぐ再同期」ダイアログを表示。
+- **メモリ安定化 ＆ OOM・ANR防止（5本柱 / `MainActivity.kt`, `FleaMarketRepository.kt`, `PhotoStorageManager.kt`, `PcServerClient.kt`, `CameraXCaptureDialog.kt`, `PhotoPreviewDialog.kt`, `ItemEditScreen.kt`, `ItemDetailScreen.kt`, `ItemListScreen.kt`, `AndroidManifest.xml`)**：
+  - `FleaMarketRepository.saveItem` を `withContext(Dispatchers.IO)` で完全バックグラウンド化し、`ItemEditScreen` に `isSaving` 保存ロック＋戻るガード＋スピナー表示を追加。
+  - `PcServerClient.syncDeltaToPcServer` の `file.readBytes()` を廃止して 16KB チャンク読み出しの `StreamingFileRequestBody` へ移行し、`downloadPhotoByHash` / サムネイル自己修復も一時ファイルストリーミング化。
+  - `MainActivity.kt` で Coil 専用 `ImageLoader`（メモリ15%上限 / ディスク64MB上限 / `RGB_565`）を初期化し、一覧・詳細・編集・カメラサムネ・全画面プレビュー（`2048px`）へ `ImageRequest` デコード解像度上限を適用（原本ファイル無変更）。
+  - `CameraXCaptureDialog.kt` を `CAPTURE_MODE_MINIMIZE_LATENCY` 化＋上部保存解像度切替（`標準 2048px` / `フル解像度`、設定永続化）＋撮影直後 `Dispatchers.IO` 長辺2048pxリサイズ（`PhotoStorageManager.downscaleCapturedPhotoIfNeeded`）を実装。
+  - サムネイル生成を `calculatePowerOfTwoSampleSize` + `Bitmap.Config.RGB_565` + `finally` `recycle()` へ統一し、起動時一時キャッシュ自動掃除 (`cleanupTemporaryCaches`) と `android:largeHeap="true"` を追加。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 6`, `targetSdk = 35` 維持)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 6)`** へ3箇所統一し、APK再生成・JVMユニットテスト通過を確認。
 
 ### 2026/11/15 フェーズ 4-2 完了 バージョン 1.0.0 (Build 5)
 - **PC母艦バックエンド 写真単位ゴミ箱ストア＆API（案A / `tools/SyncStore.cs`, `tools/FurimaServerNative.cs`）**：

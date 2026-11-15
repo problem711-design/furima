@@ -12,12 +12,18 @@ import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
 import org.json.JSONObject
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 enum class SyncPhase {
@@ -50,6 +56,34 @@ data class PcSyncResult(
     val missingOriginalPhotosCount: Int = 0,
     val storeId: String? = null
 )
+
+private class StreamingFileRequestBody(
+    private val file: File,
+    private val mediaType: MediaType,
+    private val onProgressBytes: (Long) -> Unit
+) : RequestBody() {
+    override fun contentType(): MediaType = mediaType
+    override fun contentLength(): Long = file.length()
+    override fun writeTo(sink: BufferedSink) {
+        val buffer = ByteArray(16 * 1024)
+        var sentThisFile = 0L
+        var lastReportedBytes = 0L
+        FileInputStream(file).use { input ->
+            var read: Int
+            while (input.read(buffer).also { read = it } != -1) {
+                sink.write(buffer, 0, read)
+                sentThisFile += read
+                if (sentThisFile - lastReportedBytes >= 64 * 1024L) {
+                    lastReportedBytes = sentThisFile
+                    onProgressBytes(sentThisFile)
+                }
+            }
+        }
+        if (sentThisFile != lastReportedBytes) {
+            onProgressBytes(sentThisFile)
+        }
+    }
+}
 
 class PcServerClient(
     private val context: Context,
@@ -532,22 +566,40 @@ class PcServerClient(
             photosToUpload.forEachIndexed { idx, (file, md5) ->
                 val photoIndex = idx + 1
                 val fileSize = file.length()
-                val basePct = (15 + (uploadedBytesSoFar * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
+                val baseBytesBeforeThisFile = uploadedBytesSoFar
+                val basePct = (15 + (baseBytesBeforeThisFile * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
                 onProgress(
                     PcSyncProgress(
                         phase = SyncPhase.UPLOADING_PHOTOS,
                         currentPhotoIndex = photoIndex,
                         totalPhotoCount = totalUploadCount,
-                        bytesSent = uploadedBytesSoFar,
+                        bytesSent = baseBytesBeforeThisFile,
                         totalBytes = totalUploadBytes,
                         progressPercent = basePct,
                         detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
                     )
                 )
 
-                val photoBytes = file.readBytes()
                 val photoUrl = "$cleanUrl/api/sync/photo"
-                val photoBody = photoBytes.toRequestBody("application/octet-stream".toMediaType())
+                val photoBody = StreamingFileRequestBody(
+                    file = file,
+                    mediaType = "application/octet-stream".toMediaType(),
+                    onProgressBytes = { sentInFile ->
+                        val currentTotalSent = (baseBytesBeforeThisFile + sentInFile).coerceAtMost(totalUploadBytes)
+                        val livePct = (15 + (currentTotalSent * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
+                        onProgress(
+                            PcSyncProgress(
+                                phase = SyncPhase.UPLOADING_PHOTOS,
+                                currentPhotoIndex = photoIndex,
+                                totalPhotoCount = totalUploadCount,
+                                bytesSent = currentTotalSent,
+                                totalBytes = totalUploadBytes,
+                                progressPercent = livePct,
+                                detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
+                            )
+                        )
+                    }
+                )
 
                 val photoReqBuilder = Request.Builder()
                     .url(photoUrl)
@@ -1015,20 +1067,23 @@ class PcServerClient(
     }
 
     /**
-     * PC サーバーから MD5 ハッシュ指定で原本写真バイナリを認証付き取得（GET /api/photos/{md5Hash}）
+     * PC サーバーから MD5 ハッシュ指定で原本写真を 16KB ストリーミングでファイルへ保存（巨大 ByteArray 確保を回避）
      */
-    suspend fun downloadPhotoByHash(
+    suspend fun downloadPhotoToFileByHash(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken(),
         md5Hash: String,
+        targetFile: File,
         verifyMd5: Boolean = true
-    ): ByteArray? = withContext(Dispatchers.IO) {
+    ): Boolean = withContext(Dispatchers.IO) {
+        val tempFile = File(targetFile.parentFile ?: context.cacheDir, "${targetFile.name}.dl_tmp")
         try {
             val cleanUrl = baseUrl.trim().trimEnd('/')
             val cleanHash = md5Hash.trim().lowercase()
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || cleanHash.isBlank()) {
-                return@withContext null
+                return@withContext false
             }
+            targetFile.parentFile?.mkdirs()
             val url = "$cleanUrl/api/photos/$cleanHash"
             val reqBuilder = Request.Builder()
                 .url(url)
@@ -1040,23 +1095,68 @@ class PcServerClient(
             client.newCall(reqBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     android.util.Log.w("PC_SYNC", "写真取得失敗 ($cleanHash): HTTP ${response.code}")
-                    return@withContext null
+                    return@withContext false
                 }
-                val bytes = response.body?.bytes() ?: return@withContext null
-                if (bytes.isEmpty()) return@withContext null
-
-                if (verifyMd5) {
-                    val actualMd5 = photoStorageManager.calculateMd5(bytes).lowercase()
-                    if (actualMd5 != cleanHash) {
-                        android.util.Log.w("PC_SYNC", "写真MD5不一致のため破棄: expected=$cleanHash actual=$actualMd5")
-                        return@withContext null
+                val bodyStream = response.body?.byteStream() ?: return@withContext false
+                val digest = if (verifyMd5) MessageDigest.getInstance("MD5") else null
+                var totalBytes = 0L
+                bodyStream.use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(16 * 1024)
+                        var bytesRead: Int
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                            digest?.update(buffer, 0, bytesRead)
+                            totalBytes += bytesRead
+                        }
                     }
                 }
-                bytes
+                if (totalBytes <= 0L) {
+                    tempFile.delete()
+                    return@withContext false
+                }
+                if (verifyMd5 && digest != null) {
+                    val actualMd5 = digest.digest().joinToString("") { "%02x".format(it) }.lowercase()
+                    if (actualMd5 != cleanHash) {
+                        android.util.Log.w("PC_SYNC", "写真MD5不一致のため破棄: expected=$cleanHash actual=$actualMd5")
+                        tempFile.delete()
+                        return@withContext false
+                    }
+                }
+                if (targetFile.exists()) targetFile.delete()
+                if (!tempFile.renameTo(targetFile)) {
+                    FileInputStream(tempFile).use { inp ->
+                        FileOutputStream(targetFile).use { out -> inp.copyTo(out) }
+                    }
+                    tempFile.delete()
+                }
+                targetFile.exists() && targetFile.length() > 0L
             }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "downloadPhotoToFileByHash 例外: ${e.message}", e)
+            tempFile.delete()
+            false
+        }
+    }
+
+    /**
+     * PC サーバーから MD5 ハッシュ指定で原本写真バイナリを認証付き取得（GET /api/photos/{md5Hash}）
+     */
+    suspend fun downloadPhotoByHash(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken(),
+        md5Hash: String,
+        verifyMd5: Boolean = true
+    ): ByteArray? = withContext(Dispatchers.IO) {
+        val tempFile = File.createTempFile("dl_mem_", ".jpg", context.cacheDir)
+        try {
+            val ok = downloadPhotoToFileByHash(baseUrl, token, md5Hash, tempFile, verifyMd5)
+            if (ok && tempFile.exists()) tempFile.readBytes() else null
         } catch (e: Exception) {
             android.util.Log.e("PC_SYNC", "downloadPhotoByHash 例外: ${e.message}", e)
             null
+        } finally {
+            tempFile.delete()
         }
     }
 
@@ -1098,24 +1198,29 @@ class PcServerClient(
 
         for (photo in photos) {
             if (photo.md5Hash.isBlank() || !isPhotoThumbnailDamagedOrMissing(photo)) continue
-            val bytes = downloadPhotoByHash(cleanUrl, token, photo.md5Hash, verifyMd5 = true) ?: continue
-            val newThumbPath = photoStorageManager.createThumbnailFromBytes(
-                bytes = bytes,
-                fileNameHint = "${photo.md5Hash.take(16)}.jpg",
-                maxDim = settings.thumbnailMaxDimension,
-                quality = settings.thumbnailQuality
-            ) ?: continue
+            val tempOrig = File(context.cacheDir, "repair_${photo.md5Hash.take(16)}.jpg")
+            try {
+                val downloaded = downloadPhotoToFileByHash(cleanUrl, token, photo.md5Hash, tempOrig, verifyMd5 = true)
+                if (!downloaded) continue
+                val newThumbPath = photoStorageManager.createThumbnail(
+                    sourceFile = tempOrig,
+                    maxDim = settings.thumbnailMaxDimension,
+                    quality = settings.thumbnailQuality
+                ) ?: continue
 
-            val origExists = photo.filePath.isNotBlank() && File(photo.filePath).exists() &&
-                !photo.filePath.equals(photo.thumbnailPath, ignoreCase = true)
-            val newFilePath = if (origExists) photo.filePath else newThumbPath
-            dao.updatePhotoRepairedThumbnail(
-                photoId = photo.id,
-                thumbPath = newThumbPath,
-                isOriginalDeleted = !origExists,
-                newFilePath = newFilePath
-            )
-            repairedCount++
+                val origExists = photo.filePath.isNotBlank() && File(photo.filePath).exists() &&
+                    !photo.filePath.equals(photo.thumbnailPath, ignoreCase = true)
+                val newFilePath = if (origExists) photo.filePath else newThumbPath
+                dao.updatePhotoRepairedThumbnail(
+                    photoId = photo.id,
+                    thumbPath = newThumbPath,
+                    isOriginalDeleted = !origExists,
+                    newFilePath = newFilePath
+                )
+                repairedCount++
+            } finally {
+                if (tempOrig.exists()) tempOrig.delete()
+            }
         }
         repairedCount
     }

@@ -74,6 +74,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     init {
         refreshServerIp()
         viewModelScope.launch(Dispatchers.IO) {
+            repository.getPhotoStorageManager().cleanupTemporaryCaches()
             repository.purgeExpiredTrash(30)
             repository.seedInitialTestDataIfNeeded()
         }
@@ -391,25 +392,30 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         useCustomSettings: Boolean,
         imageUris: List<Uri>,
         existingFilePaths: List<String>,
+        onError: (String) -> Unit = {},
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
-            repository.saveItem(
-                id = id,
-                title = title,
-                description = description,
-                status = status,
-                price = price,
-                soldPrice = soldPrice,
-                shippingCost = shippingCost,
-                feeRatePercent = feeRatePercent,
-                expenseCost = expenseCost,
-                useCustomSettings = useCustomSettings,
-                imageUris = imageUris,
-                existingFilePaths = existingFilePaths
-            )
-            triggerAutoSync()
-            onSuccess()
+            try {
+                repository.saveItem(
+                    id = id,
+                    title = title,
+                    description = description,
+                    status = status,
+                    price = price,
+                    soldPrice = soldPrice,
+                    shippingCost = shippingCost,
+                    feeRatePercent = feeRatePercent,
+                    expenseCost = expenseCost,
+                    useCustomSettings = useCustomSettings,
+                    imageUris = imageUris,
+                    existingFilePaths = existingFilePaths
+                )
+                triggerAutoSync()
+                onSuccess()
+            } catch (e: Exception) {
+                onError(e.localizedMessage ?: e.message ?: "保存中にエラーが発生しました")
+            }
         }
     }
 
@@ -560,16 +566,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         val token = _pcAuthToken.value
         if (url.isBlank() || !_isPcServerConnected.value) return@withContext null
 
-        val bytes = pcServerClient.downloadPhotoByHash(url, token, cleanHash, verifyMd5 = true)
-            ?: return@withContext null
         val cacheDir = File(getApplication<Application>().cacheDir, "preview_originals").apply { mkdirs() }
         val outFile = File(cacheDir, "$cleanHash.jpg")
-        try {
-            outFile.writeBytes(bytes)
-            outFile.takeIf { it.exists() && it.length() > 0L }
-        } catch (_: Exception) {
-            null
-        }
+        val ok = pcServerClient.downloadPhotoToFileByHash(url, token, cleanHash, outFile, verifyMd5 = true)
+        if (ok) outFile.takeIf { it.exists() && it.length() > 0L } else null
     }
 
     /**

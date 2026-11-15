@@ -47,6 +47,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -90,6 +91,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.size.Precision
 import com.example.myapplication.data.PhotoStorageManager
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
@@ -157,6 +160,7 @@ fun ItemEditScreen(
     var lastDeletedPreviewPhoto by remember(itemId) { mutableStateOf<DeletedEditPhoto?>(null) }
     var isInitialized by remember(itemId) { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
 
     val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
@@ -247,15 +251,19 @@ fun ItemEditScreen(
         )
 
     val handleBackRequest: () -> Unit = {
-        if (hasUnsavedChanges) {
-            showDiscardDialog = true
-        } else {
-            onNavigateBack()
+        if (!isSaving) {
+            if (hasUnsavedChanges) {
+                showDiscardDialog = true
+            } else {
+                onNavigateBack()
+            }
         }
     }
 
-    BackHandler(enabled = hasUnsavedChanges) {
-        showDiscardDialog = true
+    BackHandler(enabled = hasUnsavedChanges || isSaving) {
+        if (!isSaving) {
+            showDiscardDialog = true
+        }
     }
 
     if (showDiscardDialog) {
@@ -419,6 +427,7 @@ fun ItemEditScreen(
                 title = { Text(if (itemId == 0) "新規出品登録" else "出品情報編集") },
                 navigationIcon = {
                     IconButton(
+                        enabled = !isSaving,
                         onClick = handleBackRequest,
                         modifier = Modifier.testTag("edit_back_button")
                     ) {
@@ -582,7 +591,13 @@ fun ItemEditScreen(
                                 .testTag("edit_existing_photo_$index")
                         ) {
                             AsyncImage(
-                                model = displayModel,
+                                model = remember(displayModel) {
+                                    ImageRequest.Builder(context)
+                                        .data(displayModel)
+                                        .size(360)
+                                        .precision(Precision.INEXACT)
+                                        .build()
+                                },
                                 contentDescription = "商品写真 ${index + 1}",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
@@ -616,7 +631,13 @@ fun ItemEditScreen(
                                 .testTag("edit_new_photo_$index")
                         ) {
                             AsyncImage(
-                                model = uri,
+                                model = remember(uri) {
+                                    ImageRequest.Builder(context)
+                                        .data(uri)
+                                        .size(360)
+                                        .precision(Precision.INEXACT)
+                                        .build()
+                                },
                                 contentDescription = "追加写真 ${index + 1}",
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
@@ -926,6 +947,7 @@ fun ItemEditScreen(
 
             Button(
                 onClick = {
+                    if (isSaving) return@Button
                     val price = priceText.toIntOrNull() ?: 0
                     val soldPrice = if (status == "SOLD") (soldPriceText.toIntOrNull() ?: price) else 0
                     val shippingCost = if (useCustomSettings) {
@@ -945,6 +967,7 @@ fun ItemEditScreen(
                     }
 
                     if (title.isNotBlank()) {
+                        isSaving = true
                         viewModel.saveItem(
                             id = itemId,
                             title = title,
@@ -956,19 +979,36 @@ fun ItemEditScreen(
                             feeRatePercent = feeRatePercent,
                             expenseCost = expenseCost,
                             useCustomSettings = useCustomSettings,
-                            imageUris = newImageUris,
-                            existingFilePaths = existingFilePaths,
-                            onSuccess = onNavigateBack
+                            imageUris = newImageUris.toList(),
+                            existingFilePaths = existingFilePaths.toList(),
+                            onError = { msg ->
+                                isSaving = false
+                                Toast.makeText(context, "保存エラー: $msg", Toast.LENGTH_LONG).show()
+                            },
+                            onSuccess = {
+                                isSaving = false
+                                onNavigateBack()
+                            }
                         )
                     }
                 },
-                enabled = title.isNotBlank(),
+                enabled = title.isNotBlank() && !isSaving,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp)
                     .testTag("save_item_button")
             ) {
-                Text("保存する", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                if (isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("写真処理・保存中...", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                } else {
+                    Text("保存する", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }

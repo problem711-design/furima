@@ -39,6 +39,10 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import coil.Coil
+import coil.ImageLoader
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.screens.ItemDetailScreen
 import com.example.myapplication.ui.screens.ItemEditScreen
@@ -48,10 +52,28 @@ import com.example.myapplication.ui.screens.SalesAnalysisScreen
 import com.example.myapplication.ui.screens.SettingsStorageScreen
 import com.example.myapplication.ui.screens.TrashScreen
 import com.example.myapplication.ui.theme.MyApplicationTheme
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Coil.setImageLoader {
+            ImageLoader.Builder(applicationContext)
+                .memoryCache {
+                    MemoryCache.Builder(applicationContext)
+                        .maxSizePercent(0.15)
+                        .build()
+                }
+                .diskCache {
+                    DiskCache.Builder()
+                        .directory(File(applicationContext.cacheDir, "coil_image_cache"))
+                        .maxSizeBytes(64L * 1024L * 1024L)
+                        .build()
+                }
+                .allowRgb565(true)
+                .crossfade(false)
+                .build()
+        }
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
