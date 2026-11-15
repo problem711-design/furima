@@ -618,10 +618,12 @@ class FurimaServerNative
             if (!Directory.Exists(syncDir)) return;
 
             var allFiles = Directory.GetFiles(syncDir, "*.*", SearchOption.AllDirectories);
+            string photoTrashPrefix = Path.Combine(syncDir, "_photo_trash");
             using (var md5 = MD5.Create())
             {
                 foreach (var file in allFiles)
                 {
+                    if (file.StartsWith(photoTrashPrefix, StringComparison.OrdinalIgnoreCase)) continue;
                     string ext = Path.GetExtension(file).ToLower();
                     if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp") continue;
                     try
@@ -1006,6 +1008,32 @@ class FurimaServerNative
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/delete") && req.HttpMethod == "POST")
             {
                 HandleDeletePhoto(req, res, rawPath);
+            }
+            else if (rawPath == "/api/photos/trash-batch" && req.HttpMethod == "POST")
+            {
+                HandleTrashPhotosBatch(req, res);
+            }
+            else if (rawPath == "/api/photo-trash" && req.HttpMethod == "GET")
+            {
+                HandleGetPhotoTrash(res);
+            }
+            else if (rawPath.StartsWith("/api/photo-trash/") && rawPath.EndsWith("/image") && req.HttpMethod == "GET")
+            {
+                string trashId = rawPath.Substring("/api/photo-trash/".Length);
+                trashId = trashId.Substring(0, trashId.Length - "/image".Length).Trim();
+                ServePhotoTrashImage(res, trashId);
+            }
+            else if (rawPath == "/api/photo-trash/restore" && req.HttpMethod == "POST")
+            {
+                HandleRestorePhotoTrash(req, res);
+            }
+            else if (rawPath == "/api/photo-trash/delete" && req.HttpMethod == "POST")
+            {
+                HandleDeletePhotoTrashPermanent(req, res);
+            }
+            else if (rawPath == "/api/photo-trash/empty" && req.HttpMethod == "POST")
+            {
+                HandleEmptyPhotoTrash(res);
             }
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/open-folder") && req.HttpMethod == "POST")
             {
@@ -3032,6 +3060,238 @@ class FurimaServerNative
         }
     }
 
+    private class PhotoTrashTarget
+    {
+        public int itemId;
+        public string md5Hash;
+        public int childItemId;
+    }
+
+    private static bool IsHashReferencedByAnyItemLocked(string hash)
+    {
+        if (string.IsNullOrEmpty(hash)) return false;
+        foreach (var item in itemsDb)
+        {
+            if (item == null || !item.ContainsKey("photos") || item["photos"] == null) continue;
+            var list = SyncStore.NormalizePhotosList(item["photos"]);
+            foreach (var p in list)
+            {
+                if (p == null || !p.ContainsKey("md5Hash") || p["md5Hash"] == null) continue;
+                string h = p["md5Hash"].ToString().Trim();
+                if (string.Equals(h, hash, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+        }
+        return false;
+    }
+
+    private static int TrashPhotosFromTargets(List<PhotoTrashTarget> targets, out int remainingCountFirstItem)
+    {
+        remainingCountFirstItem = 0;
+        if (targets == null || targets.Count == 0) return 0;
+
+        var newTrashEntries = new List<PhotoTrashEntry>();
+        var touchedHashes = new List<string>();
+        var pendingTrashMeta = new List<PhotoTrashEntry>();
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        bool anyRemoved = false;
+
+        lock (lockObj)
+        {
+            for (int tIdx = 0; tIdx < targets.Count; tIdx++)
+            {
+                var target = targets[tIdx];
+                if (target == null || target.itemId <= 0 || string.IsNullOrEmpty(target.md5Hash)) continue;
+                string cleanHash = target.md5Hash.Trim().ToLower();
+
+                var item = itemsDb.Find(i => ParseIntSafe(i["id"]) == target.itemId);
+                if (item == null) continue;
+
+                EnsureItemSyncUuid(item);
+                string itemUuid = item.ContainsKey("syncUuid") && item["syncUuid"] != null ? item["syncUuid"].ToString() : "";
+                string itemTitle = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "無題";
+
+                var currentPhotos = item.ContainsKey("photos") && item["photos"] != null
+                    ? SyncStore.NormalizePhotosList(item["photos"])
+                    : new List<Dictionary<string, object>>();
+
+                var updatedPhotos = new List<Dictionary<string, object>>();
+                bool removedForTarget = false;
+                int removedDisplayOrder = 0;
+                int removedChildId = target.childItemId;
+                string removedChildTitle = "";
+
+                foreach (var dictCopy in currentPhotos)
+                {
+                    if (dictCopy == null) continue;
+                    string h = dictCopy.ContainsKey("md5Hash") && dictCopy["md5Hash"] != null
+                        ? dictCopy["md5Hash"].ToString().Trim().ToLower()
+                        : "";
+                    int pChildId = dictCopy.ContainsKey("childItemId") && dictCopy["childItemId"] != null
+                        ? ParseIntSafe(dictCopy["childItemId"], 0)
+                        : 0;
+
+                    bool hashMatches = string.Equals(h, cleanHash, StringComparison.OrdinalIgnoreCase);
+                    bool childMatches = (target.childItemId <= 0) || (pChildId == 0) || (pChildId == target.childItemId);
+
+                    if (!removedForTarget && hashMatches && childMatches)
+                    {
+                        removedForTarget = true;
+                        anyRemoved = true;
+                        removedDisplayOrder = dictCopy.ContainsKey("displayOrder") ? ParseIntSafe(dictCopy["displayOrder"], updatedPhotos.Count) : updatedPhotos.Count;
+                        if (pChildId > 0) removedChildId = pChildId;
+                        if (dictCopy.ContainsKey("childItemTitle") && dictCopy["childItemTitle"] != null)
+                        {
+                            removedChildTitle = dictCopy["childItemTitle"].ToString();
+                        }
+                        continue;
+                    }
+
+                    dictCopy["displayOrder"] = updatedPhotos.Count;
+                    updatedPhotos.Add(dictCopy);
+                }
+
+                if (tIdx == 0)
+                {
+                    remainingCountFirstItem = updatedPhotos.Count;
+                }
+
+                if (removedForTarget)
+                {
+                    item["photos"] = updatedPhotos;
+                    item["updatedAt"] = now;
+                    item["syncedToPhone"] = false;
+
+                    // まとめ親商品のギャラリーから子商品の写真を削除した場合、子商品側の写真リストからも除外して整合性を保つ
+                    if (removedChildId > 0 && removedChildId != target.itemId)
+                    {
+                        var childItem = itemsDb.Find(c => ParseIntSafe(c["id"]) == removedChildId);
+                        if (childItem != null && childItem.ContainsKey("photos") && childItem["photos"] != null)
+                        {
+                            if (string.IsNullOrEmpty(removedChildTitle) && childItem.ContainsKey("title") && childItem["title"] != null)
+                            {
+                                removedChildTitle = childItem["title"].ToString();
+                            }
+                            var childPhotos = SyncStore.NormalizePhotosList(childItem["photos"]);
+                            var updatedChildPhotos = new List<Dictionary<string, object>>();
+                            bool childRemoved = false;
+                            foreach (var cp in childPhotos)
+                            {
+                                if (cp == null) continue;
+                                string ch = cp.ContainsKey("md5Hash") && cp["md5Hash"] != null
+                                    ? cp["md5Hash"].ToString().Trim().ToLower()
+                                    : "";
+                                if (!childRemoved && string.Equals(ch, cleanHash, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    childRemoved = true;
+                                    continue;
+                                }
+                                cp["displayOrder"] = updatedChildPhotos.Count;
+                                updatedChildPhotos.Add(cp);
+                            }
+                            if (childRemoved)
+                            {
+                                childItem["photos"] = updatedChildPhotos;
+                                childItem["updatedAt"] = now;
+                                childItem["syncedToPhone"] = false;
+                            }
+                        }
+                    }
+
+                    touchedHashes.Add(cleanHash);
+                    pendingTrashMeta.Add(new PhotoTrashEntry
+                    {
+                        trashId = Guid.NewGuid().ToString("N"),
+                        originalItemId = target.itemId,
+                        originalItemUuid = itemUuid,
+                        originalItemTitle = itemTitle,
+                        originalChildItemId = removedChildId,
+                        originalChildItemTitle = removedChildTitle,
+                        md5Hash = cleanHash,
+                        fileName = "photo_" + (cleanHash.Length >= 8 ? cleanHash.Substring(0, 8) : cleanHash) + ".jpg",
+                        originalFilePath = "",
+                        trashFilePath = "",
+                        displayOrder = removedDisplayOrder,
+                        trashedAt = now,
+                        fileSizeBytes = 0
+                    });
+                }
+            }
+
+            if (anyRemoved)
+            {
+                string trashDir = SyncStore.GetPhotoTrashDir();
+                if (!string.IsNullOrEmpty(trashDir) && !Directory.Exists(trashDir))
+                {
+                    Directory.CreateDirectory(trashDir);
+                }
+
+                for (int i = 0; i < pendingTrashMeta.Count; i++)
+                {
+                    var entry = pendingTrashMeta[i];
+                    string sourcePath = "";
+                    if (hashToFilePathMap.ContainsKey(entry.md5Hash))
+                    {
+                        sourcePath = hashToFilePathMap[entry.md5Hash];
+                    }
+
+                    if (!string.IsNullOrEmpty(sourcePath) && File.Exists(sourcePath) && !string.IsNullOrEmpty(trashDir))
+                    {
+                        entry.originalFilePath = sourcePath;
+                        entry.fileName = Path.GetFileName(sourcePath);
+                        string destTrashPath = Path.Combine(trashDir, entry.trashId + "_" + entry.fileName);
+                        bool stillReferenced = IsHashReferencedByAnyItemLocked(entry.md5Hash);
+                        try
+                        {
+                            FileInfo fi = new FileInfo(sourcePath);
+                            entry.fileSizeBytes = fi.Length;
+                            if (!stillReferenced)
+                            {
+                                try
+                                {
+                                    File.Move(sourcePath, destTrashPath);
+                                }
+                                catch
+                                {
+                                    File.Copy(sourcePath, destTrashPath, true);
+                                    File.Delete(sourcePath);
+                                }
+                                hashToFilePathMap.Remove(entry.md5Hash);
+                            }
+                            else
+                            {
+                                File.Copy(sourcePath, destTrashPath, true);
+                            }
+                            entry.trashFilePath = destTrashPath;
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("[警告] 写真ゴミ箱退避失敗: " + ex.Message);
+                        }
+                    }
+
+                    newTrashEntries.Add(entry);
+                }
+
+                BumpDataRevision();
+            }
+        }
+
+        if (anyRemoved)
+        {
+            if (newTrashEntries.Count > 0)
+            {
+                SyncStore.AddPhotoTrashEntries(newTrashEntries);
+            }
+            SaveItemsDbToDisk();
+            if (qrForm != null)
+            {
+                qrForm.UpdateStatusInfo(hashToFilePathMap.Count, SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap));
+            }
+        }
+
+        return newTrashEntries.Count;
+    }
+
     private static void HandleDeletePhoto(HttpListenerRequest req, HttpListenerResponse res, string path)
     {
         try
@@ -3047,6 +3307,7 @@ class FurimaServerNative
             }
 
             string targetHash = "";
+            int childItemId = 0;
             using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
@@ -3054,6 +3315,10 @@ class FurimaServerNative
                 {
                     JObject json = JObject.Parse(jsonStr);
                     targetHash = (json.Value<string>("md5Hash") ?? "").Trim().ToLower();
+                    if (json["childItemId"] != null && json["childItemId"].Type != JTokenType.Null)
+                    {
+                        childItemId = ParseIntSafe(json["childItemId"], 0);
+                    }
                 }
             }
 
@@ -3064,70 +3329,17 @@ class FurimaServerNative
                 return;
             }
 
-            int remainingCount = 0;
-            bool removedAny = false;
-            lock (lockObj)
-            {
-                var item = itemsDb.Find(i => ParseIntSafe(i["id"]) == itemId);
-                if (item == null)
-                {
-                    res.StatusCode = 404;
-                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Item not found" } });
-                    return;
-                }
-
-                var updatedPhotos = new List<Dictionary<string, object>>();
-                if (item.ContainsKey("photos") && item["photos"] != null)
-                {
-                    var enumPhotos = item["photos"] as System.Collections.IEnumerable;
-                    if (enumPhotos != null)
-                    {
-                        foreach (var pObj in enumPhotos)
-                        {
-                            Dictionary<string, object> dictCopy = null;
-                            if (pObj is Dictionary<string, object>)
-                            {
-                                dictCopy = new Dictionary<string, object>((Dictionary<string, object>)pObj);
-                            }
-                            else if (pObj is JObject)
-                            {
-                                dictCopy = ((JObject)pObj).ToObject<Dictionary<string, object>>();
-                            }
-                            if (dictCopy == null) continue;
-
-                            string h = dictCopy.ContainsKey("md5Hash") && dictCopy["md5Hash"] != null
-                                ? dictCopy["md5Hash"].ToString().Trim().ToLower()
-                                : "";
-                            if (string.Equals(h, targetHash, StringComparison.OrdinalIgnoreCase))
-                            {
-                                removedAny = true;
-                                continue;
-                            }
-                            dictCopy["displayOrder"] = updatedPhotos.Count;
-                            updatedPhotos.Add(dictCopy);
-                        }
-                    }
-                }
-
-                item["photos"] = updatedPhotos;
-                remainingCount = updatedPhotos.Count;
-                if (removedAny)
-                {
-                    item["updatedAt"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                    item["syncedToPhone"] = false;
-                    BumpDataRevision();
-                }
-            }
-
-            if (removedAny)
-            {
-                SaveItemsDbToDisk();
-            }
+            int remainingCount;
+            int movedCount = TrashPhotosFromTargets(
+                new List<PhotoTrashTarget> { new PhotoTrashTarget { itemId = itemId, md5Hash = targetHash, childItemId = childItemId } },
+                out remainingCount
+            );
 
             SendJson(res, new Dictionary<string, object>
             {
                 { "status", "ok" },
-                { "removed", removedAny },
+                { "removed", movedCount > 0 },
+                { "movedToTrashCount", movedCount },
                 { "remainingCount", remainingCount },
                 { "dataRevision", GetDataRevision() }
             });
@@ -3135,6 +3347,444 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("HandleDeletePhoto エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleTrashPhotosBatch(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            if (string.IsNullOrEmpty(jsonStr))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Empty body" } });
+                return;
+            }
+
+            JObject json = JObject.Parse(jsonStr);
+            JArray targetsArr = json["targets"] as JArray;
+            var targets = new List<PhotoTrashTarget>();
+            if (targetsArr != null)
+            {
+                foreach (var tok in targetsArr)
+                {
+                    var obj = tok as JObject;
+                    if (obj == null) continue;
+                    int tid = ParseIntSafe(obj["itemId"], 0);
+                    string hash = (obj.Value<string>("md5Hash") ?? "").Trim().ToLower();
+                    int cid = obj["childItemId"] != null && obj["childItemId"].Type != JTokenType.Null
+                        ? ParseIntSafe(obj["childItemId"], 0)
+                        : 0;
+                    if (tid > 0 && !string.IsNullOrEmpty(hash))
+                    {
+                        targets.Add(new PhotoTrashTarget { itemId = tid, md5Hash = hash, childItemId = cid });
+                    }
+                }
+            }
+
+            if (targets.Count == 0)
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "移動対象の写真が指定されていません" } });
+                return;
+            }
+
+            int dummyRemaining;
+            int movedCount = TrashPhotosFromTargets(targets, out dummyRemaining);
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "movedToTrashCount", movedCount },
+                { "trashCount", SyncStore.GetPhotoTrashEntries().Count },
+                { "dataRevision", GetDataRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleTrashPhotosBatch エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleGetPhotoTrash(HttpListenerResponse res)
+    {
+        try
+        {
+            var entries = SyncStore.GetPhotoTrashEntries();
+            long totalBytes = 0;
+            var items = new List<Dictionary<string, object>>();
+            foreach (var e in entries)
+            {
+                long sz = e.fileSizeBytes;
+                if (sz <= 0 && !string.IsNullOrEmpty(e.trashFilePath) && File.Exists(e.trashFilePath))
+                {
+                    try { sz = new FileInfo(e.trashFilePath).Length; } catch { }
+                }
+                totalBytes += sz;
+                items.Add(new Dictionary<string, object>
+                {
+                    { "trashId", e.trashId },
+                    { "originalItemId", e.originalItemId },
+                    { "originalItemUuid", e.originalItemUuid ?? "" },
+                    { "originalItemTitle", e.originalItemTitle ?? "無題" },
+                    { "originalChildItemId", e.originalChildItemId },
+                    { "originalChildItemTitle", e.originalChildItemTitle ?? "" },
+                    { "md5Hash", e.md5Hash ?? "" },
+                    { "fileName", e.fileName ?? "" },
+                    { "trashedAt", e.trashedAt },
+                    { "fileSizeBytes", sz },
+                    { "hasImageFile", !string.IsNullOrEmpty(e.trashFilePath) && File.Exists(e.trashFilePath) },
+                    { "imageUrl", "/api/photo-trash/" + e.trashId + "/image" }
+                });
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "count", items.Count },
+                { "totalSizeBytes", totalBytes },
+                { "entries", items }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleGetPhotoTrash エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void ServePhotoTrashImage(HttpListenerResponse res, string trashId)
+    {
+        try
+        {
+            var entry = SyncStore.GetPhotoTrashEntry(trashId);
+            if (entry != null && !string.IsNullOrEmpty(entry.trashFilePath) && File.Exists(entry.trashFilePath))
+            {
+                byte[] bytes = File.ReadAllBytes(entry.trashFilePath);
+                res.ContentType = DetectImageMimeType(bytes);
+                res.ContentLength64 = bytes.Length;
+                res.OutputStream.Write(bytes, 0, bytes.Length);
+                res.OutputStream.Close();
+                return;
+            }
+            if (entry != null && !string.IsNullOrEmpty(entry.md5Hash))
+            {
+                ServePhotoByHash(res, entry.md5Hash);
+                return;
+            }
+        }
+        catch { }
+        res.StatusCode = 404;
+        res.Close();
+    }
+
+    private static void HandleRestorePhotoTrash(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            JObject json = string.IsNullOrEmpty(jsonStr) ? new JObject() : JObject.Parse(jsonStr);
+            JArray idsArr = json["trashIds"] as JArray;
+            var requestedIds = new List<string>();
+            if (idsArr != null)
+            {
+                foreach (var tok in idsArr)
+                {
+                    if (tok != null && tok.Type != JTokenType.Null)
+                    {
+                        string id = tok.ToString().Trim();
+                        if (!string.IsNullOrEmpty(id)) requestedIds.Add(id);
+                    }
+                }
+            }
+
+            if (requestedIds.Count == 0)
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "復元する写真IDが指定されていません" } });
+                return;
+            }
+
+            var restoredIds = new List<string>();
+            var skippedReasons = new List<string>();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+            lock (lockObj)
+            {
+                foreach (string tid in requestedIds)
+                {
+                    var entry = SyncStore.GetPhotoTrashEntry(tid);
+                    if (entry == null)
+                    {
+                        skippedReasons.Add("エントリが見つかりません (" + tid + ")");
+                        continue;
+                    }
+
+                    Dictionary<string, object> targetItem = null;
+                    if (!string.IsNullOrEmpty(entry.originalItemUuid))
+                    {
+                        targetItem = itemsDb.Find(i =>
+                            i.ContainsKey("syncUuid") && i["syncUuid"] != null &&
+                            string.Equals(i["syncUuid"].ToString(), entry.originalItemUuid, StringComparison.OrdinalIgnoreCase));
+                    }
+                    if (targetItem == null && entry.originalItemId > 0)
+                    {
+                        targetItem = itemsDb.Find(i => ParseIntSafe(i["id"]) == entry.originalItemId);
+                    }
+
+                    if (targetItem == null)
+                    {
+                        skippedReasons.Add("元の商品が見つかりません (" + (entry.originalItemTitle ?? "無題") + ")");
+                        continue;
+                    }
+
+                    bool isItemTrashed = (targetItem.ContainsKey("deletedAt") && targetItem["deletedAt"] != null) ||
+                                         (targetItem.ContainsKey("isDeleted") && targetItem["isDeleted"] is bool && (bool)targetItem["isDeleted"]);
+                    if (isItemTrashed)
+                    {
+                        skippedReasons.Add("元の商品が商品ゴミ箱に移動されているため復元できません (" + (entry.originalItemTitle ?? "無題") + ")");
+                        continue;
+                    }
+
+                    int targetItemId = ParseIntSafe(targetItem["id"], entry.originalItemId);
+                    string targetTitle = targetItem.ContainsKey("title") && targetItem["title"] != null ? targetItem["title"].ToString() : "商品";
+
+                    if (!string.IsNullOrEmpty(entry.trashFilePath) && File.Exists(entry.trashFilePath))
+                    {
+                        string itemFolder = ResolveOrCreateItemFolder(targetItemId, targetTitle);
+                        string safeFileName = string.IsNullOrEmpty(entry.fileName)
+                            ? ("photo_" + entry.md5Hash.Substring(0, Math.Min(8, entry.md5Hash.Length)) + ".jpg")
+                            : entry.fileName;
+                        string destPath = Path.Combine(itemFolder, safeFileName);
+                        if (File.Exists(destPath))
+                        {
+                            string baseName = Path.GetFileNameWithoutExtension(safeFileName);
+                            string ext = Path.GetExtension(safeFileName);
+                            destPath = Path.Combine(itemFolder, baseName + "_restored_" + entry.trashId.Substring(0, 6) + ext);
+                        }
+                        try
+                        {
+                            File.Move(entry.trashFilePath, destPath);
+                        }
+                        catch
+                        {
+                            File.Copy(entry.trashFilePath, destPath, true);
+                            try { File.Delete(entry.trashFilePath); } catch { }
+                        }
+                        if (!string.IsNullOrEmpty(entry.md5Hash))
+                        {
+                            hashToFilePathMap[entry.md5Hash.Trim().ToLower()] = destPath;
+                        }
+                    }
+
+                    var photosList = targetItem.ContainsKey("photos") && targetItem["photos"] != null
+                        ? SyncStore.NormalizePhotosList(targetItem["photos"])
+                        : new List<Dictionary<string, object>>();
+
+                    bool alreadyInList = false;
+                    foreach (var p in photosList)
+                    {
+                        string h = p.ContainsKey("md5Hash") && p["md5Hash"] != null ? p["md5Hash"].ToString().Trim().ToLower() : "";
+                        int pCid = p.ContainsKey("childItemId") && p["childItemId"] != null ? ParseIntSafe(p["childItemId"], 0) : 0;
+                        if (string.Equals(h, entry.md5Hash, StringComparison.OrdinalIgnoreCase) && pCid == entry.originalChildItemId)
+                        {
+                            alreadyInList = true;
+                            break;
+                        }
+                    }
+
+                    if (!alreadyInList)
+                    {
+                        var photoDict = new Dictionary<string, object>
+                        {
+                            { "id", 0 },
+                            { "itemId", targetItemId },
+                            { "photoUrl", "/api/photos/" + entry.md5Hash },
+                            { "md5Hash", entry.md5Hash },
+                            { "displayOrder", photosList.Count }
+                        };
+                        if (entry.originalChildItemId > 0)
+                        {
+                            photoDict["childItemId"] = entry.originalChildItemId;
+                            if (!string.IsNullOrEmpty(entry.originalChildItemTitle))
+                            {
+                                photoDict["childItemTitle"] = entry.originalChildItemTitle;
+                            }
+                        }
+                        photosList.Add(photoDict);
+                        targetItem["photos"] = photosList;
+                    }
+
+                    targetItem["updatedAt"] = now;
+                    targetItem["syncedToPhone"] = false;
+
+                    // まとめ子商品側にも復元連動
+                    if (entry.originalChildItemId > 0 && entry.originalChildItemId != targetItemId)
+                    {
+                        var childItem = itemsDb.Find(c => ParseIntSafe(c["id"]) == entry.originalChildItemId);
+                        if (childItem != null)
+                        {
+                            var childPhotos = childItem.ContainsKey("photos") && childItem["photos"] != null
+                                ? SyncStore.NormalizePhotosList(childItem["photos"])
+                                : new List<Dictionary<string, object>>();
+                            bool childHas = false;
+                            foreach (var cp in childPhotos)
+                            {
+                                string ch = cp.ContainsKey("md5Hash") && cp["md5Hash"] != null ? cp["md5Hash"].ToString().Trim().ToLower() : "";
+                                if (string.Equals(ch, entry.md5Hash, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    childHas = true;
+                                    break;
+                                }
+                            }
+                            if (!childHas)
+                            {
+                                childPhotos.Add(new Dictionary<string, object>
+                                {
+                                    { "id", 0 },
+                                    { "itemId", entry.originalChildItemId },
+                                    { "photoUrl", "/api/photos/" + entry.md5Hash },
+                                    { "md5Hash", entry.md5Hash },
+                                    { "displayOrder", childPhotos.Count }
+                                });
+                                childItem["photos"] = childPhotos;
+                            }
+                            childItem["updatedAt"] = now;
+                            childItem["syncedToPhone"] = false;
+                        }
+                    }
+
+                    restoredIds.Add(tid);
+                }
+
+                if (restoredIds.Count > 0)
+                {
+                    BumpDataRevision();
+                }
+            }
+
+            if (restoredIds.Count > 0)
+            {
+                SyncStore.RemovePhotoTrashEntries(restoredIds);
+                SaveItemsDbToDisk();
+                if (qrForm != null)
+                {
+                    qrForm.UpdateStatusInfo(hashToFilePathMap.Count, SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap));
+                }
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", restoredIds.Count > 0 ? "ok" : "error" },
+                { "restoredCount", restoredIds.Count },
+                { "skippedReasons", skippedReasons },
+                { "trashCount", SyncStore.GetPhotoTrashEntries().Count },
+                { "dataRevision", GetDataRevision() },
+                { "message", restoredIds.Count > 0 ? (restoredIds.Count + "枚の写真を元の商品へ復元しました") : (skippedReasons.Count > 0 ? skippedReasons[0] : "復元に失敗しました") }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleRestorePhotoTrash エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void DeletePhotoTrashFileQuietly(PhotoTrashEntry entry)
+    {
+        if (entry == null || string.IsNullOrEmpty(entry.trashFilePath)) return;
+        try
+        {
+            if (File.Exists(entry.trashFilePath))
+            {
+                File.Delete(entry.trashFilePath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[警告] _photo_trash ファイル物理削除失敗: " + ex.Message);
+        }
+    }
+
+    private static void HandleDeletePhotoTrashPermanent(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            JObject json = string.IsNullOrEmpty(jsonStr) ? new JObject() : JObject.Parse(jsonStr);
+            JArray idsArr = json["trashIds"] as JArray;
+            var targetIds = new List<string>();
+            if (idsArr != null)
+            {
+                foreach (var tok in idsArr)
+                {
+                    if (tok != null && tok.Type != JTokenType.Null)
+                    {
+                        string id = tok.ToString().Trim();
+                        if (!string.IsNullOrEmpty(id)) targetIds.Add(id);
+                    }
+                }
+            }
+
+            var removed = SyncStore.RemovePhotoTrashEntries(targetIds);
+            foreach (var entry in removed)
+            {
+                DeletePhotoTrashFileQuietly(entry);
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "deletedCount", removed.Count },
+                { "trashCount", SyncStore.GetPhotoTrashEntries().Count }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleDeletePhotoTrashPermanent エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleEmptyPhotoTrash(HttpListenerResponse res)
+    {
+        try
+        {
+            var removed = SyncStore.ClearAllPhotoTrashEntries();
+            foreach (var entry in removed)
+            {
+                DeletePhotoTrashFileQuietly(entry);
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "deletedCount", removed.Count },
+                { "trashCount", 0 }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleEmptyPhotoTrash エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

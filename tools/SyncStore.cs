@@ -69,16 +69,35 @@ public class DeletedUuidEntry
     public long deletedAt { get; set; }
 }
 
+public class PhotoTrashEntry
+{
+    public string trashId { get; set; }
+    public int originalItemId { get; set; }
+    public string originalItemUuid { get; set; }
+    public string originalItemTitle { get; set; }
+    public int originalChildItemId { get; set; }
+    public string originalChildItemTitle { get; set; }
+    public string md5Hash { get; set; }
+    public string fileName { get; set; }
+    public string originalFilePath { get; set; }
+    public string trashFilePath { get; set; }
+    public int displayOrder { get; set; }
+    public long trashedAt { get; set; }
+    public long fileSizeBytes { get; set; }
+}
+
 public static class SyncStore
 {
     private static readonly object _configLock = new object();
     private static readonly object _tombstoneLock = new object();
+    private static readonly object _photoTrashLock = new object();
     private static string _storeJsonPath = "";
     private static StoreConfig _currentConfig = null;
     private static string _storeId = "";
     private static string _syncDir = "";
     private static string _authToken = "";
     private static Dictionary<string, long> _deletedUuidMap = null;
+    private static List<PhotoTrashEntry> _photoTrashList = null;
 
     public static string StoreId { get { return _storeId; } }
     public static string SyncDir { get { return _syncDir; } }
@@ -694,5 +713,161 @@ public static class SyncStore
         }
 
         return deletedCount;
+    }
+
+    public static string GetPhotoTrashDir()
+    {
+        if (string.IsNullOrEmpty(_syncDir)) return "";
+        return Path.Combine(_syncDir, "_photo_trash");
+    }
+
+    private static string GetPhotoTrashJsonPath()
+    {
+        if (string.IsNullOrEmpty(_syncDir)) return "";
+        return Path.Combine(_syncDir, "photo_trash.json");
+    }
+
+    private static List<PhotoTrashEntry> LoadPhotoTrashLocked()
+    {
+        if (_photoTrashList != null) return _photoTrashList;
+        _photoTrashList = new List<PhotoTrashEntry>();
+        string path = GetPhotoTrashJsonPath();
+        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _photoTrashList;
+
+        try
+        {
+            string json = File.ReadAllText(path, Encoding.UTF8);
+            var entries = JsonConvert.DeserializeObject<List<PhotoTrashEntry>>(json);
+            if (entries != null)
+            {
+                foreach (var entry in entries)
+                {
+                    if (entry == null || string.IsNullOrEmpty(entry.trashId)) continue;
+                    _photoTrashList.Add(entry);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[警告] photo_trash.json の読み込みに失敗しました: " + ex.Message);
+        }
+        return _photoTrashList;
+    }
+
+    private static void SavePhotoTrashLocked()
+    {
+        string path = GetPhotoTrashJsonPath();
+        if (string.IsNullOrEmpty(path) || _photoTrashList == null) return;
+        try
+        {
+            string dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+            File.WriteAllText(path, JsonConvert.SerializeObject(_photoTrashList, Formatting.Indented), Encoding.UTF8);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[警告] photo_trash.json の保存に失敗しました: " + ex.Message);
+        }
+    }
+
+    public static List<PhotoTrashEntry> GetPhotoTrashEntries()
+    {
+        lock (_photoTrashLock)
+        {
+            var list = LoadPhotoTrashLocked();
+            var copy = new List<PhotoTrashEntry>(list);
+            copy.Sort((a, b) => b.trashedAt.CompareTo(a.trashedAt));
+            return copy;
+        }
+    }
+
+    public static PhotoTrashEntry GetPhotoTrashEntry(string trashId)
+    {
+        if (string.IsNullOrEmpty(trashId)) return null;
+        lock (_photoTrashLock)
+        {
+            var list = LoadPhotoTrashLocked();
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (string.Equals(list[i].trashId, trashId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return list[i];
+                }
+            }
+            return null;
+        }
+    }
+
+    public static void AddPhotoTrashEntries(IEnumerable<PhotoTrashEntry> entries)
+    {
+        if (entries == null) return;
+        lock (_photoTrashLock)
+        {
+            var list = LoadPhotoTrashLocked();
+            bool changed = false;
+            foreach (var entry in entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.trashId)) continue;
+                list.Add(entry);
+                changed = true;
+            }
+            if (changed)
+            {
+                SavePhotoTrashLocked();
+            }
+        }
+    }
+
+    public static List<PhotoTrashEntry> RemovePhotoTrashEntries(IEnumerable<string> trashIds)
+    {
+        var removed = new List<PhotoTrashEntry>();
+        if (trashIds == null) return removed;
+        var targetSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in trashIds)
+        {
+            if (!string.IsNullOrEmpty(id)) targetSet.Add(id.Trim());
+        }
+        if (targetSet.Count == 0) return removed;
+
+        lock (_photoTrashLock)
+        {
+            var list = LoadPhotoTrashLocked();
+            var remaining = new List<PhotoTrashEntry>();
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (targetSet.Contains(list[i].trashId))
+                {
+                    removed.Add(list[i]);
+                }
+                else
+                {
+                    remaining.Add(list[i]);
+                }
+            }
+            if (removed.Count > 0)
+            {
+                _photoTrashList = remaining;
+                SavePhotoTrashLocked();
+            }
+        }
+        return removed;
+    }
+
+    public static List<PhotoTrashEntry> ClearAllPhotoTrashEntries()
+    {
+        lock (_photoTrashLock)
+        {
+            var list = LoadPhotoTrashLocked();
+            var removed = new List<PhotoTrashEntry>(list);
+            if (list.Count > 0)
+            {
+                _photoTrashList = new List<PhotoTrashEntry>();
+                SavePhotoTrashLocked();
+            }
+            return removed;
+        }
     }
 }

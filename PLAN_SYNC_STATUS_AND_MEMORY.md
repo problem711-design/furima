@@ -58,28 +58,14 @@
 ### 採用仕様（案A：本格的な写真単位ゴミ箱 `_photo_trash`）
 PCブラウザ管理画面の写真ギャラリーを開いたとき限定で、サムネイルに削除用チェックボックス（左上以外＝右上配置）を表示し、選択写真をアイテムから外して PC側専用退避ディレクトリ（`_photo_trash`）＋管理JSON（`photo_trash.json`）へ移動できる。PCブラウザ上の「写真ゴミ箱」モーダルから元の商品への復元・完全削除・一括整理が可能。
 
-### サブフェーズ 4-2a：PC母艦側 バックエンド実装 (`tools/SyncStore.cs`, `tools/FurimaServerNative.cs`)
-- [ ] **4-2a-1: 写真ゴミ箱永続化ストア (`tools/SyncStore.cs`)**
+### サブフェーズ 4-2a：PC母艦側 バックエンド実装 (`tools/SyncStore.cs`, `tools/FurimaServerNative.cs`) 【完了】
+- [x] **4-2a-1: 写真ゴミ箱永続化ストア (`tools/SyncStore.cs`)**
   - `_syncDir` 配下に `_photo_trash/` ディレクトリおよび `photo_trash.json` を定義・読み書きするヘルパーを実装（ロック保護・破損時フォールバック付き）。
-  - ゴミ箱エントリ（`PhotoTrashEntry`）構造：
-    - `trashId` (GUID文字列)
-    - `originalItemId` (Int), `originalItemUuid` (String), `originalItemTitle` (String)
-    - `md5Hash` (String), `fileName` (String), `originalFilePath` (String), `trashFilePath` (String)
-    - `displayOrder` (Int), `trashedAt` (Long epoch ms), `fileSizeBytes` (Long)
-  - 30日（または設定保持期間）超過時の自動掃除／手動掃除にも流用可能な期限判定メソッドを用意。
-- [ ] **4-2a-2: 写真単位ゴミ箱移動・復元・完全削除 API (`tools/FurimaServerNative.cs`)**
-  - **既存 `HandleDeletePhoto` の拡張 ＆ 一括ゴミ箱移動 API 新設**:
-    - `POST /api/items/{id}/photos/delete`（単体・後方互換維持）および `POST /api/photos/trash-batch`（まとめ商品等で複数 `itemId` に跨る選択写真も一括処理可能：リクエスト `{ "targets": [ { "itemId": 12, "md5Hash": "..." }, ... ] }` 等）。
-    - 対象写真を商品の `photos` リストから除外して `displayOrder` を再採番し、対象商品に `updatedAt = now`, `syncedToPhone = false` を設定。
-    - 実体写真ファイルについて、**他アイテム（未削除・同フォルダ等）から同一 `md5Hash` がまだ参照されていない場合のみ** `_photo_trash/<trashId>_<filename>` へ移動（他アイテムが参照中の場合はファイル自体は共有元に残し、ゴミ箱メタデータまたはコピー退避で整合性を保つ）。
-    - `BumpDataRevision()` ＋ `SaveItemsDbToDisk()` ＋ `photo_trash.json` 保存を実行。
-  - **写真ゴミ箱管理 API 群の新設**（Bearer 認証対象）：
-    - `GET /api/photo-trash`: 写真ゴミ箱内一覧・件数・合計サイズを返却。
-    - `GET /api/photo-trash/{trashId}/image`: 写真ゴミ箱モーダル内プレビュー用の画像バイナリ配信。
-    - `POST /api/photo-trash/restore`: 指定 `trashIds` の写真を元の商品（`originalItemUuid` または `originalItemId` で検索、削除済み商品の場合は復元先有無チェック/エラー通知）の `photos` 末尾へ再登録し、実体ファイルを元の商品フォルダへ戻して `syncedToPhone = false` + `BumpDataRevision()`。
-    - `POST /api/photo-trash/delete`: 指定 `trashIds` を完全削除（`_photo_trash` 実体ファイル削除 ＋ `photo_trash.json` から除去）。
-    - `POST /api/photo-trash/empty`: 写真ゴミ箱を空にする。
-  - まとめ親商品／子商品との関係整理：まとめ親商品のギャラリーから子商品の写真（`childItemId` あり）を削除する場合、親商品の `photos` と該当子商品の `photos`（存在する場合）の整合も崩さないよう更新する。
+  - `PhotoTrashEntry` 構造（`trashId`, `originalItemId`, `originalItemUuid`, `originalItemTitle`, `originalChildItemId`, `originalChildItemTitle`, `md5Hash`, `fileName`, `originalFilePath`, `trashFilePath`, `displayOrder`, `trashedAt`, `fileSizeBytes`）を定義。
+- [x] **4-2a-2: 写真単位ゴミ箱移動・復元・完全削除 API (`tools/FurimaServerNative.cs`)**
+  - `ScanAndIndexLocalPhotos()` にて `_photo_trash` ディレクトリをインデックス対象外へ除外。
+  - `POST /api/items/{id}/photos/delete` および `POST /api/photos/trash-batch` を実装し、商品（およびまとめ子商品）の `photos` リストから除外＋未参照ファイルのみ `_photo_trash` へ移動＋`syncedToPhone = false` + `BumpDataRevision()` を実行。
+  - `GET /api/photo-trash`, `GET /api/photo-trash/{trashId}/image`, `POST /api/photo-trash/restore`, `POST /api/photo-trash/delete`, `POST /api/photo-trash/empty` を実装。
 
 ### サブフェーズ 4-2b：PCブラウザUI実装 (`tools/DashboardHtml.cs`)
 - [ ] **4-2b-1: ギャラリー開時限定チェックボックス（右上配置）＆ 一括ゴミ箱移動 UI**
