@@ -449,6 +449,66 @@ class FleaMarketRepository(private val context: Context) {
     }
 
     /**
+     * 写真を1枚単位で削除（DBおよび不要ファイル削除、isDirtyフラグ更新）
+     */
+    suspend fun deletePhotoById(photoId: Int): Boolean {
+        val photo = dao.getPhotoById(photoId) ?: return false
+        val itemWithPhotos = dao.getItemWithPhotosById(photo.itemId) ?: return false
+
+        val updatedPhotos = itemWithPhotos.photos.filter { it.id != photoId }
+        val remainingFilePaths = updatedPhotos.map { it.filePath }
+
+        saveItem(
+            id = itemWithPhotos.item.id,
+            title = itemWithPhotos.item.title,
+            description = itemWithPhotos.item.description,
+            status = itemWithPhotos.item.status,
+            price = itemWithPhotos.item.price,
+            soldPrice = itemWithPhotos.item.soldPrice,
+            shippingCost = itemWithPhotos.item.shippingCost,
+            feeRatePercent = itemWithPhotos.item.feeRatePercent,
+            expenseCost = itemWithPhotos.item.expenseCost,
+            useCustomSettings = itemWithPhotos.item.useCustomSettings,
+            imageUris = emptyList(),
+            existingFilePaths = remainingFilePaths
+        )
+        return true
+    }
+
+    /**
+     * 複数写真を一括削除
+     */
+    suspend fun deletePhotosByIds(photoIds: List<Int>): Int {
+        if (photoIds.isEmpty()) return 0
+        val photos = photoIds.distinct().mapNotNull { dao.getPhotoById(it) }
+        val groupedByItem = photos.groupBy { it.itemId }
+        var count = 0
+        for ((itemId, photoGroup) in groupedByItem) {
+            val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: continue
+            val removeSet = photoGroup.map { it.id }.toSet()
+            val remaining = itemWithPhotos.photos.filter { it.id !in removeSet }
+            val remainingPaths = remaining.map { it.filePath }
+
+            saveItem(
+                id = itemWithPhotos.item.id,
+                title = itemWithPhotos.item.title,
+                description = itemWithPhotos.item.description,
+                status = itemWithPhotos.item.status,
+                price = itemWithPhotos.item.price,
+                soldPrice = itemWithPhotos.item.soldPrice,
+                shippingCost = itemWithPhotos.item.shippingCost,
+                feeRatePercent = itemWithPhotos.item.feeRatePercent,
+                expenseCost = itemWithPhotos.item.expenseCost,
+                useCustomSettings = itemWithPhotos.item.useCustomSettings,
+                imageUris = emptyList(),
+                existingFilePaths = remainingPaths
+            )
+            count += photoGroup.size
+        }
+        return count
+    }
+
+    /**
      * ゴミ箱から元の出品状態へ復元
      */
     suspend fun restoreFromTrash(itemId: Int) {

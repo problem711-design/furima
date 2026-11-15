@@ -570,6 +570,45 @@ class LocalWebServer(
                 }
             }
 
+            // 写真削除 (単体)
+            delete("/api/photos/{id}") {
+                val photoId = call.parameters["id"]?.toIntOrNull()
+                if (photoId == null) {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid Photo ID"))
+                    return@delete
+                }
+                try {
+                    val success = repository.deletePhotoById(photoId)
+                    if (success) {
+                        addLog("PCから写真を1枚削除 (PhotoID: $photoId)")
+                        call.respond(mapOf("success" to true))
+                    } else {
+                        call.respond(HttpStatusCode.NotFound, mapOf("error" to "Photo not found"))
+                    }
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.localizedMessage ?: "Unknown error")))
+                }
+            }
+
+            // 写真一括削除
+            post("/api/photos/delete-batch") {
+                try {
+                    val body = call.receive<Map<String, Any?>>()
+                    @Suppress("UNCHECKED_CAST")
+                    val idsRaw = body["photoIds"] as? List<Number>
+                    val photoIds = idsRaw?.map { it.toInt() } ?: emptyList()
+                    if (photoIds.isEmpty()) {
+                        call.respond(HttpStatusCode.BadRequest, mapOf("error" to "No photo IDs provided"))
+                        return@post
+                    }
+                    val count = repository.deletePhotosByIds(photoIds)
+                    addLog("PCから写真 ${count}枚を削除 (ゴミ箱移動)")
+                    call.respond(mapOf("success" to true, "deletedCount" to count))
+                } catch (e: Exception) {
+                    call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.localizedMessage ?: "Unknown error")))
+                }
+            }
+
             // 写真配信 (オリジナル)
             get("/api/photos/{id}") {
                 val photoId = call.parameters["id"]?.toIntOrNull()

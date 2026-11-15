@@ -307,19 +307,60 @@ object WebDashboardHtml {
         </div>
     </div>
 
-    <!-- 画像拡大＆写真復元モーダル -->
-    <div id="image-viewer-modal" class="hidden fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onclick="closeImageViewer()">
-        <div class="max-w-4xl max-h-[90vh] relative flex flex-col items-center gap-3" onclick="event.stopPropagation()">
-            <button onclick="closeImageViewer()" class="absolute -top-10 right-0 text-white hover:text-slate-300 text-2xl">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-            <img id="image-viewer-src" src="" alt="商品写真" class="max-w-full max-h-[75vh] rounded-lg shadow-2xl object-contain">
-            <div id="restore-banner" class="hidden bg-slate-900/90 text-white px-4 py-2 rounded-xl text-xs flex items-center gap-3 border border-slate-700">
-                <span class="text-amber-400 font-bold"><i class="fa-solid fa-triangle-exclamation"></i> スマホ側の元高画質写真が削除されています (サムネイルを表示中)</span>
-                <button onclick="document.getElementById('restore-file-input').click()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded font-bold transition">
-                    <i class="fa-solid fa-upload"></i> PCから高画質元画像を復元
+    <!-- 画像拡大・写真ギャラリーモーダル -->
+    <div id="image-viewer-modal" class="hidden fixed inset-0 bg-black/90 z-50 flex flex-col items-center justify-between p-3 sm:p-5" onclick="closeImageViewer()">
+        <!-- 上部ヘッダーバー -->
+        <div class="w-full max-w-5xl flex items-center justify-between text-white py-2 px-4 bg-slate-900/80 rounded-xl backdrop-blur-sm z-20 shadow-lg border border-slate-800" onclick="event.stopPropagation()">
+            <div class="flex items-center gap-3 overflow-hidden">
+                <div class="bg-indigo-600 text-white text-xs px-2.5 py-1 rounded-md font-bold flex items-center gap-1 shrink-0">
+                    <i class="fa-solid fa-images"></i> 写真ギャラリー
+                </div>
+                <h4 id="gallery-item-title" class="text-sm font-bold truncate max-w-xs sm:max-w-md text-slate-100"></h4>
+                <span id="gallery-counter" class="text-xs font-mono bg-slate-800 px-2 py-0.5 rounded text-indigo-300 font-bold shrink-0">1 / 1</span>
+            </div>
+            <div class="flex items-center gap-2">
+                <button id="gallery-delete-btn" onclick="deleteSelectedPhotos()" class="hidden bg-rose-600 hover:bg-rose-700 text-white text-xs px-3 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition shadow-md">
+                    <i class="fa-solid fa-trash-can"></i> 選択中を削除 (<span id="gallery-selected-count">0</span>)
                 </button>
-                <input type="file" id="restore-file-input" accept="image/*" class="hidden" onchange="uploadRestoredPhoto(event)">
+                <button onclick="closeImageViewer()" class="text-slate-400 hover:text-white text-xl p-1 transition" title="閉じる (Esc)">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- 中央: 原寸大メイン写真表示エリア (スマホ風ナビゲーション矢印付き) -->
+        <div class="relative flex-1 w-full max-w-5xl flex items-center justify-center my-2 min-h-0" onclick="event.stopPropagation()">
+            <!-- 前へボタン (<) -->
+            <button id="gallery-prev-btn" onclick="prevGalleryPhoto()" class="absolute left-2 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/90 text-white w-11 h-11 rounded-full flex items-center justify-center text-xl z-20 transition border border-white/20 shadow-lg hover:scale-105" title="前の写真 (←キー)">
+                <i class="fa-solid fa-chevron-left"></i>
+            </button>
+
+            <!-- メイン画像 -->
+            <div class="relative max-h-full flex flex-col items-center justify-center">
+                <img id="image-viewer-src" src="" alt="商品写真" class="max-w-full max-h-[60vh] rounded-lg shadow-2xl object-contain border border-slate-700/50">
+                <div id="restore-banner" class="hidden mt-2 bg-slate-900/95 text-white px-4 py-2 rounded-xl text-xs flex items-center gap-3 border border-slate-700 shadow-xl">
+                    <span class="text-amber-400 font-bold"><i class="fa-solid fa-triangle-exclamation"></i> スマホ側の元高画質写真が削除されています (サムネイルを表示中)</span>
+                    <button onclick="document.getElementById('restore-file-input').click()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded font-bold transition">
+                        <i class="fa-solid fa-upload"></i> PCから高画質元画像を復元
+                    </button>
+                    <input type="file" id="restore-file-input" accept="image/*" class="hidden" onchange="uploadRestoredPhoto(event)">
+                </div>
+            </div>
+
+            <!-- 次へボタン (>) -->
+            <button id="gallery-next-btn" onclick="nextGalleryPhoto()" class="absolute right-2 top-1/2 -translate-y-1/2 bg-black/60 hover:bg-black/90 text-white w-11 h-11 rounded-full flex items-center justify-center text-xl z-20 transition border border-white/20 shadow-lg hover:scale-105" title="次の写真 (→キー)">
+                <i class="fa-solid fa-chevron-right"></i>
+            </button>
+        </div>
+
+        <!-- 下部: サムネイルギャラリーバー (ギャラリー閲覧時のみ表示されるサムネイルリスト＆右上チェックボックス付き) -->
+        <div class="w-full max-w-5xl bg-slate-900/80 p-3 rounded-xl backdrop-blur-sm z-20 border border-slate-800" onclick="event.stopPropagation()">
+            <div class="flex items-center justify-between text-slate-400 text-[11px] mb-1.5 px-1">
+                <span class="font-medium flex items-center gap-1.5"><i class="fa-solid fa-square-check text-rose-400"></i> サムネイル右上のチェックボックスで1枚単位の削除（ゴミ箱移動）が可能です</span>
+                <span class="text-slate-400 text-[10px]">キーボード: [←][→]移動 / [Esc]閉じる</span>
+            </div>
+            <div id="gallery-thumbnails-list" class="flex gap-2.5 overflow-x-auto custom-scroll pb-1 pt-1 px-1 items-center">
+                <!-- JavaScriptで動的描画 -->
             </div>
         </div>
     </div>
@@ -534,11 +575,11 @@ object WebDashboardHtml {
 
                     const mainPhotoObj = item.photos && item.photos.length > 0 ? item.photos[0] : null;
                     const mainPhoto = mainPhotoObj
-                        ? '<div class="relative group/photo"><img src="' + (mainPhotoObj.thumbUrl || mainPhotoObj.url) + '" alt="" class="w-full h-36 object-cover rounded-t-xl cursor-pointer hover:opacity-95 transition" onclick="openQuickActionModal(' + item.id + ')"><button onclick="event.stopPropagation(); openImageViewer(' + mainPhotoObj.id + ', \'' + mainPhotoObj.url + '\', ' + mainPhotoObj.isOriginalDeleted + ')" class="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 text-white px-2 py-1 rounded-md text-[11px] opacity-0 group-hover/photo:opacity-100 transition flex items-center gap-1 shadow" title="写真を拡大表示"><i class="fa-solid fa-expand"></i> 拡大</button></div>'
+                        ? '<div class="relative group/photo"><img src="' + (mainPhotoObj.thumbUrl || mainPhotoObj.url) + '" alt="" class="w-full h-36 object-cover rounded-t-xl cursor-pointer hover:opacity-95 transition" onclick="openQuickActionModal(' + item.id + ')"><button onclick="event.stopPropagation(); openPhotoGallery(' + item.id + ', ' + mainPhotoObj.id + ')" class="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 text-white px-2 py-1 rounded-md text-[11px] opacity-0 group-hover/photo:opacity-100 transition flex items-center gap-1 shadow" title="写真を拡大表示"><i class="fa-solid fa-expand"></i> 拡大</button></div>'
                         : '<div class="w-full h-36 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl rounded-t-xl cursor-pointer" onclick="openQuickActionModal(' + item.id + ')"><i class="fa-solid fa-image"></i></div>';
 
                     const photoThumbnails = item.photos && item.photos.length > 1
-                        ? '<div class="flex gap-1 px-3 pt-1.5 overflow-x-auto custom-scroll">' + item.photos.map(p => '<img src="' + (p.thumbUrl || p.url) + '" class="w-8 h-8 object-cover rounded cursor-pointer border ' + (p.isOriginalDeleted ? 'border-amber-400' : 'border-slate-200') + ' hover:border-indigo-500" onclick="event.stopPropagation(); openImageViewer(' + p.id + ', \'' + p.url + '\', ' + p.isOriginalDeleted + ')">').join('') + '</div>'
+                        ? '<div class="flex gap-1 px-3 pt-1.5 overflow-x-auto custom-scroll">' + item.photos.map(p => '<img src="' + (p.thumbUrl || p.url) + '" class="w-8 h-8 object-cover rounded cursor-pointer border ' + (p.isOriginalDeleted ? 'border-amber-400' : 'border-slate-200') + ' hover:border-indigo-500" onclick="event.stopPropagation(); openPhotoGallery(' + item.id + ', ' + p.id + ')">').join('') + '</div>'
                         : '';
 
                     const unmergeBtn = isMerged || ((item.title && item.title.includes('まとめ')) || (item.description && item.description.includes('まとめ')))
@@ -960,7 +1001,7 @@ object WebDashboardHtml {
             const hasDeletedPhoto = item.photos && item.photos.some(p => p.isOriginalDeleted);
 
             let html = `
-                <button onclick="closeQuickActionModal(); if(currentQuickActionItem && currentQuickActionItem.photos && currentQuickActionItem.photos.length>0) openImageViewer(currentQuickActionItem.photos[0].id, currentQuickActionItem.photos[0].url, currentQuickActionItem.photos[0].isOriginalDeleted);" class="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-100 font-medium text-xs text-slate-700 flex items-center gap-3 transition">
+                <button onclick="closeQuickActionModal(); if(currentQuickActionItem && currentQuickActionItem.photos && currentQuickActionItem.photos.length>0) openPhotoGallery(currentQuickActionItem.id, currentQuickActionItem.photos[0].id);" class="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-slate-100 font-medium text-xs text-slate-700 flex items-center gap-3 transition">
                     <div class="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm"><i class="fa-solid fa-expand"></i></div>
                     <div><div class="font-bold text-slate-900">写真を全画面プレビュー</div><div class="text-[10px] text-slate-400">高画質写真を拡大確認</div></div>
                 </button>
@@ -1013,20 +1054,229 @@ object WebDashboardHtml {
             currentQuickActionItem = null;
         }
 
-        function openImageViewer(photoId, url, isOriginalDeleted) {
-            currentViewingPhoto = photoId;
-            document.getElementById('image-viewer-src').src = url;
+        let currentGalleryItem = null;
+        let currentGalleryIndex = 0;
+        let selectedPhotoIdsForDelete = new Set();
+
+        document.addEventListener('keydown', (e) => {
+            const modal = document.getElementById('image-viewer-modal');
+            if (!modal || modal.classList.contains('hidden')) return;
+            if (e.key === 'ArrowRight') {
+                nextGalleryPhoto();
+            } else if (e.key === 'ArrowLeft') {
+                prevGalleryPhoto();
+            } else if (e.key === 'Escape') {
+                closeImageViewer();
+            }
+        });
+
+        function openPhotoGallery(itemId, photoId) {
+            const item = allItems.find(i => i.id === itemId);
+            if (!item || !item.photos || item.photos.length === 0) return;
+
+            currentGalleryItem = item;
+            selectedPhotoIdsForDelete.clear();
+
+            let targetIdx = 0;
+            if (photoId) {
+                const foundIdx = item.photos.findIndex(p => p.id === photoId);
+                if (foundIdx >= 0) targetIdx = foundIdx;
+            }
+            currentGalleryIndex = targetIdx;
+
+            document.getElementById('gallery-item-title').innerText = item.title;
+            updateGalleryView();
+            document.getElementById('image-viewer-modal').classList.remove('hidden');
+        }
+
+        function updateGalleryView() {
+            if (!currentGalleryItem || !currentGalleryItem.photos || currentGalleryItem.photos.length === 0) {
+                closeImageViewer();
+                return;
+            }
+
+            if (currentGalleryIndex >= currentGalleryItem.photos.length) {
+                currentGalleryIndex = currentGalleryItem.photos.length - 1;
+            }
+            if (currentGalleryIndex < 0) currentGalleryIndex = 0;
+
+            const photo = currentGalleryItem.photos[currentGalleryIndex];
+            currentViewingPhoto = photo.id;
+
+            document.getElementById('image-viewer-src').src = photo.url;
+            document.getElementById('gallery-counter').innerText = (currentGalleryIndex + 1) + ' / ' + currentGalleryItem.photos.length;
+
             const banner = document.getElementById('restore-banner');
-            if (isOriginalDeleted) {
+            if (photo.isOriginalDeleted) {
                 banner.classList.remove('hidden');
             } else {
                 banner.classList.add('hidden');
             }
-            document.getElementById('image-viewer-modal').classList.remove('hidden');
+
+            const prevBtn = document.getElementById('gallery-prev-btn');
+            const nextBtn = document.getElementById('gallery-next-btn');
+            if (currentGalleryItem.photos.length <= 1) {
+                prevBtn.classList.add('hidden');
+                nextBtn.classList.add('hidden');
+            } else {
+                prevBtn.classList.remove('hidden');
+                nextBtn.classList.remove('hidden');
+            }
+
+            renderGalleryThumbnails();
+        }
+
+        function prevGalleryPhoto() {
+            if (!currentGalleryItem || !currentGalleryItem.photos || currentGalleryItem.photos.length <= 1) return;
+            currentGalleryIndex = (currentGalleryIndex - 1 + currentGalleryItem.photos.length) % currentGalleryItem.photos.length;
+            updateGalleryView();
+        }
+
+        function nextGalleryPhoto() {
+            if (!currentGalleryItem || !currentGalleryItem.photos || currentGalleryItem.photos.length <= 1) return;
+            currentGalleryIndex = (currentGalleryIndex + 1) % currentGalleryItem.photos.length;
+            updateGalleryView();
+        }
+
+        function selectGalleryPhotoIndex(idx) {
+            if (!currentGalleryItem || !currentGalleryItem.photos) return;
+            if (idx >= 0 && idx < currentGalleryItem.photos.length) {
+                currentGalleryIndex = idx;
+                updateGalleryView();
+            }
+        }
+
+        function togglePhotoDeleteSelection(photoId, event) {
+            if (event.target.checked) {
+                selectedPhotoIdsForDelete.add(photoId);
+            } else {
+                selectedPhotoIdsForDelete.delete(photoId);
+            }
+            const delBtn = document.getElementById('gallery-delete-btn');
+            const countSpan = document.getElementById('gallery-selected-count');
+            if (selectedPhotoIdsForDelete.size > 0) {
+                delBtn.classList.remove('hidden');
+                countSpan.innerText = selectedPhotoIdsForDelete.size;
+            } else {
+                delBtn.classList.add('hidden');
+            }
+        }
+
+        function renderGalleryThumbnails() {
+            const list = document.getElementById('gallery-thumbnails-list');
+            if (!currentGalleryItem || !currentGalleryItem.photos) {
+                list.innerHTML = '';
+                return;
+            }
+
+            list.innerHTML = currentGalleryItem.photos.map((photo, idx) => {
+                const isActive = (idx === currentGalleryIndex);
+                const isChecked = selectedPhotoIdsForDelete.has(photo.id);
+
+                return `
+                <div class="relative group/thumb shrink-0 rounded-lg overflow-hidden border-2 transition ` + (isActive ? 'border-indigo-500 ring-2 ring-indigo-400/50 scale-105' : 'border-slate-700 hover:border-slate-500') + ` bg-slate-800">
+                    <img src="` + (photo.thumbUrl || photo.url) + `" onclick="selectGalleryPhotoIndex(` + idx + `)" class="w-16 h-16 object-cover cursor-pointer hover:opacity-90 transition">
+                    
+                    <!-- チェックボックス (サムネイル右上配置: absolute top-1 right-1 - サムネイルの左上以外!) -->
+                    <label class="absolute top-1 right-1 z-10 cursor-pointer bg-slate-900/80 hover:bg-slate-900 p-0.5 rounded shadow border border-slate-600 flex items-center justify-center" onclick="event.stopPropagation()" title="選択してゴミ箱移動">
+                        <input type="checkbox" ` + (isChecked ? 'checked' : '') + ` onchange="togglePhotoDeleteSelection(` + photo.id + `, event)" class="w-4 h-4 accent-rose-500 cursor-pointer rounded">
+                    </label>
+
+                    <!-- 個別削除ボタン (右下配置: bottom-1 right-1) -->
+                    <button onclick="event.stopPropagation(); deleteSinglePhotoDirect(` + photo.id + `)" class="absolute bottom-1 right-1 z-10 bg-rose-600/90 hover:bg-rose-600 text-white text-[10px] w-5 h-5 rounded flex items-center justify-center opacity-0 group-hover/thumb:opacity-100 transition shadow" title="この写真をゴミ箱へ移動">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+
+                    ` + (photo.isOriginalDeleted ? '<span class="absolute bottom-1 left-1 bg-amber-500/90 text-slate-900 text-[9px] px-1 rounded font-bold" title="元画像なし">サムネ</span>' : '') + `
+                </div>
+                `;
+            }).join('');
+
+            const delBtn = document.getElementById('gallery-delete-btn');
+            const countSpan = document.getElementById('gallery-selected-count');
+            if (selectedPhotoIdsForDelete.size > 0) {
+                delBtn.classList.remove('hidden');
+                countSpan.innerText = selectedPhotoIdsForDelete.size;
+            } else {
+                delBtn.classList.add('hidden');
+            }
+        }
+
+        async function deleteSinglePhotoDirect(photoId) {
+            if (!confirm('この写真を削除（ゴミ箱へ移動）しますか？')) return;
+            try {
+                const res = await fetch('/api/photos/' + photoId, { method: 'DELETE' });
+                if (!res.ok) throw new Error('写真の削除に失敗しました');
+                showToast('写真を削除（ゴミ箱移動）しました');
+
+                selectedPhotoIdsForDelete.delete(photoId);
+
+                if (currentGalleryItem) {
+                    currentGalleryItem.photos = currentGalleryItem.photos.filter(p => p.id !== photoId);
+                }
+
+                fetchItems();
+
+                if (currentGalleryItem && currentGalleryItem.photos.length > 0) {
+                    updateGalleryView();
+                } else {
+                    closeImageViewer();
+                }
+            } catch (err) {
+                showToast(err.message);
+            }
+        }
+
+        async function deleteSelectedPhotos() {
+            const count = selectedPhotoIdsForDelete.size;
+            if (count === 0) return;
+            if (!confirm('選択した写真 ' + count + '枚を削除（ゴミ箱へ移動）しますか？')) return;
+
+            try {
+                const res = await fetch('/api/photos/delete-batch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ photoIds: Array.from(selectedPhotoIdsForDelete) })
+                });
+                if (!res.ok) throw new Error('写真の一括削除に失敗しました');
+                showToast('選択した写真 ' + count + '枚を削除（ゴミ箱移動）しました');
+
+                const deletedIds = new Set(selectedPhotoIdsForDelete);
+                selectedPhotoIdsForDelete.clear();
+
+                if (currentGalleryItem) {
+                    currentGalleryItem.photos = currentGalleryItem.photos.filter(p => !deletedIds.has(p.id));
+                }
+
+                fetchItems();
+
+                if (currentGalleryItem && currentGalleryItem.photos.length > 0) {
+                    updateGalleryView();
+                } else {
+                    closeImageViewer();
+                }
+            } catch (err) {
+                showToast(err.message);
+            }
+        }
+
+        function openImageViewer(photoId, url, isOriginalDeleted) {
+            const item = allItems.find(i => i.photos && i.photos.some(p => p.id === photoId));
+            if (item) {
+                openPhotoGallery(item.id, photoId);
+            } else {
+                currentViewingPhoto = photoId;
+                document.getElementById('image-viewer-src').src = url;
+                document.getElementById('image-viewer-modal').classList.remove('hidden');
+            }
         }
 
         function closeImageViewer() {
             document.getElementById('image-viewer-modal').classList.add('hidden');
+            currentViewingPhoto = null;
+            currentGalleryItem = null;
+            selectedPhotoIdsForDelete.clear();
+        }
             currentViewingPhoto = null;
         }
 

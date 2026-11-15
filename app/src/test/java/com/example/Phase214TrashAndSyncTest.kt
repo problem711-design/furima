@@ -295,4 +295,51 @@ class Phase214TrashAndSyncTest {
         assertEquals(3, thirdLoad.titleTemplates.size)
         assertEquals("【最終値下げ】", thirdLoad.titleTemplates.last().content)
     }
+
+    @Test
+    fun `deletePhotoById and deletePhotosByIds remove photo entities correctly`() = runBlocking {
+        val f1 = File.createTempFile("test_photo_1", ".jpg", context.cacheDir)
+        val f2 = File.createTempFile("test_photo_2", ".jpg", context.cacheDir)
+        val f3 = File.createTempFile("test_photo_3", ".jpg", context.cacheDir)
+        f1.writeBytes(byteArrayOf(1, 2, 3))
+        f2.writeBytes(byteArrayOf(4, 5, 6))
+        f3.writeBytes(byteArrayOf(7, 8, 9))
+        createdTempFiles.addAll(listOf(f1, f2, f3))
+
+        val itemId = repository.saveItem(
+            id = 0,
+            title = "テスト商品_写真削除",
+            description = "説明",
+            status = "LISTED",
+            price = 1000,
+            soldPrice = 0,
+            shippingCost = 210,
+            feeRatePercent = 5,
+            expenseCost = 55,
+            useCustomSettings = false,
+            imageUris = emptyList(),
+            existingFilePaths = listOf(f1.absolutePath, f2.absolutePath, f3.absolutePath)
+        )
+
+        val itemWithPhotos = repository.getItemById(itemId.toInt())
+        assertNotNull(itemWithPhotos)
+        assertEquals(3, itemWithPhotos!!.photos.size)
+
+        val firstPhotoId = itemWithPhotos.photos[0].id
+        val deletedOne = repository.deletePhotoById(firstPhotoId)
+        assertTrue(deletedOne)
+
+        val itemAfterOne = repository.getItemById(itemId.toInt())
+        assertNotNull(itemAfterOne)
+        assertEquals(2, itemAfterOne!!.photos.size)
+        assertFalse(itemAfterOne.photos.any { it.id == firstPhotoId })
+
+        val remainingPhotoIds = itemAfterOne.photos.map { it.id }
+        val countBatch = repository.deletePhotosByIds(remainingPhotoIds)
+        assertEquals(2, countBatch)
+
+        val itemAfterBatch = repository.getItemById(itemId.toInt())
+        assertNotNull(itemAfterBatch)
+        assertEquals(0, itemAfterBatch!!.photos.size)
+    }
 }
