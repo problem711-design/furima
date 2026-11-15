@@ -156,17 +156,18 @@ fun CameraXCaptureDialog(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val storageManager = remember(context) { PhotoStorageManager(context) }
+    val savedSettings = remember(context) { CameraXCapturePreferences.load(context) }
 
     var capturedPaths by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var pendingDiscardPaths by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var previewCapturedIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var lastDeletedShot by remember { mutableStateOf<Pair<Int, String>?>(null) }
-    var flashMode by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
+    var flashMode by rememberSaveable { mutableIntStateOf(savedSettings.flashMode) }
     var isTorchOn by rememberSaveable { mutableStateOf(false) }
-    var guideModeOrdinal by rememberSaveable { mutableIntStateOf(CameraGuideMode.GRID_3X3.ordinal) }
+    var guideModeOrdinal by rememberSaveable { mutableIntStateOf(savedSettings.guideModeOrdinal) }
     val guideMode = CameraGuideMode.entries.getOrElse(guideModeOrdinal) { CameraGuideMode.GRID_3X3 }
 
-    var selectedCameraId by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedCameraId by rememberSaveable { mutableStateOf(savedSettings.selectedCameraId) }
     var lensOptions by remember { mutableStateOf<List<CameraLensOption>>(emptyList()) }
 
     var camera by remember { mutableStateOf<Camera?>(null) }
@@ -176,20 +177,22 @@ fun CameraXCaptureDialog(
 
     var minZoom by remember { mutableFloatStateOf(1f) }
     var maxZoom by remember { mutableFloatStateOf(4f) }
-    var currentZoom by remember { mutableFloatStateOf(1f) }
+    var currentZoom by remember { mutableFloatStateOf(savedSettings.zoomRatio) }
 
     var evSupported by remember { mutableStateOf(false) }
     var evLower by remember { mutableIntStateOf(0) }
     var evUpper by remember { mutableIntStateOf(0) }
     var evStep by remember { mutableFloatStateOf(0.33f) }
-    var evIndex by remember { mutableIntStateOf(0) }
+    var evIndex by remember { mutableIntStateOf(savedSettings.evIndex) }
     var hasFlashUnit by remember { mutableStateOf(false) }
 
     var cam2Caps by remember { mutableStateOf(Camera2Capabilities()) }
-    var showProPanel by remember { mutableStateOf(false) }
-    var manualIso by remember { mutableStateOf<Int?>(null) }
-    var manualShutterNanos by remember { mutableStateOf<Long?>(null) }
-    var manualAwbMode by remember { mutableStateOf<Int?>(null) }
+    var showProPanel by remember { mutableStateOf(savedSettings.showProPanel) }
+    var manualIso by remember { mutableStateOf(savedSettings.manualIso) }
+    var manualShutterNanos by remember { mutableStateOf(savedSettings.manualShutterNanos) }
+    var manualAwbMode by remember { mutableStateOf(savedSettings.manualAwbMode) }
+    var hasAppliedInitialRestore by remember { mutableStateOf(false) }
+    var isCameraSettingsReady by remember { mutableStateOf(false) }
 
     var focusPoint by remember { mutableStateOf<Offset?>(null) }
     var isCapturing by remember { mutableStateOf(false) }
@@ -312,6 +315,7 @@ fun CameraXCaptureDialog(
         val provider = cameraProvider ?: return@LaunchedEffect
         val previewView = previewViewRef ?: return@LaunchedEffect
 
+        isCameraSettingsReady = false
         try {
             provider.unbindAll()
             val preview = Preview.Builder().build().apply {
@@ -338,22 +342,71 @@ fun CameraXCaptureDialog(
             val zoomState = info.zoomState.value
             minZoom = zoomState?.minZoomRatio ?: 1f
             maxZoom = (zoomState?.maxZoomRatio ?: 4f).coerceAtLeast(minZoom)
-            currentZoom = zoomState?.zoomRatio ?: 1f
 
             val expState = info.exposureState
             evSupported = expState.isExposureCompensationSupported
             evLower = expState.exposureCompensationRange.lower
             evUpper = expState.exposureCompensationRange.upper
             evStep = expState.exposureCompensationStep.toFloat().let { if (it > 0f) it else 0.33f }
-            evIndex = expState.exposureCompensationIndex
             hasFlashUnit = info.hasFlashUnit()
 
-            cam2Caps = readCamera2Capabilities(info)
-            manualIso = null
-            manualShutterNanos = null
-            manualAwbMode = null
-            showProPanel = false
+            val caps = readCamera2Capabilities(info)
+            cam2Caps = caps
+
+            if (!hasAppliedInitialRestore) {
+                hasAppliedInitialRestore = true
+                val targetZoom = currentZoom.coerceIn(minZoom, maxZoom)
+                currentZoom = targetZoom
+                if (kotlin.math.abs(targetZoom - (zoomState?.zoomRatio ?: 1f)) > 0.01f) {
+                    try {
+                        boundCamera.cameraControl.setZoomRatio(targetZoom)
+                    } catch (_: Exception) {
+                    }
+                }
+
+                val safeIso = manualIso?.let { iso ->
+                    val r = caps.isoRange
+                    if (caps.supportsManualSensor && r != null) {
+                        val minI = r.lower.coerceAtLeast(50)
+                        val maxI = r.upper.coerceAtMost(3200).coerceAtLeast(minI)
+                        iso.coerceIn(minI, maxI)
+                    } else null
+                }
+                val safeShutter = manualShutterNanos?.let { ns ->
+                    val r = caps.exposureTimeRange
+                    if (caps.supportsManualSensor && r != null && ns in r.lower..r.upper) ns else null
+                }
+                val safeAwb = manualAwbMode?.takeIf { caps.availableAwbModes.contains(it) }
+                val hasPro = caps.supportsManualSensor || caps.availableAwbModes.size > 1
+                manualIso = safeIso
+                manualShutterNanos = safeShutter
+                manualAwbMode = safeAwb
+                showProPanel = showProPanel && hasPro
+
+                if (evSupported && evUpper > evLower && safeIso == null && safeShutter == null) {
+                    val targetEv = evIndex.coerceIn(evLower, evUpper)
+                    evIndex = targetEv
+                    if (targetEv != expState.exposureCompensationIndex) {
+                        try {
+                            boundCamera.cameraControl.setExposureCompensationIndex(targetEv)
+                        } catch (_: Exception) {
+                        }
+                    }
+                } else {
+                    evIndex = 0
+                }
+            } else {
+                currentZoom = zoomState?.zoomRatio ?: 1f
+                evIndex = expState.exposureCompensationIndex
+                manualIso = null
+                manualShutterNanos = null
+                manualAwbMode = null
+                showProPanel = false
+            }
+
             initError = null
+            delay(150)
+            isCameraSettingsReady = true
         } catch (e: Exception) {
             initError = "カメラを起動できませんでした: ${e.message ?: "不明なエラー"}"
         }
@@ -365,7 +418,9 @@ fun CameraXCaptureDialog(
         val observer = androidx.lifecycle.Observer<androidx.camera.core.ZoomState> { zs ->
             minZoom = zs.minZoomRatio
             maxZoom = zs.maxZoomRatio.coerceAtLeast(zs.minZoomRatio)
-            currentZoom = zs.zoomRatio
+            if (isCameraSettingsReady) {
+                currentZoom = zs.zoomRatio
+            }
         }
         activeCamera?.cameraInfo?.zoomState?.observe(lifecycleOwner, observer)
         onDispose {
@@ -387,6 +442,36 @@ fun CameraXCaptureDialog(
             manualIso = manualIso,
             manualShutterNanos = manualShutterNanos,
             manualAwbMode = manualAwbMode
+        )
+    }
+
+    // 完全記憶型：スタジオ撮影用のカメラ設定を自動永続化（ライト常時点灯は安全のため除外）
+    LaunchedEffect(
+        isCameraSettingsReady,
+        selectedCameraId,
+        flashMode,
+        guideModeOrdinal,
+        currentZoom,
+        evIndex,
+        showProPanel,
+        manualIso,
+        manualShutterNanos,
+        manualAwbMode
+    ) {
+        if (!isCameraSettingsReady) return@LaunchedEffect
+        CameraXCapturePreferences.save(
+            context = context,
+            settings = SavedCameraSettings(
+                selectedCameraId = selectedCameraId,
+                flashMode = flashMode,
+                guideModeOrdinal = guideModeOrdinal,
+                zoomRatio = currentZoom,
+                evIndex = evIndex,
+                showProPanel = showProPanel,
+                manualIso = manualIso,
+                manualShutterNanos = manualShutterNanos,
+                manualAwbMode = manualAwbMode
+            )
         )
     }
 
@@ -1244,5 +1329,80 @@ private fun applyCamera2ManualControls(
         }
         cam2Control.setCaptureRequestOptions(builder.build())
     } catch (_: Exception) {
+    }
+}
+
+private data class SavedCameraSettings(
+    val selectedCameraId: String? = null,
+    val flashMode: Int = ImageCapture.FLASH_MODE_OFF,
+    val guideModeOrdinal: Int = CameraGuideMode.GRID_3X3.ordinal,
+    val zoomRatio: Float = 1f,
+    val evIndex: Int = 0,
+    val showProPanel: Boolean = false,
+    val manualIso: Int? = null,
+    val manualShutterNanos: Long? = null,
+    val manualAwbMode: Int? = null
+)
+
+private object CameraXCapturePreferences {
+    private const val PREFS_NAME = "camerax_capture_prefs"
+    private const val KEY_CAMERA_ID = "selected_camera_id"
+    private const val KEY_FLASH_MODE = "flash_mode"
+    private const val KEY_GUIDE_MODE = "guide_mode_ordinal"
+    private const val KEY_ZOOM_RATIO = "zoom_ratio"
+    private const val KEY_EV_INDEX = "ev_index"
+    private const val KEY_SHOW_PRO_PANEL = "show_pro_panel"
+    private const val KEY_MANUAL_ISO = "manual_iso"
+    private const val KEY_MANUAL_SHUTTER_NANOS = "manual_shutter_nanos"
+    private const val KEY_MANUAL_AWB_MODE = "manual_awb_mode"
+
+    fun load(context: Context): SavedCameraSettings {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val rawFlash = prefs.getInt(KEY_FLASH_MODE, ImageCapture.FLASH_MODE_OFF)
+        val safeFlash = when (rawFlash) {
+            ImageCapture.FLASH_MODE_ON,
+            ImageCapture.FLASH_MODE_AUTO,
+            ImageCapture.FLASH_MODE_OFF -> rawFlash
+            else -> ImageCapture.FLASH_MODE_OFF
+        }
+        val rawGuide = prefs.getInt(KEY_GUIDE_MODE, CameraGuideMode.GRID_3X3.ordinal)
+        val safeGuide = rawGuide.coerceIn(0, CameraGuideMode.entries.lastIndex)
+        val rawZoom = prefs.getFloat(KEY_ZOOM_RATIO, 1f)
+        val safeZoom = if (rawZoom.isFinite() && rawZoom > 0f) rawZoom else 1f
+        val isoVal = prefs.getInt(KEY_MANUAL_ISO, -1)
+        val shutterVal = prefs.getLong(KEY_MANUAL_SHUTTER_NANOS, -1L)
+        val awbVal = prefs.getInt(KEY_MANUAL_AWB_MODE, -1)
+
+        return SavedCameraSettings(
+            selectedCameraId = prefs.getString(KEY_CAMERA_ID, null),
+            flashMode = safeFlash,
+            guideModeOrdinal = safeGuide,
+            zoomRatio = safeZoom,
+            evIndex = prefs.getInt(KEY_EV_INDEX, 0),
+            showProPanel = prefs.getBoolean(KEY_SHOW_PRO_PANEL, false),
+            manualIso = if (isoVal > 0) isoVal else null,
+            manualShutterNanos = if (shutterVal > 0L) shutterVal else null,
+            manualAwbMode = if (awbVal >= 0) awbVal else null
+        )
+    }
+
+    fun save(context: Context, settings: SavedCameraSettings) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().apply {
+            if (settings.selectedCameraId.isNullOrBlank()) {
+                remove(KEY_CAMERA_ID)
+            } else {
+                putString(KEY_CAMERA_ID, settings.selectedCameraId)
+            }
+            putInt(KEY_FLASH_MODE, settings.flashMode)
+            putInt(KEY_GUIDE_MODE, settings.guideModeOrdinal)
+            putFloat(KEY_ZOOM_RATIO, settings.zoomRatio)
+            putInt(KEY_EV_INDEX, settings.evIndex)
+            putBoolean(KEY_SHOW_PRO_PANEL, settings.showProPanel)
+            putInt(KEY_MANUAL_ISO, settings.manualIso ?: -1)
+            putLong(KEY_MANUAL_SHUTTER_NANOS, settings.manualShutterNanos ?: -1L)
+            putInt(KEY_MANUAL_AWB_MODE, settings.manualAwbMode ?: -1)
+            apply()
+        }
     }
 }
