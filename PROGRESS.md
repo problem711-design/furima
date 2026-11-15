@@ -7,7 +7,8 @@
 > - フェーズ2.0〜2.11全詳細ログ・計画書: [PROGRESS_ARCHIVE_PHASE2.md](PROGRESS_ARCHIVE_PHASE2.md)
 > - フェーズ 2.12〜2.14 計画書: [PLAN_PHASE_2_12_TO_2_14.md](PLAN_PHASE_2_12_TO_2_14.md)
 > - フェーズ 3.1 計画書: [PLAN_CAMERA_AND_PREVIEW_FIX.md](PLAN_CAMERA_AND_PREVIEW_FIX.md)
-> - **現行実装計画書 (フェーズ 3.2 / UI改善・テンプレート拡張・一括削除＆一括編集)**: [PLAN_PHASE_3_2.md](PLAN_PHASE_3_2.md)
+> - フェーズ 3.2 計画書: [PLAN_PHASE_3_2.md](PLAN_PHASE_3_2.md)
+> - **現行実装計画書 (フェーズ 4 / 上部ヘッダースリム化・同期ステータス％表示・メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
 
 ---
 
@@ -89,6 +90,10 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-15] ヘッダースリム化・同期％表示・メモリ安定化 詳細実装計画書 (`PLAN_SYNC_STATUS_AND_MEMORY.md`) 策定
+- 一覧画面上部ヘッダーの縦幅スリム化およびタイトル横のリアルタイムPC同期ステータス（％・枚数・エラー詳細＆再同期ダイアログ）の実装計画を策定。
+- 大量高画質撮影時の OOM/ANR 防止に向けた 5 項目（保存 `Dispatchers.IO` 化＆連打ガード、OkHttp ストリーミング送信化、Coil `ImageLoader` 上限＆表示サイズ制限、CameraX 連写負荷軽減＆`2048px/フル`切替記憶、サムネイル `RGB_565`＋一時キャッシュ自動掃除＋`largeHeap`）の具体的な編集対象ファイルと仕様を確定。
 
 ### 2026/11/15 アプリ内カメラ「完全記憶型」設定永続化 バージョン 1.0.0 (Build 3)
 - **スタジオ撮影向けカメラ設定の完全永続化 (`CameraXCaptureDialog.kt`)**：
