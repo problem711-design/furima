@@ -218,12 +218,12 @@ object WebDashboardHtml {
                 <div id="photos-input-container">
                     <label class="block text-xs font-bold text-slate-700 mb-1">商品写真アップロード (複数可)</label>
                     <div class="flex flex-wrap gap-2 items-center">
+                        <div id="photo-preview-grid" class="flex flex-wrap gap-2 items-center"></div>
                         <div class="w-20 h-20 border-2 border-dashed border-slate-300 rounded-xl flex flex-col items-center justify-center text-center hover:bg-slate-50 transition cursor-pointer relative shrink-0" onclick="document.getElementById('form-photos').click()" title="クリックして写真を選択">
                             <i class="fa-solid fa-plus text-indigo-500 text-sm mb-0.5"></i>
                             <span class="text-[9px] font-bold text-slate-600">写真追加</span>
                             <input type="file" id="form-photos" multiple accept="image/*" class="hidden" onchange="previewUploadPhotos(event)">
                         </div>
-                        <div id="photo-preview-grid" class="flex flex-wrap gap-2 items-center"></div>
                     </div>
                 </div>
 

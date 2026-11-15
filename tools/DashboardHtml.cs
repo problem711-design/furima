@@ -25,15 +25,6 @@ public static class DashboardHtml
         <span id='toast-msg'>コピーしました</span>
     </div>
 
-    <!-- スマホ接続ステータス通知バナー -->
-    <div id='status-banner' class='bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40'>
-        <div class='flex items-center gap-2'>
-            <i id='status-icon' class='fa-solid fa-triangle-exclamation text-base animate-bounce'></i>
-            <span id='status-text'>スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）。スマホアプリの「PC連携」画面から接続できます。</span>
-        </div>
-        <span class='bg-amber-700/60 px-2 py-0.5 rounded text-[11px] font-mono'>v1.0.0</span>
-    </div>
-
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
     <header class='bg-indigo-700 text-white shadow-md sticky top-0 z-30'>
         <div class='max-w-[1800px] mx-auto px-3 sm:px-4 h-10 flex items-center justify-between gap-3'>
@@ -150,15 +141,23 @@ public static class DashboardHtml
 
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
-                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & システム
+                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真・接続情報
                     </h2>
-                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between'>
-                        <span class='text-[11px] text-slate-600 font-medium'>保存フォルダ容量</span>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>接続ステータス</span>
+                        <span id='stat-connection-status' class='font-bold text-amber-600 flex items-center gap-1'><i class='fa-solid fa-circle-exclamation'></i> 未接続</span>
+                    </div>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>取込済み写真</span>
+                        <span id='stat-photo-index-count' class='font-bold text-slate-800 font-mono'>0枚</span>
+                    </div>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>保存フォルダ容量</span>
                         <span id='stat-storage-size' class='text-xs font-black text-slate-800'>...</span>
                     </div>
-                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between'>
-                        <span class='text-[11px] text-slate-600 font-medium'>バージョン</span>
-                        <span class='text-[11px] font-mono font-bold text-slate-700'>v1.0.0 (Build 100)</span>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>バージョン</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 100)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -478,12 +477,12 @@ public static class DashboardHtml
                         <span class='text-[10px] text-slate-400'>※ 登録確定時にアップロードされます</span>
                     </div>
                     <div class='flex flex-wrap gap-2 items-center'>
+                        <div id='add-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                         <div id='add-photo-drop-zone' class='w-20 h-20 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
                             <i class='fa-solid fa-plus text-emerald-600 text-sm mb-0.5'></i>
                             <span class='text-[9px] font-bold text-emerald-800'>写真追加</span>
                             <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
                         </div>
-                        <div id='add-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                     </div>
                 </div>
 
@@ -625,12 +624,12 @@ public static class DashboardHtml
                         </button>
                     </div>
                     <div class='flex flex-wrap gap-2 items-center'>
+                        <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                         <div id='edit-photo-drop-zone' class='w-20 h-20 border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
                             <i class='fa-solid fa-plus text-indigo-600 text-sm mb-0.5'></i>
                             <span class='text-[9px] font-bold text-indigo-800'>写真追加</span>
                             <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
                         </div>
-                        <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                     </div>
                 </div>
 
@@ -1394,19 +1393,22 @@ public static class DashboardHtml
 
         function updateStatusBannerFromData(statusData) {
             if (!statusData) return;
-            const banner = document.getElementById('status-banner');
-            const statusText = document.getElementById('status-text');
-            const statusIcon = document.getElementById('status-icon');
+            const statusElem = document.getElementById('stat-connection-status');
+            const photoCountElem = document.getElementById('stat-photo-index-count');
             const missingCount = statusData.missingFileCount || 0;
-            const missingBadge = missingCount > 0 ? ' | 原本なし: ' + missingCount + '件' : '';
-            if (statusData.appConnected) {
-                banner.className = 'bg-emerald-600 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
-                statusIcon.className = 'fa-solid fa-circle-check text-base';
-                statusText.innerText = 'スマホアプリ接続中 (' + statusData.indexedPhotosCount + '枚の写真インデックス完了' + missingBadge + ')';
-            } else {
-                banner.className = 'bg-amber-500 text-white px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm transition-all duration-300 sticky top-0 z-40';
-                statusIcon.className = 'fa-solid fa-triangle-exclamation text-base animate-bounce';
-                statusText.innerText = 'スマホアプリ未接続（PC単独で編集可／スマホ再接続時に自動同期）' + missingBadge;
+            const missingBadge = missingCount > 0 ? ' (欠損: ' + missingCount + ')' : '';
+
+            if (photoCountElem) {
+                photoCountElem.innerText = (statusData.indexedPhotosCount || 0) + '枚' + missingBadge;
+            }
+            if (statusElem) {
+                if (statusData.appConnected) {
+                    statusElem.className = 'font-bold text-emerald-600 flex items-center gap-1';
+                    statusElem.innerHTML = `<i class='fa-solid fa-circle-check text-emerald-600'></i> 接続中`;
+                } else {
+                    statusElem.className = 'font-bold text-amber-600 flex items-center gap-1';
+                    statusElem.innerHTML = `<i class='fa-solid fa-circle-exclamation text-amber-500'></i> 未接続`;
+                }
             }
         }
 
@@ -2507,7 +2509,7 @@ public static class DashboardHtml
             if (!grid) return;
 
             if (photos.length === 0) {
-                grid.innerHTML = `<p class='text-[11px] text-slate-400'>※ 登録済みの写真はありません</p>`;
+                grid.innerHTML = '';
                 return;
             }
 
@@ -2799,7 +2801,7 @@ public static class DashboardHtml
             if (!grid) return;
 
             if (pendingAddPhotoFiles.length === 0) {
-                grid.innerHTML = `<p class='text-[11px] text-slate-400'>※ 追加する写真を選択するとプレビューが表示されます</p>`;
+                grid.innerHTML = '';
                 return;
             }
 
