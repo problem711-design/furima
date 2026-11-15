@@ -1,6 +1,11 @@
 package com.example.myapplication.ui.components
 
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -44,6 +49,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +73,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import com.example.myapplication.data.local.PhotoEntity
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -97,10 +104,17 @@ fun PhotoPreviewDialog(
     isPcServerConnected: Boolean = false,
     onFindCachedOriginal: (String) -> File? = { null },
     onFetchOriginal: suspend (String) -> File? = { null },
+    confirmBeforeDelete: Boolean = false,
     onDeletePhoto: ((Int) -> Unit)? = null,
+    onUndoDelete: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
-    if (photos.isEmpty()) return
+    if (photos.isEmpty()) {
+        LaunchedEffect(Unit) {
+            onDismiss()
+        }
+        return
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -110,11 +124,37 @@ fun PhotoPreviewDialog(
     val cachedOriginals = remember { mutableStateMapOf<String, File>() }
     var isFetchingHash by remember { mutableStateOf<String?>(null) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showUndoBanner by remember { mutableStateOf(false) }
+    var undoResetNonce by remember { mutableIntStateOf(0) }
+    var lastDeletedPageIndex by remember { mutableIntStateOf(-1) }
+    var pendingRestoreScrollIndex by remember { mutableStateOf<Int?>(null) }
 
     LaunchedEffect(photos.size) {
-        if (photos.isEmpty()) {
-            onDismiss()
+        if (photos.isNotEmpty() && pagerState.currentPage >= photos.size) {
+            pagerState.scrollToPage((photos.size - 1).coerceAtLeast(0))
         }
+        val restoreTarget = pendingRestoreScrollIndex
+        if (restoreTarget != null && photos.isNotEmpty()) {
+            pendingRestoreScrollIndex = null
+            pagerState.animateScrollToPage(restoreTarget.coerceIn(0, photos.lastIndex))
+        }
+    }
+
+    LaunchedEffect(undoResetNonce) {
+        if (showUndoBanner) {
+            delay(3500L)
+            showUndoBanner = false
+        }
+    }
+
+    val performDeleteAtCurrentPage: () -> Unit = {
+        val deleteIdx = pagerState.currentPage.coerceIn(0, photos.lastIndex)
+        lastDeletedPageIndex = deleteIdx
+        if (onUndoDelete != null && photos.size > 1) {
+            showUndoBanner = true
+            undoResetNonce++
+        }
+        onDeletePhoto?.invoke(deleteIdx)
     }
 
     // すでにキャッシュ取得済みの原本があれば自動セット
@@ -143,8 +183,7 @@ fun PhotoPreviewDialog(
                 Button(
                     onClick = {
                         showDeleteConfirmDialog = false
-                        val deleteIdx = pagerState.currentPage
-                        onDeletePhoto?.invoke(deleteIdx)
+                        performDeleteAtCurrentPage()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier.testTag("confirm_delete_photo_preview_button")
@@ -178,7 +217,7 @@ fun PhotoPreviewDialog(
                 userScrollEnabled = currentScale <= 1.05f,
                 modifier = Modifier.fillMaxSize()
             ) { pageIndex ->
-                val photo = photos[pageIndex]
+                val photo = photos.getOrNull(pageIndex) ?: return@HorizontalPager
                 val hash = photo.md5Hash.trim().lowercase()
                 val displayModel = cachedOriginals[hash] ?: photo.model
 
@@ -195,7 +234,8 @@ fun PhotoPreviewDialog(
             }
 
             // 上部ヘッダーエリア (ページ番号 + 原本/サムネ表示バッジ + 削除ボタン + 閉じるボタン + 原本取得ボタン)
-            val activePhoto = photos.getOrNull(pagerState.currentPage) ?: photos.first()
+            val safeCurrentPage = pagerState.currentPage.coerceIn(0, photos.lastIndex)
+            val activePhoto = photos[safeCurrentPage]
             val activeHash = activePhoto.md5Hash.trim().lowercase()
             val hasLoadedOriginal = activePhoto.hasLocalOriginal || cachedOriginals.containsKey(activeHash)
 
@@ -222,7 +262,7 @@ fun PhotoPreviewDialog(
                             shape = RoundedCornerShape(16.dp)
                         ) {
                             Text(
-                                text = "${pagerState.currentPage + 1} / ${photos.size}",
+                                text = "${safeCurrentPage + 1} / ${photos.size}",
                                 color = Color.White,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
@@ -266,9 +306,15 @@ fun PhotoPreviewDialog(
                     ) {
                         if (onDeletePhoto != null) {
                             IconButton(
-                                onClick = { showDeleteConfirmDialog = true },
+                                onClick = {
+                                    if (confirmBeforeDelete) {
+                                        showDeleteConfirmDialog = true
+                                    } else {
+                                        performDeleteAtCurrentPage()
+                                    }
+                                },
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(48.dp)
                                     .clip(CircleShape)
                                     .background(Color.Red.copy(alpha = 0.25f))
                                     .testTag("photo_preview_delete_button")
@@ -284,7 +330,7 @@ fun PhotoPreviewDialog(
                         IconButton(
                             onClick = onDismiss,
                             modifier = Modifier
-                                .size(44.dp)
+                                .size(48.dp)
                                 .clip(CircleShape)
                                 .background(Color.White.copy(alpha = 0.16f))
                                 .testTag("photo_preview_close_button")
@@ -349,24 +395,81 @@ fun PhotoPreviewDialog(
                 }
             }
 
-            // 下部操作ガイドバー (システムナビゲーションバーと重ならないシンプル案内)
-            Box(
+            // 下部Undoバナー + 操作ガイドバー (システムナビゲーションバーと重ならない配置)
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .background(Color.Black.copy(alpha = 0.45f))
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                contentAlignment = Alignment.Center
+                    .align(Alignment.BottomCenter),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = if (onDeletePhoto != null)
-                        "ピンチで拡大縮小・ダブルタップでズーム・右上の赤ボタンで写真削除"
-                    else
-                        "ピンチで拡大縮小・ダブルタップでズーム切替・左右スワイプで移動",
-                    color = Color.White.copy(alpha = 0.75f),
-                    fontSize = 11.sp
-                )
+                AnimatedVisibility(
+                    visible = showUndoBanner && onUndoDelete != null,
+                    enter = fadeIn() + slideInVertically { it / 2 },
+                    exit = fadeOut() + slideOutVertically { it / 2 }
+                ) {
+                    Surface(
+                        color = Color(0xFF1E293B).copy(alpha = 0.94f),
+                        shape = RoundedCornerShape(24.dp),
+                        shadowElevation = 6.dp,
+                        modifier = Modifier
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                            .testTag("photo_preview_undo_banner")
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(start = 16.dp, end = 6.dp, top = 2.dp, bottom = 2.dp)
+                        ) {
+                            Text(
+                                text = "1枚削除しました",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            TextButton(
+                                onClick = {
+                                    showUndoBanner = false
+                                    if (lastDeletedPageIndex >= 0) {
+                                        pendingRestoreScrollIndex = lastDeletedPageIndex
+                                    }
+                                    onUndoDelete?.invoke()
+                                },
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("photo_preview_undo_button")
+                            ) {
+                                Text(
+                                    text = "元に戻す",
+                                    color = Color(0xFF38BDF8),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = when {
+                            onDeletePhoto != null && !confirmBeforeDelete ->
+                                "ピンチで拡大・右上の削除で即除外・左右スワイプで選別"
+                            onDeletePhoto != null ->
+                                "ピンチで拡大縮小・ダブルタップでズーム・右上の削除ボタンで削除"
+                            else ->
+                                "ピンチで拡大縮小・ダブルタップでズーム切替・左右スワイプで移動"
+                        },
+                        color = Color.White.copy(alpha = 0.75f),
+                        fontSize = 11.sp
+                    )
+                }
             }
         }
     }

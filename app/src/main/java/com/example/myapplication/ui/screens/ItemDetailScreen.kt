@@ -55,7 +55,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,6 +90,7 @@ fun ItemDetailScreen(
     onNavigateBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val defaultSettings by viewModel.defaultSettings.collectAsState()
     val isPcServerConnected by viewModel.isPcServerConnected.collectAsState()
 
@@ -138,6 +141,22 @@ fun ItemDetailScreen(
             isPcServerConnected = isPcServerConnected,
             onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },
             onFetchOriginal = { hash -> viewModel.fetchOriginalPhotoCacheFile(hash) },
+            confirmBeforeDelete = true,
+            onDeletePhoto = { deleteIdx ->
+                val targetPhoto = photos.getOrNull(deleteIdx) ?: return@PhotoPreviewDialog
+                viewModel.removePhotoFromItem(currentItem.id, targetPhoto.id) { removed ->
+                    if (removed) {
+                        scope.launch {
+                            val refreshed = viewModel.getItemById(currentItem.id)
+                            itemWithPhotos = refreshed
+                            if (refreshed == null || refreshed.photos.isEmpty()) {
+                                previewStartIndex = null
+                            }
+                            Toast.makeText(context, "写真を削除しました", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+            },
             onDismiss = { previewStartIndex = null }
         )
     }

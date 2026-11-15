@@ -103,6 +103,11 @@ import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
 
+private sealed class DeletedEditPhoto(open val index: Int) {
+    data class Existing(override val index: Int, val path: String) : DeletedEditPhoto(index)
+    data class NewUri(override val index: Int, val uri: Uri) : DeletedEditPhoto(index)
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun ItemEditScreen(
@@ -149,6 +154,7 @@ fun ItemEditScreen(
     var initialExistingFilePaths by remember(itemId) { mutableStateOf<List<String>>(emptyList()) }
     val loadedPhotosByPath = remember(itemId) { mutableStateMapOf<String, PhotoEntity>() }
     var previewStartIndex by remember(itemId) { mutableStateOf<Int?>(null) }
+    var lastDeletedPreviewPhoto by remember(itemId) { mutableStateOf<DeletedEditPhoto?>(null) }
     var isInitialized by remember(itemId) { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
 
@@ -335,17 +341,38 @@ fun ItemEditScreen(
                 isPcServerConnected = isPcServerConnected,
                 onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },
                 onFetchOriginal = { hash -> viewModel.fetchOriginalPhotoCacheFile(hash) },
+                confirmBeforeDelete = false,
                 onDeletePhoto = { deleteIdx ->
                     if (deleteIdx in existingFilePaths.indices) {
-                        existingFilePaths.removeAt(deleteIdx)
+                        val removedPath = existingFilePaths.removeAt(deleteIdx)
+                        lastDeletedPreviewPhoto = DeletedEditPhoto.Existing(deleteIdx, removedPath)
                     } else {
                         val newIdx = deleteIdx - existingFilePaths.size
                         if (newIdx in newImageUris.indices) {
-                            newImageUris.removeAt(newIdx)
+                            val removedUri = newImageUris.removeAt(newIdx)
+                            lastDeletedPreviewPhoto = DeletedEditPhoto.NewUri(newIdx, removedUri)
                         }
                     }
                     if (existingFilePaths.isEmpty() && newImageUris.isEmpty()) {
                         previewStartIndex = null
+                    }
+                },
+                onUndoDelete = {
+                    val deleted = lastDeletedPreviewPhoto ?: return@PhotoPreviewDialog
+                    lastDeletedPreviewPhoto = null
+                    when (deleted) {
+                        is DeletedEditPhoto.Existing -> {
+                            existingFilePaths.add(
+                                deleted.index.coerceIn(0, existingFilePaths.size),
+                                deleted.path
+                            )
+                        }
+                        is DeletedEditPhoto.NewUri -> {
+                            newImageUris.add(
+                                deleted.index.coerceIn(0, newImageUris.size),
+                                deleted.uri
+                            )
+                        }
                     }
                 },
                 onDismiss = { previewStartIndex = null }

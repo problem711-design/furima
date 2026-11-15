@@ -158,6 +158,9 @@ fun CameraXCaptureDialog(
     val storageManager = remember(context) { PhotoStorageManager(context) }
 
     var capturedPaths by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var pendingDiscardPaths by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var previewCapturedIndex by rememberSaveable { mutableStateOf<Int?>(null) }
+    var lastDeletedShot by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var flashMode by rememberSaveable { mutableIntStateOf(ImageCapture.FLASH_MODE_OFF) }
     var isTorchOn by rememberSaveable { mutableStateOf(false) }
     var guideModeOrdinal by rememberSaveable { mutableIntStateOf(CameraGuideMode.GRID_3X3.ordinal) }
@@ -208,10 +211,22 @@ fun CameraXCaptureDialog(
         }
     }
 
+    val purgePendingDiscards = {
+        pendingDiscardPaths.forEach { path ->
+            try {
+                File(path).delete()
+            } catch (_: Exception) {
+            }
+        }
+        pendingDiscardPaths = emptyList()
+        lastDeletedShot = null
+    }
+
     val handleCloseRequest: () -> Unit = {
         if (capturedPaths.isNotEmpty()) {
             showCloseConfirm = true
         } else {
+            purgePendingDiscards()
             onDismiss()
         }
     }
@@ -227,6 +242,7 @@ fun CameraXCaptureDialog(
                 Button(
                     onClick = {
                         showCloseConfirm = false
+                        purgePendingDiscards()
                         onPhotosCaptured(capturedPaths)
                     },
                     modifier = Modifier.testTag("camerax_confirm_save_close")
@@ -248,6 +264,7 @@ fun CameraXCaptureDialog(
                                 }
                             }
                             capturedPaths = emptyList()
+                            purgePendingDiscards()
                             showCloseConfirm = false
                             onDismiss()
                         },
@@ -795,10 +812,16 @@ fun CameraXCaptureDialog(
                                     .size(48.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .border(1.5.dp, Color.White, RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        if (capturedPaths.isNotEmpty()) {
+                                            previewCapturedIndex = capturedPaths.lastIndex
+                                        }
+                                    }
+                                    .testTag("camerax_thumbnail_preview_button")
                             ) {
                                 AsyncImage(
                                     model = File(latestPath),
-                                    contentDescription = "直前の撮影写真",
+                                    contentDescription = "直前の撮影写真を拡大プレビュー・選別",
                                     contentScale = ContentScale.Crop,
                                     modifier = Modifier.fillMaxSize()
                                 )
@@ -913,7 +936,10 @@ fun CameraXCaptureDialog(
                     ) {
                         Button(
                             enabled = capturedPaths.isNotEmpty() && !isCapturing,
-                            onClick = { onPhotosCaptured(capturedPaths) },
+                            onClick = {
+                                purgePendingDiscards()
+                                onPhotosCaptured(capturedPaths)
+                            },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 disabledContainerColor = Color.White.copy(alpha = 0.16f)
@@ -940,6 +966,45 @@ fun CameraXCaptureDialog(
                         }
                     }
                 }
+            }
+
+            val openPreviewIdx = previewCapturedIndex
+            if (openPreviewIdx != null && capturedPaths.isNotEmpty()) {
+                val previewItems = remember(capturedPaths) {
+                    capturedPaths.map { path ->
+                        PreviewPhotoItem(model = File(path), hasLocalOriginal = true)
+                    }
+                }
+                PhotoPreviewDialog(
+                    photos = previewItems,
+                    initialIndex = openPreviewIdx.coerceIn(0, previewItems.lastIndex),
+                    isPcServerConnected = false,
+                    confirmBeforeDelete = false,
+                    onDeletePhoto = { deleteIdx ->
+                        if (deleteIdx in capturedPaths.indices) {
+                            val removedPath = capturedPaths[deleteIdx]
+                            lastDeletedShot = deleteIdx to removedPath
+                            pendingDiscardPaths = pendingDiscardPaths + removedPath
+                            val updated = capturedPaths.toMutableList().apply { removeAt(deleteIdx) }
+                            capturedPaths = updated
+                            if (updated.isEmpty()) {
+                                previewCapturedIndex = null
+                            }
+                        }
+                    },
+                    onUndoDelete = {
+                        val deleted = lastDeletedShot ?: return@PhotoPreviewDialog
+                        val (restoreIdx, restorePath) = deleted
+                        lastDeletedShot = null
+                        if (File(restorePath).exists()) {
+                            pendingDiscardPaths = pendingDiscardPaths - restorePath
+                            val updated = capturedPaths.toMutableList()
+                            updated.add(restoreIdx.coerceIn(0, updated.size), restorePath)
+                            capturedPaths = updated
+                        }
+                    },
+                    onDismiss = { previewCapturedIndex = null }
+                )
             }
         }
 }

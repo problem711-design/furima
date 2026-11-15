@@ -411,6 +411,18 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    fun removePhotoFromItem(itemId: Int, photoId: Int, onResult: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val removed = withContext(Dispatchers.IO) {
+                repository.removePhotoFromItem(itemId, photoId)
+            }
+            if (removed) {
+                triggerAutoSync()
+            }
+            onResult(removed)
+        }
+    }
+
     fun mergeSelectedItems(
         mergedTitle: String,
         mergedDescription: String,

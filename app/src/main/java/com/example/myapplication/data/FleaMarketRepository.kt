@@ -269,6 +269,55 @@ class FleaMarketRepository(private val context: Context) {
         return itemId.toLong()
     }
 
+    suspend fun removePhotoFromItem(itemId: Int, photoId: Int): Boolean {
+        val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: return false
+        val targetPhoto = itemWithPhotos.photos.firstOrNull { it.id == photoId } ?: return false
+        val remaining = itemWithPhotos.photos.filter { it.id != photoId }
+
+        val keptPaths = remaining.flatMap {
+            listOfNotNull(
+                it.filePath.takeIf { p -> p.isNotBlank() },
+                it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+            )
+        }.toSet()
+        val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+            listOfNotNull(
+                it.filePath.takeIf { p -> p.isNotBlank() },
+                it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+            )
+        }.toSet()
+
+        if (targetPhoto.filePath.isNotBlank() &&
+            !keptPaths.contains(targetPhoto.filePath) &&
+            !otherReferencedPaths.contains(targetPhoto.filePath)
+        ) {
+            try {
+                File(targetPhoto.filePath).delete()
+            } catch (_: Exception) {
+            }
+        }
+        if (!targetPhoto.thumbnailPath.isNullOrBlank() &&
+            !keptPaths.contains(targetPhoto.thumbnailPath) &&
+            !otherReferencedPaths.contains(targetPhoto.thumbnailPath)
+        ) {
+            try {
+                File(targetPhoto.thumbnailPath).delete()
+            } catch (_: Exception) {
+            }
+        }
+
+        val now = System.currentTimeMillis()
+        val reindexed = remaining.mapIndexed { idx, photo ->
+            photo.copy(displayOrder = idx, updatedAt = now)
+        }
+        dao.deletePhotosByItemId(itemId)
+        if (reindexed.isNotEmpty()) {
+            dao.insertPhotos(reindexed)
+        }
+        dao.updateItem(itemWithPhotos.item.copy(updatedAt = now, isDirty = true))
+        return true
+    }
+
     suspend fun updateItemStatus(item: ItemEntity, newStatus: String) {
         val now = System.currentTimeMillis()
         val soldAt = if (newStatus == "SOLD") (item.soldAt ?: now) else null

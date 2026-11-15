@@ -35,7 +35,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 1)** （正式リリース・フェーズ 3.2 全機能統合 ＆ PCサーバー `winexe`/終了時ロック解放 ＆ コンパイル修正完了）
+現在のバージョン：**`v1.0.0` (Build 2)** （プレビュー即削除・Undo＆カメラ内プレビュー選別統合 ＆ 全画面対応完了）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -89,6 +89,17 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/15 サムネイル拡大プレビュー即削除 ＆ カメラ内連続選別強化 バージョン 1.0.0 (Build 2)
+- **`PhotoPreviewDialog.kt` 連続選別対応 ＆ クラッシュ・タップ領域修正**：
+  - 削除操作を `confirmBeforeDelete` フラグでモード分離し、撮影・編集中のプレビューでは右上の赤色ゴミ箱ボタン（`48.dp`）から**1タップで即時削除**できる高速ワークフローを実装。削除時は下部フローティングピル（「1枚削除しました — 元に戻す」・3.5秒自動消去）で誤削除を即座に元位置へ復元可能。
+  - 最終ページ削除時や空リスト遷移時の `IndexOutOfBoundsException` 防止（`getOrNull` ガード＋`LaunchedEffect` ページクランプ＋空リスト自動クローズ）と、48dp タッチターゲット（閉じる／削除）への適正化を実施。
+- **`CameraXCaptureDialog.kt` 撮影直後プレビュー・削除選別統合**：
+  - 左下サムネイル（`camerax_thumbnail_preview_button`）をタップ可能にし、カメラ画面を閉じずに撮影済み写真を全画面スワイプ確認 ➔ 不要カットを1タップ即削除（＋Undo）➔ 続けて撮影または確定できる連続選別フローを完成。破棄された一時ファイルは確定／破棄クローズ時に確実に掃除。
+- **`ItemEditScreen.kt` ＆ `ItemDetailScreen.kt` プレビュー削除連携**：
+  - `ItemEditScreen.kt` のプレビュー削除に1タップ即時削除＋元位置Undo復元を追加。
+  - `ItemDetailScreen.kt` の写真一覧プレビューにも確認ダイアログ付き削除（`FleaMarketRepository.removePhotoFromItem` / `FleaMarketViewModel.removePhotoFromItem`）を実装し、他商品未参照ファイルの整理・`displayOrder` 再採番・自動同期に対応。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 2`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 2)`** へ3箇所同時統一。
 
 ### 2026/11/15 スマホ設定タブのテンプレートプルダウン化 ＆ 編集画面スクロール修正 ＆ PC管理画面エラー修復
 - **スマホ設定タブのテンプレート管理プルダウン化 (`SettingsStorageScreen.kt`)**：タイトル用・商品説明用テンプレートの一覧を Material 3 の `ExposedDropdownMenuBox`（プルダウンメニュー）式へ刷新し、選択・プレビュー・編集・削除をすっきりと管理できるように改善。
