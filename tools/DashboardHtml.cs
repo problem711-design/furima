@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 100)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 1)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -459,7 +459,7 @@ public static class DashboardHtml
 
     <!-- 新規商品追加モーダル (スマホ同等UI) -->
     <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeAddModal()'>
-        <div class='bg-white rounded-xl max-w-xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+        <div class='bg-white rounded-xl max-w-2xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-emerald-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
                     <i class='fa-solid fa-plus text-lg'></i>
@@ -467,7 +467,7 @@ public static class DashboardHtml
                 </div>
                 <button onclick='closeAddModal()' class='text-emerald-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='p-5 space-y-4 text-xs max-h-[78vh] overflow-y-auto custom-scroll'>
+            <div class='p-5 space-y-4 text-xs max-h-[88vh] overflow-y-auto custom-scroll'>
                 <!-- ① 商品写真セクション -->
                 <div class='space-y-2'>
                     <div class='flex items-center justify-between'>
@@ -476,14 +476,7 @@ public static class DashboardHtml
                         </label>
                         <span class='text-[10px] text-slate-400'>※ 登録確定時にアップロードされます</span>
                     </div>
-                    <div class='flex flex-wrap gap-2 items-center'>
-                        <div id='add-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
-                        <div id='add-photo-drop-zone' class='w-20 h-20 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
-                            <i class='fa-solid fa-plus text-emerald-600 text-sm mb-0.5'></i>
-                            <span class='text-[9px] font-bold text-emerald-800'>写真追加</span>
-                            <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
-                        </div>
-                    </div>
+                    <div id='add-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                 </div>
 
                 <!-- ② 商品基本情報 -->
@@ -502,12 +495,12 @@ public static class DashboardHtml
 
                 <div>
                     <div class='flex justify-between items-center mb-1 gap-2'>
-                        <label class='font-bold text-slate-700'>商品説明文</label>
+                        <label class='font-bold text-slate-700'>商品説明文 (表示・編集領域拡大)</label>
                         <select id='add-desc-tpl-select' onchange='applyTemplateSelect(""add-description"", this, false)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[180px]'>
                             <option value=''>説明定型文を挿入...</option>
                         </select>
                     </div>
-                    <textarea id='add-description' rows='8' oninput='updateModalValidation(""add"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='商品の状態や詳細をご入力ください...'></textarea>
+                    <textarea id='add-description' rows='12' oninput='updateModalValidation(""add"")' class='w-full p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500 min-h-[220px]' placeholder='商品の状態や詳細をご入力ください...'></textarea>
                 </div>
 
                 <!-- ステータス選択チップ -->
@@ -610,7 +603,7 @@ public static class DashboardHtml
                 </div>
                 <button onclick='closeEditModal()' class='text-indigo-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='p-5 space-y-4 text-xs max-h-[78vh] overflow-y-auto custom-scroll'>
+            <div class='p-5 space-y-4 text-xs max-h-[88vh] overflow-y-auto custom-scroll'>
                 <input type='hidden' id='edit-id'>
 
                 <!-- ① 商品写真管理セクション -->
@@ -623,14 +616,7 @@ public static class DashboardHtml
                             <i class='fa-regular fa-folder-open'></i> PCフォルダを開く
                         </button>
                     </div>
-                    <div class='flex flex-wrap gap-2 items-center'>
-                        <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
-                        <div id='edit-photo-drop-zone' class='w-20 h-20 border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
-                            <i class='fa-solid fa-plus text-indigo-600 text-sm mb-0.5'></i>
-                            <span class='text-[9px] font-bold text-indigo-800'>写真追加</span>
-                            <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
-                        </div>
-                    </div>
+                    <div id='edit-photo-preview-grid' class='flex flex-wrap gap-2 items-center'></div>
                 </div>
 
                 <!-- ② 商品基本情報 -->
@@ -652,7 +638,7 @@ public static class DashboardHtml
 
                 <div>
                     <div class='flex justify-between items-center mb-1 gap-2'>
-                        <label class='font-bold text-slate-700'>商品説明文</label>
+                        <label class='font-bold text-slate-700'>商品説明文 (表示・編集領域拡大)</label>
                         <div class='flex items-center gap-2'>
                             <button type='button' onclick='copyText(document.getElementById(""edit-description"").value, ""商品説明"", this)' class='px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[10px] font-bold text-slate-700 flex items-center gap-1 transition'>
                                 <i class='fa-regular fa-copy text-indigo-600'></i> コピー
@@ -662,7 +648,7 @@ public static class DashboardHtml
                             </select>
                         </div>
                     </div>
-                    <textarea id='edit-description' rows='8' oninput='updateModalValidation(""edit"")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'></textarea>
+                    <textarea id='edit-description' rows='12' oninput='updateModalValidation(""edit"")' class='w-full p-2.5 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 min-h-[220px]'></textarea>
                 </div>
 
                 <!-- ステータス選択チップ -->
@@ -2508,12 +2494,13 @@ public static class DashboardHtml
             if (countElem) countElem.innerText = photos.length;
             if (!grid) return;
 
-            if (photos.length === 0) {
-                grid.innerHTML = '';
-                return;
-            }
+            const dropZoneHtml = `<div id='edit-photo-drop-zone' onclick='document.getElementById(""edit-photo-input"").click()' class='w-20 h-20 border-2 border-dashed border-indigo-300 hover:border-indigo-500 bg-indigo-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
+                <i class='fa-solid fa-plus text-indigo-600 text-sm mb-0.5'></i>
+                <span class='text-[9px] font-bold text-indigo-800'>写真追加</span>
+                <input type='file' id='edit-photo-input' accept='image/*' multiple class='hidden' onchange='handleEditPhotoInputChange(event)'>
+            </div>`;
 
-            grid.innerHTML = photos.map((p, idx) => {
+            const thumbnailsHtml = photos.map((p, idx) => {
                 const url = p.md5Hash ? '/api/photos/' + p.md5Hash : (p.photoUrl || '');
                 const hash = p.md5Hash || '';
                 return `<div class='relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0 group'>
@@ -2522,6 +2509,9 @@ public static class DashboardHtml
                     ${hash ? `<button type='button' onclick='deleteEditPhotoByIdx(${item.id}, ${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='写真を削除'><i class='fa-solid fa-xmark'></i></button>` : ''}
                 </div>`;
             }).join('');
+
+            grid.innerHTML = thumbnailsHtml + dropZoneHtml;
+            setupModalPhotoDropZone('edit-photo-drop-zone', (files) => uploadEditPhotoFiles(files));
         }
 
         async function handleEditPhotoInputChange(e) {
@@ -2800,18 +2790,22 @@ public static class DashboardHtml
             if (countElem) countElem.innerText = pendingAddPhotoFiles.length;
             if (!grid) return;
 
-            if (pendingAddPhotoFiles.length === 0) {
-                grid.innerHTML = '';
-                return;
-            }
+            const dropZoneHtml = `<div id='add-photo-drop-zone' onclick='document.getElementById(""add-photo-input"").click()' class='w-20 h-20 border-2 border-dashed border-emerald-300 hover:border-emerald-500 bg-emerald-50/50 rounded-lg flex flex-col items-center justify-center text-center transition cursor-pointer shrink-0' title='クリックまたはD&Dで写真追加'>
+                <i class='fa-solid fa-plus text-emerald-600 text-sm mb-0.5'></i>
+                <span class='text-[9px] font-bold text-emerald-800'>写真追加</span>
+                <input type='file' id='add-photo-input' accept='image/*' multiple class='hidden' onchange='handleAddPhotoInputChange(event)'>
+            </div>`;
 
-            grid.innerHTML = pendingAddPhotoFiles.map((entry, idx) => `
+            const thumbnailsHtml = pendingAddPhotoFiles.map((entry, idx) => `
                 <div class='relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0'>
                     <img src='${entry.previewUrl}' class='w-full h-full object-cover'>
                     <span class='absolute top-1 left-1 bg-black/60 text-white text-[9px] font-mono px-1 rounded'>#${idx + 1}</span>
                     <button type='button' onclick='removePendingAddPhoto(${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='選択から除外'><i class='fa-solid fa-xmark'></i></button>
                 </div>
             `).join('');
+
+            grid.innerHTML = thumbnailsHtml + dropZoneHtml;
+            setupModalPhotoDropZone('add-photo-drop-zone', addPendingPhotos);
         }
 
         async function openAddModal() {

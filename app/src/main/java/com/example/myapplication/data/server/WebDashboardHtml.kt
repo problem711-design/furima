@@ -25,7 +25,7 @@ object WebDashboardHtml {
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.0.0</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.0.0 (Build 1)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -178,8 +178,8 @@ object WebDashboardHtml {
                 </div>
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">商品説明文</label>
-                    <textarea id="form-description" rows="8" placeholder="商品の状態、サイズ、購入時期、注意事項などを記入（メルカリ出品時にワンクリックコピーできます）" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none custom-scroll"></textarea>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">商品説明文 (表示・編集領域拡大)</label>
+                    <textarea id="form-description" rows="12" placeholder="商品の状態、サイズ、購入時期、注意事項などを記入（メルカリ出品時にワンクリックコピーできます）" class="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none custom-scroll min-h-[220px]"></textarea>
                 </div>
 
                 <div class="grid grid-cols-2 gap-4">
