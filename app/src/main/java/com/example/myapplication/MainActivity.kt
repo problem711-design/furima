@@ -41,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import coil.Coil
@@ -109,22 +110,36 @@ fun FleaMarketApp() {
         }
     }
 
-    // フェーズ 5-4: 「Museに送る」承認ダイアログ (NavHost の外側のアプリレベルオーバーレイ, Q3)。
-    // どのタブ・詳細・編集画面にいても承認できる。承認はアプリがフォアグラウンドの間に届く。
-    val pendingClaudeApproval by viewModel.pendingClaudeApproval.collectAsState()
-    pendingClaudeApproval?.let { job ->
+    // フェーズ 5-4 / 6-2: 「Museに送る」一括承認ダイアログ (NavHost の外側のアプリレベルオーバーレイ, Q3)。
+    // 承認はアプリがフォアグラウンドの間に届く。フェーズ 6-2 (6-2-7) で画面連動の抑止を追加:
+    // 商品編集画面にいる間は、承認待ちが全てスマホ発の場合に限り表示を抑止する
+    // (編集画面には帯が出る。PC 発が混ざる場合と、帯タップで解除された場合は即時表示)。
+    // 「いったん閉じる」で非表示にした分は、新しい承認待ちが来るまで再表示しない (6-2-2)。
+    val pendingClaudeApprovals by viewModel.pendingClaudeApprovals.collectAsState()
+    val dismissedClaudeApprovalIds by viewModel.dismissedClaudeApprovalIds.collectAsState()
+    val claudeApprovalThumbnails by viewModel.pendingClaudeApprovalThumbnails.collectAsState()
+    val claudeApprovalPeekRequested by viewModel.claudeApprovalPeekRequested.collectAsState()
+    val currentBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = currentBackStackEntry?.destination?.route ?: ""
+    val inItemEditScreen = currentRoute.startsWith("item_edit")
+    val visibleClaudeApprovals = pendingClaudeApprovals.filter { !dismissedClaudeApprovalIds.contains(it.jobId) }
+    val anyPcOriginPending = visibleClaudeApprovals.any { it.origin == "pc" }
+    val showClaudeApprovalDialog = visibleClaudeApprovals.isNotEmpty() &&
+        (!inItemEditScreen || anyPcOriginPending || claudeApprovalPeekRequested)
+    if (showClaudeApprovalDialog) {
         ClaudeApprovalDialog(
-            job = job,
+            jobs = visibleClaudeApprovals.take(10),
+            totalPendingCount = visibleClaudeApprovals.size,
+            thumbnails = claudeApprovalThumbnails,
             isProcessing = claudeActionInProgress,
-            onApprove = { viewModel.respondToClaudeApproval(job.jobId, true) },
-            onDeny = { viewModel.respondToClaudeApproval(job.jobId, false) },
+            onRespond = { checkedIds, displayedIds -> viewModel.respondToClaudeApprovals(checkedIds, displayedIds) },
             onCloseForNow = { viewModel.dismissClaudeApprovalForNow() }
         )
     }
 
-    // フェーズ 5-5: 完了通知ダイアログ (承認ダイアログが無い時だけ表示。確認は全端末で共有される)
+    // フェーズ 5-5: 完了通知ダイアログ (承認待ちが無い時だけ表示。確認は全端末で共有される)
     val unackedClaudeCompletions by viewModel.unackedClaudeCompletions.collectAsState()
-    if (pendingClaudeApproval == null) {
+    if (pendingClaudeApprovals.isEmpty()) {
         unackedClaudeCompletions.minByOrNull { it.createdAt }?.let { job ->
             ClaudeCompletionDialog(
                 job = job,

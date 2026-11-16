@@ -64,6 +64,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -128,6 +129,8 @@ fun ItemEditScreen(
     val defaultSettings by viewModel.defaultSettings.collectAsState()
     val isPcServerConnected by viewModel.isPcServerConnected.collectAsState()
     val lastSyncSuccessAt by viewModel.lastSyncSuccessAt.collectAsState()
+    // フェーズ 6-2 (6-2-7): 編集画面の承認待ちの帯表示用
+    val pendingClaudeApprovals by viewModel.pendingClaudeApprovals.collectAsState()
 
     var titleFieldValue by remember { mutableStateOf(TextFieldValue("")) }
     var descriptionFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -571,6 +574,25 @@ fun ItemEditScreen(
                 .padding(16.dp)
                 .verticalScroll(rememberScrollState())
         ) {
+            // フェーズ 6-2 (6-2-7): 承認待ちがある間は帯で知らせる (ダイアログは編集画面では画面連動で抑止される)。
+            // タップすると抑止が解除され、アプリレベルの一括承認ダイアログが開く。
+            if (pendingClaudeApprovals.isNotEmpty()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.requestClaudeApprovalPeek() }
+                ) {
+                    Text(
+                        text = "Muse承認待ち ${pendingClaudeApprovals.size} 件（タップで確認）",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
             // ① 写真セクション（動線改善：撮影ボタンをメイン・大ボタンに配置）
             Text(
                 text = "📸 商品写真 (${existingFilePaths.size + newImageUris.size}枚)",

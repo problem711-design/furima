@@ -854,8 +854,22 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     @Volatile private var lastKnownClaudeRevision: Long = -1L
 
     // フェーズ 5-4: 承認待ちジョブと未確認の完了ジョブ (ハートビート第3分岐で更新)
-    private val _pendingClaudeApproval = MutableStateFlow<com.example.myapplication.data.server.ClaudeJobDto?>(null)
-    val pendingClaudeApproval: StateFlow<com.example.myapplication.data.server.ClaudeJobDto?> = _pendingClaudeApproval.asStateFlow()
+    // フェーズ 6-2: 承認待ちは単体から一覧 (createdAt 昇順) へ拡張した。
+    private val _pendingClaudeApprovals = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
+    val pendingClaudeApprovals: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _pendingClaudeApprovals.asStateFlow()
+
+    // フェーズ 6-2 (6-2-2): 「いったん閉じる」で非表示にした承認待ちのジョブID集合。
+    // この集合に含まれない承認待ちが新たに現れた場合にだけダイアログを再表示する。
+    private val _dismissedClaudeApprovalIds = MutableStateFlow<Set<String>>(emptySet())
+    val dismissedClaudeApprovalIds: StateFlow<Set<String>> = _dismissedClaudeApprovalIds.asStateFlow()
+
+    // フェーズ 6-2 (6-2-3): 承認待ちジョブのサムネイル (jobId → ローカルパス)。解決できなかったジョブは含まない。
+    private val _pendingClaudeApprovalThumbnails = MutableStateFlow<Map<String, String>>(emptyMap())
+    val pendingClaudeApprovalThumbnails: StateFlow<Map<String, String>> = _pendingClaudeApprovalThumbnails.asStateFlow()
+
+    // フェーズ 6-2 (6-2-7): 編集画面の帯タップによる表示抑止の解除フラグ。
+    private val _claudeApprovalPeekRequested = MutableStateFlow(false)
+    val claudeApprovalPeekRequested: StateFlow<Boolean> = _claudeApprovalPeekRequested.asStateFlow()
 
     private val _unackedClaudeCompletions = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
     val unackedClaudeCompletions: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _unackedClaudeCompletions.asStateFlow()
@@ -872,11 +886,20 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         _claudeActionMessage.value = null
     }
 
-    // Build 13 (13-4): 「いったん閉じる」。サーバー側の状態は変えず、この端末の表示だけを閉じる。
-    // 承認待ちは次回の状態再取得 (リビジョン変化時・アプリ再起動時) で再表示され、
-    // サーバー側では10分で queued へ自動復帰する。完了の未確認は PC 側からも確認できる。
+    // Build 13 (13-4) / フェーズ 6-2 (6-2-2, 16-3): 「いったん閉じる」。
+    // サーバー側の状態は変えず、この端末の表示だけを閉じる。現在の承認待ち全件を
+    // 非表示集合へ入れ、抑止解除フラグは false へ戻す (編集画面にいる場合は帯表示に戻る)。
+    // 承認待ちはサーバー側では10分で待機へ自動復帰する。完了の未確認は PC 側からも確認できる。
     fun dismissClaudeApprovalForNow() {
-        _pendingClaudeApproval.value = null
+        _dismissedClaudeApprovalIds.value = _pendingClaudeApprovals.value.map { it.jobId }.toSet()
+        _claudeApprovalPeekRequested.value = false
+    }
+
+    // フェーズ 6-2 (6-2-7, 16-3): 編集画面の帯タップ。表示抑止を解除し、
+    // 非表示集合もクリアしてダイアログを出す (クリアしないと一度閉じた後に帯を押しても開かない)。
+    fun requestClaudeApprovalPeek() {
+        _dismissedClaudeApprovalIds.value = emptySet()
+        _claudeApprovalPeekRequested.value = true
     }
 
     fun dismissClaudeCompletionForNow(jobId: String) {
@@ -910,23 +933,66 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // フェーズ 5-4: Claude ジョブ状態の再取得。成功時のみ true を返し、StateFlow を更新する。
+    // フェーズ 5-4 / 6-2: Claude ジョブ状態の再取得。成功時のみ true を返し、StateFlow を更新する。
     private suspend fun refreshClaudeJobStates(url: String, token: String): Boolean {
         val jobs = pcServerClient.fetchClaudeJobs(url, token) ?: return false
-        _pendingClaudeApproval.value = jobs
+        val pending = jobs
             .filter { it.status == "approval_pending" }
-            .minByOrNull { it.createdAt }
+            .sortedBy { it.createdAt }
+        _pendingClaudeApprovals.value = pending
+        // 非表示集合は、まだ承認待ちとして残っている ID だけに掃除する
+        val pendingIds = pending.map { it.jobId }.toSet()
+        _dismissedClaudeApprovalIds.value = _dismissedClaudeApprovalIds.value.intersect(pendingIds)
+        if (pending.isEmpty()) {
+            _claudeApprovalPeekRequested.value = false
+        }
+        _pendingClaudeApprovalThumbnails.value = resolveClaudeApprovalThumbnails(pending)
         _unackedClaudeCompletions.value = jobs.filter {
             (it.status == "done" || it.status == "done_with_errors") && !it.acknowledged
         }
         return true
     }
 
-    // フェーズ 5-4 / Build 13 (13-4): 承認ダイアログからの応答。
-    // 成功したら対象をクリアし、最新状態へ整合させる。失敗時も状態を再取得し、
-    // サーバー側で既に遷移済み (二度押し等) ならエラー表示せず正常終了として閉じる。
-    // 対象がまだ承認待ちのままなら、理由をワンショットメッセージで知らせる。
-    fun respondToClaudeApproval(jobId: String, approved: Boolean) {
+    // フェーズ 6-2 (6-2-3): 承認待ちジョブのサムネイル解決。
+    // (1) 先頭写真の md5 → 写真エンティティ、(2) itemUuid → 商品の先頭写真、
+    // (3) いずれも無ければプレースホルダ表示 (マップに含めない)。job.itemId は端末間で一致しないため使わない。
+    private suspend fun resolveClaudeApprovalThumbnails(
+        pending: List<com.example.myapplication.data.server.ClaudeJobDto>
+    ): Map<String, String> {
+        val result = mutableMapOf<String, String>()
+        for (job in pending) {
+            try {
+                var path: String? = null
+                val md5 = job.photos.firstOrNull()?.md5 ?: ""
+                if (md5.isNotBlank()) {
+                    val photo = repository.getPhotoByMd5(md5)
+                    if (photo != null) {
+                        path = photo.thumbnailPath ?: photo.filePath
+                    }
+                }
+                if (path == null && job.itemUuid.isNotBlank()) {
+                    val withPhotos = repository.getItemWithPhotosBySyncUuid(job.itemUuid)
+                    val first = withPhotos?.photos?.minByOrNull { it.displayOrder }
+                    if (first != null) {
+                        path = first.thumbnailPath ?: first.filePath
+                    }
+                }
+                if (!path.isNullOrBlank()) {
+                    result[job.jobId] = path
+                }
+            } catch (_: Exception) {
+                // サムネイル解決の失敗では承認フロー自体を止めない (プレースホルダ表示になる)
+            }
+        }
+        return result
+    }
+
+    // フェーズ 6-2 (6-2-5): 一括承認ダイアログからの応答。
+    // 対象は displayedIds (ダイアログに表示した最大10件) に厳密限定する (未表示分には触れない)。
+    // チェック済みは古い順に1件ずつ承認し、途中で失敗したらそこで停止して件数を報告する
+    // (未処理分は承認待ちのまま残り、待機戻しも行わない)。
+    // 表示分のうち未チェック分は待機へ移動する (失敗しても継続し、最後に集計を報告する)。
+    fun respondToClaudeApprovals(checkedIds: Set<String>, displayedIds: List<String>) {
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return
@@ -934,23 +1000,53 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         _claudeActionInProgress.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val ok = pcServerClient.postClaudeApproval(jobId, approved, url, token)
-                if (ok) {
-                    if (_pendingClaudeApproval.value?.jobId == jobId) {
-                        _pendingClaudeApproval.value = null
+                var approvedCount = 0
+                var approveFailed = false
+                for (jobId in displayedIds) {
+                    if (!checkedIds.contains(jobId)) continue
+                    val ok = pcServerClient.postClaudeApproval(jobId, true, url, token)
+                    if (ok) {
+                        approvedCount++
+                    } else {
+                        approveFailed = true
+                        break
                     }
-                    try {
-                        refreshClaudeJobStates(url, token)
-                    } catch (_: Exception) {
+                }
+                var movedCount = 0
+                var moveFailedCount = 0
+                if (!approveFailed) {
+                    for (jobId in displayedIds) {
+                        if (checkedIds.contains(jobId)) continue
+                        val ok = pcServerClient.postClaudeJobMove(jobId, "waiting", url, token)
+                        if (ok) {
+                            movedCount++
+                        } else {
+                            moveFailedCount++
+                        }
                     }
+                }
+                try {
+                    refreshClaudeJobStates(url, token)
+                } catch (_: Exception) {
+                }
+                _dismissedClaudeApprovalIds.value = emptySet()
+                _claudeApprovalPeekRequested.value = false
+                val messages = mutableListOf<String>()
+                if (approvedCount > 0) {
+                    messages.add("${approvedCount}件を承認しました")
+                }
+                if (approveFailed) {
+                    messages.add("途中で送信に失敗したため停止しました（残りは承認待ちのままです）")
                 } else {
-                    try {
-                        refreshClaudeJobStates(url, token)
-                    } catch (_: Exception) {
+                    if (movedCount > 0) {
+                        messages.add("${movedCount}件を待機へ戻しました")
                     }
-                    if (_pendingClaudeApproval.value?.jobId == jobId) {
-                        _claudeActionMessage.value = "PCサーバーへ応答を送信できませんでした。接続を確認してもう一度お試しください。"
+                    if (moveFailedCount > 0) {
+                        messages.add("${moveFailedCount}件を待機へ戻せませんでした")
                     }
+                }
+                if (messages.isNotEmpty()) {
+                    _claudeActionMessage.value = messages.joinToString("。")
                 }
             } finally {
                 _claudeActionInProgress.value = false

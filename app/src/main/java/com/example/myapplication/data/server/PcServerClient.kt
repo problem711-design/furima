@@ -335,6 +335,34 @@ class PcServerClient(
         }
     }
 
+    // Claude ジョブの所属リスト移動 (フェーズ 6-1a の move API / 6-2 の一括承認で未チェック分を待機へ戻すために使用)。
+    suspend fun postClaudeJobMove(
+        jobId: String,
+        queue: String,
+        baseUrl: String = getSavedServerUrl(),
+        token: <redacted>
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            // queue は内部定数 (patrol / manual / waiting) のみを渡す前提で JSON を直接組み立てる
+            val body = "{\"queue\":\"$queue\"}".toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/move").post(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string()
+                val parsed = if (!respStr.isNullOrBlank()) {
+                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                } else null
+                parsed?.status == "ok"
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "postClaudeJobMove 例外: ${e.message}", e)
+            false
+        }
+    }
+
     suspend fun fetchAndSyncServerSettings(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')

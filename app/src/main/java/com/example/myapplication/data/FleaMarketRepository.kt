@@ -78,6 +78,11 @@ class FleaMarketRepository(private val context: Context) {
 
     suspend fun getActiveItemsWithPhotosDirect(): List<ItemWithPhotos> = dao.getActiveItemsWithPhotosDirect()
 
+    // フェーズ 6-2: 一括承認ダイアログのサムネイル解決用
+    suspend fun getPhotoByMd5(md5: String): PhotoEntity? = dao.getPhotoByMd5(md5)
+
+    suspend fun getItemWithPhotosBySyncUuid(syncUuid: String): ItemWithPhotos? = dao.getItemWithPhotosBySyncUuid(syncUuid)
+
     fun getTrashedItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getTrashedItemsWithPhotos()
 
     fun getTrashedCount(): Flow<Int> = dao.getTrashedCount()

@@ -126,6 +126,7 @@ data class CreateClaudeJobRequestDto(
 data class ClaudeJobDto(
     @param:Json(name = "jobId") val jobId: String = "",
     @param:Json(name = "itemId") val itemId: Int = 0,
+    @param:Json(name = "itemUuid") val itemUuid: String = "",
     @param:Json(name = "itemTitle") val itemTitle: String = "",
     @param:Json(name = "folderName") val folderName: String = "",
     @param:Json(name = "photos") val photos: List<ClaudeJobPhotoDto> = emptyList(),

@@ -109,6 +109,10 @@ interface ItemDao {
     @Query("SELECT * FROM photos WHERE id = :id")
     suspend fun getPhotoById(id: Int): PhotoEntity?
 
+    // フェーズ 6-2: 一括承認ダイアログのサムネイル解決用 (同一 MD5 が複数行あり得るため LIMIT 1)
+    @Query("SELECT * FROM photos WHERE md5Hash = :md5 LIMIT 1")
+    suspend fun getPhotoByMd5(md5: String): PhotoEntity?
+
     @Query("SELECT * FROM items WHERE mergedParentId IS NULL AND deletedAt IS NULL")
     fun getAllActiveItems(): Flow<List<ItemEntity>>
 
