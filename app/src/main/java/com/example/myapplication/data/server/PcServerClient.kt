@@ -1,6 +1,7 @@
 package com.example.myapplication.data.server
 
 import android.content.Context
+import android.util.Log
 import android.graphics.BitmapFactory
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.PhotoStorageManager
