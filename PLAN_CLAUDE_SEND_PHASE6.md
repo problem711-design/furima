@@ -248,3 +248,89 @@
 - **軽微な確認2件【同意】**: 「下書き」タブ内の `DRAFT`／`DRAFT_DONE` はカードのバッジ色・文言で明確に区別する仕様を 6-4 のサブフェーズで明記する。まとめ親が `SHIPPING` の場合、子の `status` は `MERGED` を維持し、`statusLabel` のみ「まとめ発送準備中」とする（`SOLD` の場合と同型）。
 
 **以上をもって大枠は完全合意とする。** 次は 6-1a から順にサブフェーズ詳細化を行い、本書へ追記してレビューを受ける。詳細化の順序は実装順（6-1a → 6-1b → 6-2 → …）とし、各フェーズの着手は、そのフェーズの詳細化レビュー完了を前提とする。
+
+---
+
+## 11. サブフェーズ詳細（6-1a / 6-1b）（2026-11-16 策定）
+
+大枠合意（§10）を受け、実装順に詳細化する。本節は 6-1a（Build 14）と 6-1b（Build 15）の明細であり、レビュー完了後に着手する。6-2 以降は順次追記する。
+
+### 11.1 6-1a ジョブ基盤の拡張（Build 14）
+
+#### 11.1.1 ジョブストア（`tools/ClaudeJobStore.cs`）
+
+- [ ] `6-1a-1` `ClaudeJob` に2フィールド追加: `queue`（`patrol` / `manual` / `waiting`）、`errorDismissed`（bool）。`CloneJob` の複製リストにも両フィールドを追加する（Build 13 のディープコピー規約）。
+- [ ] `6-1a-2` 保存形式をルートオブジェクトへ移行する（§10 の 7-4）。新形式は `{ "claudeRevision": N, "jobs": [ ... ] }` とし、内部表現クラス（例: `ClaudeJobsFile`）を新設する。読み込み（`LoadJobsLocked`）は先頭の非空白文字で判別する:
+  - `[` の場合（旧形式）: `List<ClaudeJob>` として読み込み、`claudeRevision` の初期値は移行時点の Unix 秒とする。読み込み直後に新形式で保存し直し、移行をその場で確定させる（コンソールに移行ログを1行出す）。
+  - `{` の場合（新形式）: オブジェクトとして読み込み、`claudeRevision` が 0 以下の場合は 1 とする。
+  - 読み込み時のジョブ正規化: `queue` が null・空・不正値なら `manual`。`status` が `approval_expired` なら `status = queued`、`queue = waiting` へ変換する（トークンは当該状態では常に消去済み）。
+- [ ] `6-1a-3` リビジョンの永続化 API を新設する: `GetRevision()`（未読み込みなら読み込んで返す。0 のままなら 1）と `IncrementRevision()`（加算して保存し、新しい値を返す）。保存は `SaveJobsLocked` の新形式に相乗りする。
+- [ ] `6-1a-4` `CreateJob` の初期化に `errorDismissed = false` を追加し、`queue` が null・空なら `manual` に正規化する（作成ハンドラ側が本則の検証と既定値付けを行う。ここは安全網）。
+- [ ] `6-1a-5` `CleanupLocked` の削除条件を変更する（§10 への追加指示事項）: `done` は従来どおり `acknowledged` のみ。**`done_with_errors` は `acknowledged` かつ `errorDismissed` の両方**を必須とする。スマホで完了通知を閉じた（ack）だけでは、PC で未対応のエラー履歴が 30 日で消えないようにするため。`cancelled` / `denied` は従来どおり。
+
+#### 11.1.2 サーバー（`tools/FurimaServerNative.cs`）
+
+- [ ] `6-1a-6` リビジョンの実体をストアへ移す: 静的フィールド `claudeRevision` を廃し、`BumpClaudeRevision()` は `ClaudeJobStore.IncrementRevision()`、`GetClaudeRevision()` は `ClaudeJobStore.GetRevision()` へ委譲する。本体・ステータス・ハートビートを含む全応答箇所（約15箇所）は `GetClaudeRevision()` 経由のため無変更で済む。
+- [ ] `6-1a-7` `ToPublicClaudeJob` に `queue`（null なら `manual`）と `errorDismissed` を追加する。`jobToken` を含めない規約は不変。
+- [ ] `6-1a-8` 作成ハンドラ（`HandleCreateClaudeJob`）: 本文の `queue` を検証する（`patrol` / `manual` / `waiting` 以外・未指定は `patrol` を既定とする）。作成後、応答を返す前に、`queue` が `patrol` / `manual` の場合はジョブを `approval_pending`（`approvalRequestedAt = 現在時刻`）へ遷移させる（送信時承認リクエスト）。リビジョン更新は従来位置の1回に集約し、応答の `job` は遷移後の状態を再取得して返す。
+- [ ] `6-1a-9` 承認リクエスト（`HandleRequestClaudeApproval`）の許可条件を変更する: `status = queued` かつ `queue != waiting` の場合のみ許可する（`approval_expired` は読み込み時正規化で消滅するため許可状態から外す）。`queue = waiting` の場合は 400 とし、ジョブ一覧からの移動を案内するメッセージを返す。本エンドポイントは移行期・手動経路の予備として存続させる。
+- [ ] `6-1a-10` `ApplyApprovalPendingExpiry` の遷移に `queue = waiting` の設定を追加する（状態は `queued` へ戻す従来処理と一体）。
+- [ ] `6-1a-11` `ApplyTokenExpiry` を §10 の 7-3 で差し替える:
+  - 対象は従来どおり `approved` / `processing` かつトークン期限切れの場合。
+  - `results`・`errors` がともに空（未着手）なら: `status = queued`、`queue = waiting`、トークン消去。
+  - 1件でも記録がある場合: 結果もエラーも無い写真すべてに、メッセージ「トークンの有効期限が切れたため、未処理のまま終了しました」のエラーを追加記録し、全写真に結果がある場合は `done`、それ以外は `done_with_errors` として `completedAt` を設定して終端させる。トークンは消去する。
+  - 呼び出し箇所は従来どおり（トークン系エンドポイント＋一覧・詳細の読み取り時）。読み取り時に終端遷移が materialize されることで、一覧表示が常に真実になる。
+- [ ] `6-1a-12` リスト間移動 API を新設する: `POST /api/claude/jobs/{jobId}/move`（Bearer 認証。本文 `{ "queue": "patrol" | "manual" | "waiting" }`）。ルーティングは既存の接尾辞マッチ方式で、詳細 GET より前に追加する。処理:
+  - 対象が無ければ 404。先に両失効評価を行い、状態を取り直す。
+  - 移動を許可するのは `status = queued`（所属は不問）と、`status = approval_pending` かつ移動先が `waiting` の場合（リクエストの取り下げ）のみ。それ以外は 409。
+  - 効果: 移動先が `waiting` なら `status = queued`、`approvalRequestedAt = 0`。移動先が `patrol` / `manual` で現在 `queued` なら `status = approval_pending`、`approvalRequestedAt = 現在時刻`（送信操作として承認を発火）。`approval_pending` のまま `patrol` ⇔ `manual` を切り替える場合はリクエスト時刻を維持する。
+  - リビジョンを更新し、遷移後の公開ジョブを返す。
+- [ ] `6-1a-13` エラー警告の解消 API を新設する: `POST /api/claude/jobs/{jobId}/dismiss-error`（Bearer 認証）。`status = done_with_errors` の場合のみ `errorDismissed = true` を設定する（それ以外は 400）。UI からの利用は 6-6 で行うが、フラグの意味（§10 の 7-2）と 30 日整理条件（`6-1a-5`）をこの時点で効かせるため、受け口だけ先に用意する。
+- [ ] `6-1a-14` 文字列修正: エラー記録の既定メッセージ「Claude側でエラーが報告されました」を「Muse側でエラーが報告されました」に直す（§3.7 のサーバー分）。
+
+#### 11.1.3 PC 管理画面（`tools/DashboardHtml.cs`）
+
+- [ ] `6-1a-15` ギャラリーのツールバーに送り先セレクト（`viewer-claude-queue`）をテンプレート選択の隣へ追加する。選択肢は「巡回（自動で処理）」「手動（すぐ実行）」「待機（あとで）」とし、既定は巡回。
+- [ ] `6-1a-16` `sendViewerPhotosToClaude` の変更: セレクトの値を読み、確認ダイアログの文面に送り先を含め、POST 本文に `queue` を追加する。完了トーストにも送り先を表示し、`waiting` の場合は承認リクエストが送られない旨を含める。
+- [ ] `6-1a-17` ジョブ一覧モーダル: 説明文を実態に合わせて書き換える（「実行はClaude側の…」の旧文を廃し、送信時にスマホへ承認リクエストが届くこと・巡回と手動の違いを記す。§3.7 のモーダル分を含む）。各行に所属バッジ（巡回／手動／待機）を追加する。
+- [ ] `6-1a-18` 最小限の移動ボタンを追加する（§10 の 7-1）: `status = queued` かつ `queue = waiting` の行に「巡回へ」「手動へ」、`status = queued` かつ `queue != waiting` の行と `approval_pending` の行に「待機へ」。実装は既存の `ackClaudeJob` / `cancelClaudeJob` と同じ fetch 方式で `moveClaudeJob(jobId, queue)` を新設し、成功後に一覧と件数を再取得する。
+
+#### 11.1.4 スマホ（Android）
+
+- [ ] `6-1a-19` DTO 拡張: `CreateClaudeJobRequestDto` に `queue`（既定 `patrol`）を追加。`ClaudeJobDto` に `queue`（既定 `manual`）と `errorDismissed`（既定 false）を追加する（将来フェーズの表示・判定に備え、この時点で受けられるようにする）。
+- [ ] `6-1a-20` `PcServerClient.createClaudeJob` と `FleaMarketViewModel.sendPhotosToClaude` に `queue` 引数を追加して伝播させる。
+- [ ] `6-1a-21` `ClaudeSendDialog` に送り先の3択（巡回／手動／待機、各1行説明付き）を追加し、確定時に `queue` を返すよう `onConfirm` を拡張する。呼び出し側（`ItemEditScreen`）も追随させる。
+- [ ] `6-1a-22` 既知の暫定挙動として明記: スマホ発の送信でも送信時に承認リクエストが発火するため、送信直後に承認ダイアログ（従来の単体表示）が出ることがある。これは欠陥ではなく、画面連動の抑止と一括承認は 6-2 で改善する（Build 13 の「いったん閉じる」で作業継続は可能）。
+
+#### 11.1.5 バージョン・記録
+
+- [ ] `6-1a-23` バージョンを **Build 14** に3箇所同時統一し、`PROGRESS.md` に完了記録を残して選択的コミットする。
+
+#### 11.1.6 6-1a の確認項目（ビルド後にユーザーが実施）
+
+1. `tools/build-exe.bat` が通ること。Android のビルド・実機インストール・起動ができること。
+2. 旧形式（配列）の `claude_jobs.json` を残したままサーバーを起動し、既存ジョブが一覧に出ること、ファイルが新形式に書き換わること。再起動しても `claudeRevision` が減らないこと（ステータス応答で前後比較）。
+3. PC から3種の送り先でジョブを作り、巡回・手動ではスマホに承認ダイアログが届き、待機では届かないこと。
+4. 巡回ジョブを承認した後、従来の試運転手順（Muse が一覧→詳細でトークン取得→写真取得→生成→返却→完了）が `request-approval` なしで回ること。
+5. 承認せず10分置いたジョブが、次に一覧を開いた時点で待機に戻っていること。待機のジョブを「巡回へ」で戻すと承認ダイアログが再び届くこと。承認待ちのジョブを「待機へ」で取り下げられること。
+6. （任意・時刻操作が必要）`done_with_errors` で確認済みだが `errorDismissed` が false のジョブは、完了から30日を超えても整理で消えないこと。
+
+### 11.2 6-1b ジョブトークンの延長方式（Build 15）
+
+サーバー（`tools/FurimaServerNative.cs`）のみの変更とし、単体で回帰確認できるようにする。
+
+- [ ] `6-1b-1` 延長ヘルパーを新設する: トークン提示が正しく、対象ジョブが `approved` / `processing` の場合に `jobTokenExpiresAt = 現在時刻 + 30分` へ更新する（`MutateJob` 経由）。**`BumpClaudeRevision()` は呼ばない**（§9.2 の 1-5）。
+- [ ] `6-1b-2` 適用箇所は実行系の3エンドポイントに厳密に限定する: 写真取得（`HandleGetClaudeJobPhoto`）、結果返却（`HandlePostClaudeJobResult`）、エラー報告（`HandlePostClaudeJobError`）。各ハンドラで「失効評価（`ApplyTokenExpiry`）→ トークン検証」の順序を守った直後に呼ぶ。詳細取得・完了・承認系では呼ばない（読み取りのポーリングで延命させない／完了は終端のため不要）。
+- [ ] `6-1b-3` 失効済みトークンは延長で復活しないことを保証する: 延長は失効評価を通過した（＝期限内だった）場合にのみ行われる。失効していた場合は 6-1a の遷移（未着手は待機戻し／処理途中は終端）が優先する。
+- [ ] `6-1b-4` バージョンを **Build 15** に3箇所同時統一し、`PROGRESS.md` に完了記録を残して選択的コミットする（Android・管理画面のコード変更はないが、バージョン表記の統一規則に従う）。
+
+#### 11.2.1 6-1b の確認項目
+
+1. 承認したジョブについて、詳細取得（Bearer）を繰り返してもトークン期限が延びないこと（30分で失効し、未着手なら待機へ戻ること）。
+2. 写真取得を間隔を空けて繰り返すと、その都度期限が延びて処理を継続できること。
+3. 実行系の呼び出しを止めると、最後の呼び出しから30分で失効すること。
+
+### 11.3 Muse 側手順の追記（§8 の補足）
+
+- 巡回・手動のいずれでも、対象ジョブの詳細に含まれる `results` の `sourceMd5` は生成をスキップする（§10 の 7-3 の防御的措置。通常は終端遷移により発生しない）。
+- 巡回の処理順序は登録の古い順（FIFO）。ジョブ一覧 API は新しい順で返るため、Muse 側で古い順に並べ替えてから処理する。
