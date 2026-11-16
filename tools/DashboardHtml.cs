@@ -538,8 +538,8 @@ public static class DashboardHtml
                 <button type='button' onclick='closeClaudeJobsModal()' class='text-violet-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
             <div class='px-4 pt-3 flex items-center gap-2'>
-                <button type='button' id='claude-jobs-tab-active' onclick='switchClaudeJobsTab("active")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>依頼中</button>
-                <button type='button' id='claude-jobs-tab-waiting' onclick='switchClaudeJobsTab("waiting")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>待機中</button>
+                <button type='button' id='claude-jobs-tab-active' onclick='switchClaudeJobsTab(""active"")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>依頼中</button>
+                <button type='button' id='claude-jobs-tab-waiting' onclick='switchClaudeJobsTab(""waiting"")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>待機中</button>
             </div>
             <div id='claude-jobs-list' class='p-4 flex-1 overflow-y-auto custom-scroll space-y-2'>
                 <!-- JSで動的描画 -->
@@ -2603,12 +2603,12 @@ public static class DashboardHtml
                 if (parent) item = parent;
             }
             closeClaudeJobsModal();
-            let el = document.querySelector('[data-item-card-id="' + item.id + '"]');
+            let el = document.querySelector('[data-item-card-id=""' + item.id + '""]');
             if (!el) {
                 const searchInput = document.getElementById('search-input');
                 if (searchInput) searchInput.value = '';
                 setFilter('ALL');
-                el = document.querySelector('[data-item-card-id="' + item.id + '"]');
+                el = document.querySelector('[data-item-card-id=""' + item.id + '""]');
             }
             if (!el) { showToast('商品カードを表示できませんでした'); return; }
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
