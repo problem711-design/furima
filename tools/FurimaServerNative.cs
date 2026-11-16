@@ -5140,12 +5140,22 @@ class FurimaServerNative
 
             if (job.status == "approved")
             {
+                // 初回取得: 状態遷移と同じ変更でトークン期限も延長する (6-1b、二重保存の回避)
                 ClaudeJobStore.MutateJob(job.jobId, j =>
                 {
-                    if (j.status == "approved") { j.status = "processing"; return true; }
+                    if (j.status == "approved")
+                    {
+                        j.status = "processing";
+                        j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
+                        return true;
+                    }
                     return false;
                 });
                 BumpClaudeRevision();
+            }
+            else
+            {
+                ExtendClaudeJobToken(job.jobId);
             }
 
             res.ContentType = outMime;
@@ -5310,6 +5320,24 @@ class FurimaServerNative
         return true;
     }
 
+    // ジョブトークンのスライディング延長 (フェーズ 6-1b)。
+    // 実行系エンドポイント (写真取得・結果返却・エラー報告) の検証を通過した後にのみ呼ぶ。
+    // 失効評価 (ApplyTokenExpiry) を通過したトークンだけがここへ来るため、失効済みは復活しない。
+    // BumpClaudeRevision は呼ばない (延長は読み取り側へ知らせる変化ではない)。
+    private static void ExtendClaudeJobToken(string jobId)
+    {
+        long newExpiry = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
+        ClaudeJobStore.MutateJob(jobId, j =>
+        {
+            if ((j.status == "approved" || j.status == "processing") && !string.IsNullOrEmpty(j.jobToken))
+            {
+                j.jobTokenExpiresAt = newExpiry;
+                return true;
+            }
+            return false;
+        });
+    }
+
     private static void HandlePostClaudeJobResult(HttpListenerRequest req, HttpListenerResponse res, string jobId)
     {
         try
@@ -5429,6 +5457,7 @@ class FurimaServerNative
                     var existing = fresh.results.Find(r => string.Equals(r.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase));
                     if (existing != null)
                     {
+                        ExtendClaudeJobToken(jobId);
                         SendJson(res, new Dictionary<string, object>
                         {
                             { "status", "ok" },
@@ -5531,6 +5560,7 @@ class FurimaServerNative
                 {
                     if (j.results == null) j.results = new List<ClaudeJobResult>();
                     j.results.Add(new ClaudeJobResult { sourceMd5 = sourceMd5, resultFileName = resultFileName, resultMd5 = resultMd5 });
+                    j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
                     return true;
                 });
                 BumpClaudeRevision();
@@ -5636,6 +5666,7 @@ class FurimaServerNative
                     var existingError = fresh.errors.Find(e => string.Equals(e.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase));
                     if (existingError != null)
                     {
+                        ExtendClaudeJobToken(jobId);
                         SendJson(res, new Dictionary<string, object>
                         {
                             { "status", "ok" },
@@ -5655,6 +5686,7 @@ class FurimaServerNative
                     if (j.errors == null) j.errors = new List<ClaudeJobError>();
                     j.errors.Add(new ClaudeJobError { sourceMd5 = sourceMd5, message = message });
                     if (j.status == "approved") j.status = "processing";
+                    j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
                     return true;
                 });
                 BumpClaudeRevision();
