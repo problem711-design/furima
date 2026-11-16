@@ -264,6 +264,7 @@
   - `[` の場合（旧形式）: `List<ClaudeJob>` として読み込み、`claudeRevision` の初期値は移行時点の Unix 秒とする。読み込み直後に新形式で保存し直し、移行をその場で確定させる（コンソールに移行ログを1行出す）。
   - `{` の場合（新形式）: オブジェクトとして読み込み、`claudeRevision` が 0 以下の場合は 1 とする。
   - 読み込み時のジョブ正規化: `queue` が null・空・不正値なら `manual`。`status` が `approval_expired` なら `status = queued`、`queue = waiting` へ変換する（トークンは当該状態では常に消去済み）。
+  - 形式を問わず、正規化で1件でも変更が発生した場合は読み込みの最後に `SaveJobsLocked()` を呼び、メモリとディスクの乖離を防ぐ（レビュー §10 の 10-5-1）。
 - [ ] `6-1a-3` リビジョンの永続化 API を新設する: `GetRevision()`（未読み込みなら読み込んで返す。0 のままなら 1）と `IncrementRevision()`（加算して保存し、新しい値を返す）。保存は `SaveJobsLocked` の新形式に相乗りする。
 - [ ] `6-1a-4` `CreateJob` の初期化に `errorDismissed = false` を追加し、`queue` が null・空なら `manual` に正規化する（作成ハンドラ側が本則の検証と既定値付けを行う。ここは安全網）。
 - [ ] `6-1a-5` `CleanupLocked` の削除条件を変更する（§10 への追加指示事項）: `done` は従来どおり `acknowledged` のみ。**`done_with_errors` は `acknowledged` かつ `errorDismissed` の両方**を必須とする。スマホで完了通知を閉じた（ack）だけでは、PC で未対応のエラー履歴が 30 日で消えないようにするため。`cancelled` / `denied` は従来どおり。
@@ -272,7 +273,11 @@
 
 - [ ] `6-1a-6` リビジョンの実体をストアへ移す: 静的フィールド `claudeRevision` を廃し、`BumpClaudeRevision()` は `ClaudeJobStore.IncrementRevision()`、`GetClaudeRevision()` は `ClaudeJobStore.GetRevision()` へ委譲する。本体・ステータス・ハートビートを含む全応答箇所（約15箇所）は `GetClaudeRevision()` 経由のため無変更で済む。
 - [ ] `6-1a-7` `ToPublicClaudeJob` に `queue`（null なら `manual`）と `errorDismissed` を追加する。`jobToken` を含めない規約は不変。
-- [ ] `6-1a-8` 作成ハンドラ（`HandleCreateClaudeJob`）: 本文の `queue` を検証する（`patrol` / `manual` / `waiting` 以外・未指定は `patrol` を既定とする）。作成後、応答を返す前に、`queue` が `patrol` / `manual` の場合はジョブを `approval_pending`（`approvalRequestedAt = 現在時刻`）へ遷移させる（送信時承認リクエスト）。リビジョン更新は従来位置の1回に集約し、応答の `job` は遷移後の状態を再取得して返す。
+- [ ] `6-1a-8` 作成は原子的に行う（レビュー §10 の 10-2）: `ClaudeJobStore.CreateJob` を拡張し、単一の `_jobLock` 内で次をすべて確定させ、保存は1回だけにする。呼び出し元は作成ハンドラのみであることを確認済み。
+  - `queue` の確定（ハンドラが検証した値を受ける。検証規則は従来どおり: 不正値・未指定は `patrol`）。
+  - 初期状態: `queue` が `patrol` / `manual` なら最初から `status = approval_pending`、`approvalRequestedAt = 現在時刻`（送信時承認リクエスト）。`waiting` のときだけ `status = queued`。
+  - `claudeRevision` の加算も同じロック内でカウンタを直接進め、同じ保存に含める。
+  - ハンドラ側は作成後の遷移（`MutateJob`）も個別の `BumpClaudeRevision()` も行わない。応答の `job` は `CreateJob` の戻り値（初期状態を含む）をそのまま使う。これにより「所属は巡回なのに一瞬だけ `queued` が見える」中間状態と、作成1回あたり3回の全量保存を解消する。
 - [ ] `6-1a-9` 承認リクエスト（`HandleRequestClaudeApproval`）の許可条件を変更する: `status = queued` かつ `queue != waiting` の場合のみ許可する（`approval_expired` は読み込み時正規化で消滅するため許可状態から外す）。`queue = waiting` の場合は 400 とし、ジョブ一覧からの移動を案内するメッセージを返す。本エンドポイントは移行期・手動経路の予備として存続させる。
 - [ ] `6-1a-10` `ApplyApprovalPendingExpiry` の遷移に `queue = waiting` の設定を追加する（状態は `queued` へ戻す従来処理と一体）。
 - [ ] `6-1a-11` `ApplyTokenExpiry` を §10 の 7-3 で差し替える:
@@ -282,17 +287,21 @@
   - 呼び出し箇所は従来どおり（トークン系エンドポイント＋一覧・詳細の読み取り時）。読み取り時に終端遷移が materialize されることで、一覧表示が常に真実になる。
 - [ ] `6-1a-12` リスト間移動 API を新設する: `POST /api/claude/jobs/{jobId}/move`（Bearer 認証。本文 `{ "queue": "patrol" | "manual" | "waiting" }`）。ルーティングは既存の接尾辞マッチ方式で、詳細 GET より前に追加する。処理:
   - 対象が無ければ 404。先に両失効評価を行い、状態を取り直す。
-  - 移動を許可するのは `status = queued`（所属は不問）と、`status = approval_pending` かつ移動先が `waiting` の場合（リクエストの取り下げ）のみ。それ以外は 409。
-  - 効果: 移動先が `waiting` なら `status = queued`、`approvalRequestedAt = 0`。移動先が `patrol` / `manual` で現在 `queued` なら `status = approval_pending`、`approvalRequestedAt = 現在時刻`（送信操作として承認を発火）。`approval_pending` のまま `patrol` ⇔ `manual` を切り替える場合はリクエスト時刻を維持する。
-  - リビジョンを更新し、遷移後の公開ジョブを返す。
-- [ ] `6-1a-13` エラー警告の解消 API を新設する: `POST /api/claude/jobs/{jobId}/dismiss-error`（Bearer 認証）。`status = done_with_errors` の場合のみ `errorDismissed = true` を設定する（それ以外は 400）。UI からの利用は 6-6 で行うが、フラグの意味（§10 の 7-2）と 30 日整理条件（`6-1a-5`）をこの時点で効かせるため、受け口だけ先に用意する。
+  - 移動を許可するのは `status = queued` または `status = approval_pending` の場合のみ。それ以外は 409（レビュー §10 の 10-1 で許可条件の矛盾を解消）。
+  - 現在と同じ `queue` への移動は no-op とし、状態変更・保存・リビジョン更新を行わず、現在の公開ジョブで 200 を返す（冪等）。
+  - 効果: 移動先が `waiting` なら `status = queued`、`approvalRequestedAt = 0`（`approval_pending` からの移動はリクエストの取り下げ）。移動先が `patrol` / `manual` で現在 `queued` なら `status = approval_pending`、`approvalRequestedAt = 現在時刻`（送信操作として承認を発火）。現在 `approval_pending` のまま `patrol` ⇔ `manual` を切り替える場合は状態とリクエスト時刻を維持し、`queue` のみ変更する。
+  - 変更があった場合のみリビジョンを更新し、遷移後の公開ジョブを返す。
+- [ ] `6-1a-13` エラー警告の解消 API を新設する: `POST /api/claude/jobs/{jobId}/dismiss-error`（Bearer 認証）。`status = done_with_errors` の場合のみ `errorDismissed = true` を設定する（それ以外は 400）。冪等仕様は `HandleAckClaudeJob` と同型とする: 既に `errorDismissed = true` の場合は再保存・リビジョン更新をせず 200 を返し、`false → true` の場合のみ保存＋`BumpClaudeRevision()` する（6-5 のラベル・6-7 の件数が `claudeRevision` の変化で更新されるため必須。レビュー §10 の 10-3）。UI からの利用は 6-6 で行うが、フラグの意味（§10 の 7-2）と 30 日整理条件（`6-1a-5`）をこの時点で効かせるため、受け口だけ先に用意する。
 - [ ] `6-1a-14` 文字列修正: エラー記録の既定メッセージ「Claude側でエラーが報告されました」を「Muse側でエラーが報告されました」に直す（§3.7 のサーバー分）。
 
 #### 11.1.3 PC 管理画面（`tools/DashboardHtml.cs`）
 
 - [ ] `6-1a-15` ギャラリーのツールバーに送り先セレクト（`viewer-claude-queue`）をテンプレート選択の隣へ追加する。選択肢は「巡回（自動で処理）」「手動（すぐ実行）」「待機（あとで）」とし、既定は巡回。
-- [ ] `6-1a-16` `sendViewerPhotosToClaude` の変更: セレクトの値を読み、確認ダイアログの文面に送り先を含め、POST 本文に `queue` を追加する。完了トーストにも送り先を表示し、`waiting` の場合は承認リクエストが送られない旨を含める。
-- [ ] `6-1a-17` ジョブ一覧モーダル: 説明文を実態に合わせて書き換える（「実行はClaude側の…」の旧文を廃し、送信時にスマホへ承認リクエストが届くこと・巡回と手動の違いを記す。§3.7 のモーダル分を含む）。各行に所属バッジ（巡回／手動／待機）を追加する。
+- [ ] `6-1a-16` `sendViewerPhotosToClaude` の変更: セレクトの値を読み、確認ダイアログの文面に送り先を含め、POST 本文に `queue` を追加する。完了トーストにも送り先を表示し、`waiting` の場合は承認リクエストが送られない旨を含める。あわせて確認ダイアログ文面に残存していた旧名称「…でClaudeに送ります」を「…でMuseに送ります」に直す（レビュー §10 の 10-4-2。§3.7 の対象に追加）。
+- [ ] `6-1a-17` ジョブ一覧モーダル: 説明文を実態に合わせて書き換える（「実行はClaude側の…」の旧文を廃し、送信時にスマホへ承認リクエストが届くこと・巡回と手動の違いを記す。§3.7 のモーダル分を含む）。表示の整理（レビュー §10 の 10-4）:
+  - 状態ラベルは `status` と `queue` の組み合わせで決める（`claudeJobStatusInfo` を `queue` 対応に拡張する）: `queued` + `waiting` → 「待機中」、`queued` + `patrol` / `manual` → 「未依頼」、`approval_pending` → 「承認待ち」、`approved` → 「承認済み」、`processing` → 「処理中」、`done` → 「完了」、`done_with_errors` → 「一部エラー」、`denied` → 「拒否」、`cancelled` → 「取消済み」。
+  - 所属バッジは `patrol` → 「巡回」、`manual` → 「手動」の場合のみ表示する（`waiting` は状態ラベル「待機中」と重複するため表示しない）。これにより「[待機中] [待機]」のような重複表記を避ける。
+  - `refreshClaudeJobsCount` のアクティブ件数には、`queue = waiting` かつ `status = queued` のジョブを含めない（駐車中の件数でバッジが常時非ゼロになるのを防ぐ。待機件数の表示は 6-7 のミューズカラムが担う）。
 - [ ] `6-1a-18` 最小限の移動ボタンを追加する（§10 の 7-1）: `status = queued` かつ `queue = waiting` の行に「巡回へ」「手動へ」、`status = queued` かつ `queue != waiting` の行と `approval_pending` の行に「待機へ」。実装は既存の `ackClaudeJob` / `cancelClaudeJob` と同じ fetch 方式で `moveClaudeJob(jobId, queue)` を新設し、成功後に一覧と件数を再取得する。
 
 #### 11.1.4 スマホ（Android）
@@ -320,7 +329,7 @@
 サーバー（`tools/FurimaServerNative.cs`）のみの変更とし、単体で回帰確認できるようにする。
 
 - [ ] `6-1b-1` 延長ヘルパーを新設する: トークン提示が正しく、対象ジョブが `approved` / `processing` の場合に `jobTokenExpiresAt = 現在時刻 + 30分` へ更新する（`MutateJob` 経由）。**`BumpClaudeRevision()` は呼ばない**（§9.2 の 1-5）。
-- [ ] `6-1b-2` 適用箇所は実行系の3エンドポイントに厳密に限定する: 写真取得（`HandleGetClaudeJobPhoto`）、結果返却（`HandlePostClaudeJobResult`）、エラー報告（`HandlePostClaudeJobError`）。各ハンドラで「失効評価（`ApplyTokenExpiry`）→ トークン検証」の順序を守った直後に呼ぶ。詳細取得・完了・承認系では呼ばない（読み取りのポーリングで延命させない／完了は終端のため不要）。
+- [ ] `6-1b-2` 適用箇所は実行系の3エンドポイントに厳密に限定する: 写真取得（`HandleGetClaudeJobPhoto`）、結果返却（`HandlePostClaudeJobResult`）、エラー報告（`HandlePostClaudeJobError`）。詳細取得・完了・承認系では呼ばない（読み取りのポーリングで延命させない／完了は終端のため不要）。呼び出し位置は、各ハンドラの検証（失効評価→トークン検証→状態・入力の検証）をすべて通過した後とする（レビュー §10 の 10-5-2）。特に写真取得では、`approved → processing` 遷移と同じ `MutateJob` の中で期限も更新し、初回取得時の二重保存を避ける。エラー報告では直列化ロック内の状態判定を通過した後に行う。
 - [ ] `6-1b-3` 失効済みトークンは延長で復活しないことを保証する: 延長は失効評価を通過した（＝期限内だった）場合にのみ行われる。失効していた場合は 6-1a の遷移（未着手は待機戻し／処理途中は終端）が優先する。
 - [ ] `6-1b-4` バージョンを **Build 15** に3箇所同時統一し、`PROGRESS.md` に完了記録を残して選択的コミットする（Android・管理画面のコード変更はないが、バージョン表記の統一規則に従う）。
 
@@ -334,3 +343,17 @@
 
 - 巡回・手動のいずれでも、対象ジョブの詳細に含まれる `results` の `sourceMd5` は生成をスキップする（§10 の 7-3 の防御的措置。通常は終端遷移により発生しない）。
 - 巡回の処理順序は登録の古い順（FIFO）。ジョブ一覧 API は新しい順で返るため、Muse 側で古い順に並べ替えてから処理する。
+
+---
+
+## 12. §11 へのレビュー §10 の反映（2026-11-16、実装担当エージェント）
+
+`REVIEW_CLAUDE_SEND_PHASE6.md` §10 の指摘5件を確認し、**すべて妥当と判断して §11 の該当箇所を修正した**。特に 10-1 は許可条件の明確な自己矛盾であり、着工前の発見に感謝する。修正内容:
+
+- **10-1（move の許可条件の矛盾）**: 許可条件を「`status = queued` または `approval_pending`」に統一し、同一 `queue` への移動の no-op 冪等仕様を追加（`6-1a-12`）。
+- **10-2（作成の2段階遷移）**: 作成を `ClaudeJobStore.CreateJob` の単一ロック内で原子化し、初期状態とリビジョン加算までを1回の保存で確定させる形に変更（`6-1a-8`）。
+- **10-3（dismiss-error の仕様漏れ）**: `HandleAckClaudeJob` と同型の冪等仕様（変化時のみ保存＋リビジョン更新）を明記（`6-1a-13`）。
+- **10-4（表示の衝突と残存文言）**: 状態ラベルを (status, queue) の組み合わせで決める表示マトリクスと、所属バッジの表示条件、件数バッジから待機を除外する規則を明記。確認ダイアログの残存「Claude」文言の修正も対象に追加（`6-1a-16` / `6-1a-17`）。
+- **10-5（軽微2件）**: 新形式読み込み時の正規化保存（`6-1a-2`）、延長の呼び出し位置の適正化（`6-1b-2`）を反映。
+
+以上をもって、レビュー §10 の判定どおり **6-1a / 6-1b の実装に着工する**。
