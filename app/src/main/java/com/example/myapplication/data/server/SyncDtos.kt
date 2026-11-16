@@ -103,3 +103,35 @@ data class HeartbeatInfo(
     val dataRevision: Long = 0L,
     val settingsRevision: Long = 0L
 )
+
+@JsonClass(generateAdapter = true)
+data class ClaudeJobPhotoDto(
+    @param:Json(name = "md5") val md5: String,
+    @param:Json(name = "fileName") val fileName: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class CreateClaudeJobRequestDto(
+    @param:Json(name = "itemId") val itemId: Int,
+    @param:Json(name = "itemUuid") val itemUuid: String,
+    @param:Json(name = "photos") val photos: List<ClaudeJobPhotoDto>,
+    @param:Json(name = "templateId") val templateId: String,
+    @param:Json(name = "origin") val origin: String = "phone"
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeJobDto(
+    @param:Json(name = "jobId") val jobId: String = "",
+    @param:Json(name = "itemId") val itemId: Int = 0,
+    @param:Json(name = "itemTitle") val itemTitle: String = "",
+    @param:Json(name = "templateName") val templateName: String = "",
+    @param:Json(name = "status") val status: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeJobResponseDto(
+    @param:Json(name = "status") val status: String = "",
+    @param:Json(name = "message") val message: String? = null,
+    @param:Json(name = "job") val job: ClaudeJobDto? = null,
+    @param:Json(name = "claudeRevision") val claudeRevision: Long = 0
+)

@@ -106,6 +106,8 @@ class PcServerClient(
     private val syncItemsResponseAdapter = moshi.adapter(SyncItemsResponse::class.java)
     private val syncPhotoResponseAdapter = moshi.adapter(SyncPhotoResponse::class.java)
     private val syncSettingsAdapter = moshi.adapter(SyncSettingsDto::class.java)
+    private val createClaudeJobRequestAdapter = moshi.adapter(CreateClaudeJobRequestDto::class.java)
+    private val claudeJobResponseAdapter = moshi.adapter(ClaudeJobResponseDto::class.java)
 
     private fun toSyncSettingsDto(settings: DefaultSettings): SyncSettingsDto {
         return SyncSettingsDto(
@@ -195,6 +197,60 @@ class PcServerClient(
         } catch (e: Exception) {
             android.util.Log.e("PC_SYNC", "pushSettingsToServer 例外: ${e.message}", e)
             false
+        }
+    }
+
+    data class ClaudeJobCreateResult(
+        val success: Boolean,
+        val jobId: String = "",
+        val message: String = ""
+    )
+
+    // 「Museに送る」ジョブを作成する (フェーズ 5-3)。商品特定は itemUuid (syncUuid) を必須とする (Q1)。
+    suspend fun createClaudeJob(
+        itemId: Int,
+        itemUuid: String,
+        photos: List<Pair<String, String>>,
+        templateId: String,
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): ClaudeJobCreateResult = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) {
+                return@withContext ClaudeJobCreateResult(false, message = "PCサーバーのURLが未設定です")
+            }
+            if (itemUuid.isBlank()) {
+                return@withContext ClaudeJobCreateResult(false, message = "商品の同期IDが未確定です（先にPCと同期してください）")
+            }
+            if (photos.isEmpty()) {
+                return@withContext ClaudeJobCreateResult(false, message = "送信する写真がありません")
+            }
+            val reqDto = CreateClaudeJobRequestDto(
+                itemId = itemId,
+                itemUuid = itemUuid,
+                photos = photos.map { ClaudeJobPhotoDto(md5 = it.first, fileName = it.second) },
+                templateId = templateId,
+                origin = "phone"
+            )
+            val body = createClaudeJobRequestAdapter.toJson(reqDto)
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs").post(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                val respStr = response.body?.string()
+                val parsed = if (!respStr.isNullOrBlank()) {
+                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                } else null
+                if (response.isSuccessful && parsed?.status == "ok" && parsed.job != null) {
+                    ClaudeJobCreateResult(true, jobId = parsed.job.jobId)
+                } else {
+                    ClaudeJobCreateResult(false, message = parsed?.message ?: "サーバーエラー (${response.code})")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "createClaudeJob 例外: ${e.message}", e)
+            ClaudeJobCreateResult(false, message = "PCサーバーへ接続できませんでした")
         }
     }
 

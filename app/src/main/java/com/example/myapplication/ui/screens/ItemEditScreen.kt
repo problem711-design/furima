@@ -12,8 +12,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -46,6 +49,7 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
@@ -94,9 +98,11 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.example.myapplication.data.PhotoStorageManager
+import com.example.myapplication.data.local.ItemEntity
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.components.CameraXCaptureDialog
+import com.example.myapplication.ui.components.ClaudeSendDialog
 import com.example.myapplication.ui.components.ListingValidationBanner
 import com.example.myapplication.ui.components.evaluateListingWarnings
 import com.example.myapplication.ui.components.PhotoPreviewDialog
@@ -111,7 +117,7 @@ private sealed class DeletedEditPhoto(open val index: Int) {
     data class NewUri(override val index: Int, val uri: Uri) : DeletedEditPhoto(index)
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
 fun ItemEditScreen(
     itemId: Int,
@@ -162,6 +168,14 @@ fun ItemEditScreen(
     var showDiscardDialog by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
 
+    // フェーズ 5-3: サムネイル複数選択 (一括削除 / Museに送る)
+    var loadedItem by remember(itemId) { mutableStateOf<ItemEntity?>(null) }
+    var photoSelectionMode by remember(itemId) { mutableStateOf(false) }
+    val selectedPhotoKeys = remember(itemId) { mutableStateListOf<String>() }
+    var showBulkDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showClaudeSendDialog by remember { mutableStateOf(false) }
+    var isSendingToClaude by remember { mutableStateOf(false) }
+
     val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
@@ -198,6 +212,7 @@ fun ItemEditScreen(
             val itemWithPhotos = viewModel.getItemById(itemId)
             if (itemWithPhotos != null) {
                 val item = itemWithPhotos.item
+                loadedItem = item
                 titleFieldValue = TextFieldValue(item.title, TextRange(item.title.length))
                 descriptionFieldValue = TextFieldValue(item.description, TextRange(item.description.length))
                 priceText = if (item.price > 0) item.price.toString() else ""
@@ -250,6 +265,37 @@ fun ItemEditScreen(
             newImageUris.isNotEmpty()
         )
 
+    // フェーズ 5-3: 選択キー (既存写真はパス、新規写真はURIで識別) と派生リスト
+    fun togglePhotoSelection(key: String) {
+        if (selectedPhotoKeys.contains(key)) {
+            selectedPhotoKeys.remove(key)
+        } else {
+            selectedPhotoKeys.add(key)
+        }
+        if (selectedPhotoKeys.isEmpty()) {
+            photoSelectionMode = false
+        }
+    }
+
+    fun exitPhotoSelectionMode() {
+        selectedPhotoKeys.clear()
+        photoSelectionMode = false
+    }
+
+    val selectedExistingPaths = existingFilePaths.filter { selectedPhotoKeys.contains("path:$it") }
+    val selectedNewUris = newImageUris.filter { selectedPhotoKeys.contains("uri:$it") }
+    val selectedPhotoCount = selectedExistingPaths.size + selectedNewUris.size
+    // Muse送信の対象は PC 同期済み (md5Hash 確定) の既存写真のみ (Q2)
+    val claudeEligiblePhotos: List<Pair<String, String>> = selectedExistingPaths.mapNotNull { path ->
+        val entity = loadedPhotosByPath[path]
+        if (entity != null && entity.md5Hash.isNotBlank() && entity.isPcSynced) {
+            entity.md5Hash to File(path).name
+        } else {
+            null
+        }
+    }
+    val claudeExcludedCount = selectedPhotoCount - claudeEligiblePhotos.size
+
     val handleBackRequest: () -> Unit = {
         if (!isSaving) {
             if (hasUnsavedChanges) {
@@ -264,6 +310,63 @@ fun ItemEditScreen(
         if (!isSaving) {
             showDiscardDialog = true
         }
+    }
+
+    if (showBulkDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteConfirmDialog = false },
+            title = { Text("写真の一括削除") },
+            text = {
+                Text("選択した ${selectedPhotoCount}枚の写真を編集リストから除外します。「保存する」を押すまで確定しません（取り消しはできません）。")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        existingFilePaths.removeAll(selectedExistingPaths.toSet())
+                        newImageUris.removeAll(selectedNewUris.toSet())
+                        showBulkDeleteConfirmDialog = false
+                        exitPhotoSelectionMode()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("除外する")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDeleteConfirmDialog = false }) {
+                    Text("キャンセル")
+                }
+            }
+        )
+    }
+
+    if (showClaudeSendDialog) {
+        ClaudeSendDialog(
+            templates = defaultSettings.promptTemplates,
+            photoCount = claudeEligiblePhotos.size,
+            excludedCount = claudeExcludedCount,
+            isConnected = isPcServerConnected,
+            onDismiss = { showClaudeSendDialog = false },
+            onSend = { tpl ->
+                showClaudeSendDialog = false
+                isSendingToClaude = true
+                viewModel.sendPhotosToClaude(
+                    itemId = itemId,
+                    itemUuid = loadedItem?.syncUuid ?: "",
+                    photos = claudeEligiblePhotos,
+                    templateId = tpl.id,
+                    onError = { msg ->
+                        isSendingToClaude = false
+                        Toast.makeText(context, "送信エラー: $msg", Toast.LENGTH_LONG).show()
+                    },
+                    onSuccess = {
+                        isSendingToClaude = false
+                        Toast.makeText(context, "Museジョブを作成しました", Toast.LENGTH_LONG).show()
+                        exitPhotoSelectionMode()
+                    }
+                )
+            }
+        )
     }
 
     if (showDiscardDialog) {
@@ -574,6 +677,50 @@ fun ItemEditScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
+            // フェーズ 5-3: 複数選択モードのアクションバー
+            if (photoSelectionMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "${selectedPhotoCount}枚選択中",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Button(
+                        onClick = { showBulkDeleteConfirmDialog = true },
+                        enabled = selectedPhotoCount > 0,
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("削除", fontSize = 12.sp)
+                    }
+                    Button(
+                        onClick = {
+                            when {
+                                itemId == 0 || hasUnsavedChanges ->
+                                    Toast.makeText(context, "保存してからMuseに送ってください", Toast.LENGTH_LONG).show()
+                                (loadedItem?.mergedChildCount ?: 0) > 0 ->
+                                    Toast.makeText(context, "まとめ商品は個別の子商品から送信してください", Toast.LENGTH_LONG).show()
+                                claudeEligiblePhotos.isEmpty() ->
+                                    Toast.makeText(context, "PC同期済みの写真が選択されていません", Toast.LENGTH_LONG).show()
+                                else -> showClaudeSendDialog = true
+                            }
+                        },
+                        enabled = selectedPhotoCount > 0 && !isSendingToClaude
+                    ) {
+                        Text("Museに送る", fontSize = 12.sp)
+                    }
+                    OutlinedButton(onClick = { exitPhotoSelectionMode() }) {
+                        Text("解除", fontSize = 12.sp)
+                    }
+                }
+            }
+
             // 選択された写真のサムネイル一覧
             if (existingFilePaths.isNotEmpty() || newImageUris.isNotEmpty()) {
                 LazyRow(
@@ -583,11 +730,36 @@ fun ItemEditScreen(
                     itemsIndexed(existingFilePaths) { index, path ->
                         val photoEntity = loadedPhotosByPath[path]
                         val displayModel = photoEntity?.displayFile ?: File(path)
+                        val photoKey = "path:$path"
+                        val isPhotoSelected = selectedPhotoKeys.contains(photoKey)
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { previewStartIndex = index }
+                                .then(
+                                    if (isPhotoSelected) Modifier.border(
+                                        2.dp,
+                                        MaterialTheme.colorScheme.primary,
+                                        RoundedCornerShape(8.dp)
+                                    ) else Modifier
+                                )
+                                .combinedClickable(
+                                    onClick = {
+                                        if (photoSelectionMode) {
+                                            togglePhotoSelection(photoKey)
+                                        } else {
+                                            previewStartIndex = index
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (!photoSelectionMode) {
+                                            photoSelectionMode = true
+                                            if (!selectedPhotoKeys.contains(photoKey)) {
+                                                selectedPhotoKeys.add(photoKey)
+                                            }
+                                        }
+                                    }
+                                )
                                 .testTag("edit_existing_photo_$index")
                         ) {
                             AsyncImage(
@@ -602,32 +774,72 @@ fun ItemEditScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .background(Color.Black.copy(alpha = 0.65f))
-                                    .clickable { existingFilePaths.remove(path) }
-                                    .align(Alignment.TopEnd)
-                                    .testTag("remove_existing_photo_$index")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "写真を削除",
-                                    tint = Color.White,
+                            if (photoSelectionMode) {
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(2.dp)
-                                )
+                                        .size(26.dp)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .align(Alignment.TopEnd)
+                                ) {
+                                    Checkbox(
+                                        checked = isPhotoSelected,
+                                        onCheckedChange = { togglePhotoSelection(photoKey) },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .clickable { existingFilePaths.remove(path) }
+                                        .align(Alignment.TopEnd)
+                                        .testTag("remove_existing_photo_$index")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "写真を削除",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(2.dp)
+                                    )
+                                }
                             }
                         }
                     }
 
                     itemsIndexed(newImageUris) { index, uri ->
+                        val photoKey = "uri:$uri"
+                        val isPhotoSelected = selectedPhotoKeys.contains(photoKey)
                         Box(
                             modifier = Modifier
                                 .size(90.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { previewStartIndex = existingFilePaths.size + index }
+                                .then(
+                                    if (isPhotoSelected) Modifier.border(
+                                        2.dp,
+                                        MaterialTheme.colorScheme.primary,
+                                        RoundedCornerShape(8.dp)
+                                    ) else Modifier
+                                )
+                                .combinedClickable(
+                                    onClick = {
+                                        if (photoSelectionMode) {
+                                            togglePhotoSelection(photoKey)
+                                        } else {
+                                            previewStartIndex = existingFilePaths.size + index
+                                        }
+                                    },
+                                    onLongClick = {
+                                        if (!photoSelectionMode) {
+                                            photoSelectionMode = true
+                                            if (!selectedPhotoKeys.contains(photoKey)) {
+                                                selectedPhotoKeys.add(photoKey)
+                                            }
+                                        }
+                                    }
+                                )
                                 .testTag("edit_new_photo_$index")
                         ) {
                             AsyncImage(
@@ -642,22 +854,37 @@ fun ItemEditScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .background(Color.Black.copy(alpha = 0.65f))
-                                    .clickable { newImageUris.remove(uri) }
-                                    .align(Alignment.TopEnd)
-                                    .testTag("remove_new_photo_$index")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "写真を削除",
-                                    tint = Color.White,
+                            if (photoSelectionMode) {
+                                Box(
                                     modifier = Modifier
-                                        .fillMaxSize()
-                                        .padding(2.dp)
-                                )
+                                        .size(26.dp)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .align(Alignment.TopEnd)
+                                ) {
+                                    Checkbox(
+                                        checked = isPhotoSelected,
+                                        onCheckedChange = { togglePhotoSelection(photoKey) },
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                }
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .clickable { newImageUris.remove(uri) }
+                                        .align(Alignment.TopEnd)
+                                        .testTag("remove_new_photo_$index")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "写真を削除",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(2.dp)
+                                    )
+                                }
                             }
                         }
                     }

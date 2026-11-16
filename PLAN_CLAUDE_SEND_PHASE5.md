@@ -172,18 +172,18 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ## 3. スマホ側サムネイル複数選択（Target: `v1.0.0 Build 10`）
 
 ### 実装タスクチェックリスト
-- [] **5-3-1: 編集画面サムネイル選択モード (`app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt`)**
+- [x] **5-3-1: 編集画面サムネイル選択モード (`app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt`)**
 - 写真グリッドに選択モードを追加：長押しで開始（商品一覧の選択モードと操作感を統一）、サムネイル右上にチェックボックスを重ね表示、選択中は上部にアクションバー（選択件数／「削除」／「Museに送る」／「解除」）を表示。
 - 既存のプレビュー単品削除（`PhotoPreviewDialog` の `onDeletePhoto` と取り消しピル）は**変更しない**。
-- [] **5-3-2: 選択一括削除**（編集バッファ方式に統一・Q2）
+- [x] **5-3-2: 選択一括削除**（編集バッファ方式に統一・Q2）
 - **即時DB削除（`deletePhotosByIds`）は使わない**（レビュー指摘2）。編集画面の既存方式に揃え、確認ダイアログの後に `existingFilePaths` / `newImageUris` から選択分を一括除外し、「保存する」で確定する（初版計画書の「即時DB削除へ寄せる」は撤回）。
 - 一括削除の取り消しピル対応は行わず、実行前確認ダイアログのみとする（単品削除の取り消し挙動とは異なることを仕様として明記）。
-- [] **5-3-3: スマホ発「Museに送る」**
+- [x] **5-3-3: スマホ発「Museに送る」**
 - `data/server/PcServerClient.kt` に `createClaudeJob(...)` を追加（保存済みサーバーURL＋Bearerトークンで `POST /api/claude/jobs`、`origin: "phone"`、**`itemUuid`（`syncUuid`）を必須で送る**）。
 - **送信前ガード（Q2・Q5・レビュー指摘2）**：`itemId == 0`（新規作成中）または `hasUnsavedChanges == true` の場合は送信をブロックし、「保存してからMuseに送ってください」と案内する。またまとめ親商品（`mergedChildCount > 0` 等）を開いている場合も「まとめ商品は個別の子商品から送信してください」と案内して送信を無効化する。対象写真は `md5Hash` が空でなく `isPcSynced` のものだけとし、未同期・新規URI写真が混ざる場合は対象外として件数と理由を表示する。
 - テンプレート選択ダイアログ（新規 `ui/components/ClaudeSendDialog.kt`）：`promptTemplates` をプルダウン表示し、選択して送信。PC未接続時は送信不可とし、既存の同期ステータス表示の流儀で理由を示す。
 - `ui/FleaMarketViewModel.kt` に送信ラッパーと結果状態（成功／失敗の表示）を追加。
-- [] **5-3-4: バージョン統一更新 (`Build 10`) ＆ 検証**
+- [x] **5-3-4: バージョン統一更新 (`Build 10`) ＆ 検証**
 - 検証：スマホから複数選択→一括削除が安全に行えること。スマホからジョブを作成し、PC管理画面のジョブ一覧に `origin: phone` として現れること。PC未接続時に送信が正しくブロックされること。
 - `WebDashboardHtml.kt` はバージョン表記のみ（スマホ緊急Web管理画面への本機能の移植は本計画の対象外と明記）。
 

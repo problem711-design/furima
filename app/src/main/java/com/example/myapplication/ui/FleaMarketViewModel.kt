@@ -374,6 +374,29 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         return repository.getItemById(id)
     }
 
+    // 「Museに送る」送信ラッパー (フェーズ 5-3)。photos は (md5Hash, fileName) のリスト。
+    fun sendPhotosToClaude(
+        itemId: Int,
+        itemUuid: String,
+        photos: List<Pair<String, String>>,
+        templateId: String,
+        onError: (String) -> Unit = {},
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            if (!_isPcServerConnected.value) {
+                onError("PCサーバー未接続です")
+                return@launch
+            }
+            val result = pcServerClient.createClaudeJob(itemId, itemUuid, photos, templateId)
+            if (result.success) {
+                onSuccess()
+            } else {
+                onError(result.message)
+            }
+        }
+    }
+
     suspend fun getSelectedItems(): List<ItemWithPhotos> {
         val ids = _selectedItemIds.value.toList()
         return repository.getDao().getItemsWithPhotosByIds(ids)
