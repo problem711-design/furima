@@ -9,19 +9,19 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `f96661f`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `1a3e48a`）
 
 - **最後にレビューを完了したリモートコミット**:
-  - `d627d56`（`6-3` 案2 実装＋特別当直実地確認完了・ステップ1締め / `v1.1 Build 3`）
-  - `2d04a38`（`6-4` 先行の小規模ダッシュボード UI 調整 / `v1.1 Build 4`）
-  - `5cfc285`（実装担当 §25 回答）→ `d820902`（レビュー §26 / §7 追加訂正）→ **`f96661f`（実装担当 §27 / §8 回答：全項目確定）**
+  - `53052d4`（`v1.1 Build 5` 修正バッチ `24-1`〜`24-8` 実装）
+  - `64525e2`（`mergeServerPhotosAdditively` への `suspend` 付与コンパイル修正）
+  - `1a3e48a`（Android APK バイナリ更新）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
-  - 実装レビュー: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)**
-  - 是正設計協議: **`24-1`〜`24-8`（`d820902`＋`f96661f` にて双方合意成立）**
-- **現在のステータス（双方合意成立・`v1.1 Build 5` 実装開始可）**:
-  - §27 / §8（`f96661f`）で **`24-1` 方式1（転送ヘッダ付き・非ループバックの `GET /` を 403 拒否＋免除判定ガード）**、**`24-7` 対策1（未Push削除ハッシュ記録による復活防止＋`isDirty` 維持）**、および **`24-2`〜`24-6`・`24-8` の全ガード条件**が確定した。
-  - **追加の事前往復は不要。このまま `v1.1 (Build 5)`（`versionCode 1105`）の修正実装を開始し、実装完了時点（ステップ2 `6-4` 着工前）で再コードレビューを行うこと。**
+  - 実装レビュー: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)・是正バッチ (`v1.1 Build 5`, `1a3e48a`)**
+- **現在のステータス（`24-1`〜`24-6`・`24-8` 是正確認済 / `24-7` の残2件 `25-1`・`25-2` 追補後に `6-4` 着手可）**:
+  - サーバー側（`24-1`・`24-5`・`24-6`）およびスマホ UI／監視・リセット（`24-2`・`24-3`・`24-4`・`24-8`）、ならびに 3箇所バージョン統一（`v1.1 Build 5` / `1105`）と C# 5 互換はすべて実装確認済み・合格。
+  - 一方、`24-7`（スマホ側の写真加算マージ＆未Push削除記録）に **2点の取りこぼしバグ（`25-1`: `removePhotoFromItem` 経路への未Push削除記録漏れ、`25-2`: `mergeServerPhotosAdditively` 後のサムネ即時取得/修復スキップ）** を検出した（詳細は §10 / `REVIEW` §28）。
+  - **どちらも Android 側の小規模修正（数行）であり、追補修正（＋C# バイナリの同期漏れ確認）を反映してからステップ2（`6-4` / `v1.2 Build 6`）の詳細化へ進むこと。**
 
 ---
 
@@ -38,7 +38,7 @@
 | **Step 1** | **`6-3` 前半**（公開窓口 `GET /api/claude/revision`＋監視スクリプト） | **`v1.1 (Build 2)`** (`1102`) | 完了 (`§22.2`) | 完了 (`§23`) | 実機疎通確認済 | `22-1`〜`22-2` 反映済 | `6db610c`, `adbe39c`, `5097143` |
 | **Step 1** | **`6-3` 後半（案2）**（許可 Tailscale IP 免除＋特別当直検証） | **`v1.1 (Build 3)`** (`1103`) | 完了 (`§23`) | **完了 (`§5`・要修正)** | ローカル実機/PCビルド済 (`d627d56`) | **未解決 `24-1`, `24-5`, `24-6`, `24-7`（修正案待ち）** | `1468b8c`〜`d627d56` |
 | **先行UI** | **ダッシュボード小規模 UI 調整**（ヘッダー折り返し・接続ピル・右カラム独立スクロール） | **`v1.1 (Build 4)`** (`1104`) | — | **完了 (`§5.3`)** | JS構文 `node --check` 通過 (`2d04a38`) | **指摘なし** | `2d04a38` (`PLAN` §23) |
-| **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | **双方合意成立 (`f96661f` / §9)** | 未（実装開始可） | 未 | **全件設計確定・Build 5 実装待ち** | `5cfc285`, `d820902`, `f96661f` |
+| **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | 完了 (`f96661f`) | **完了 (`§10`・軽微追補2件)** | ローカルAPK/PCビルド済 (`1a3e48a`) | **`24-1`〜`24-6`/`24-8` 済・残 `25-1`, `25-2` (`24-7`)** | `53052d4`, `64525e2`, `1a3e48a` |
 | **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING`）※単独 | `v1.2 (Build 6)` | **未（詳細化前・レビュー必須）** | **未着手（実装後レビュー必須）** | 未 | — | `PLAN` §16, §23 |
 | **Step 3** | **`6-5`〜`6-7`**（加工ラベル・ジョブ一覧・右カラム再編） | `v1.3 (Build 7〜9)` | 未（詳細化待ち） | 未（`6-5`・`6-7` 完了時レビュー必須） | 未 | — | `PLAN` §16, §23 |
 
@@ -54,14 +54,16 @@
 | `20-1`〜`20-3` | `6-2` Android | バグ/改善 | 台帳リンク復旧、`File.exists()` 実在確認、ハートビート抑制、タイトル省略 | — | **解消・確認済** (`1294100`, `51957bb`) |
 | `22-1`〜`22-2` | `6-3` 前半 | 事前補記 | bash 8進数回避（`date +%-H`）、正整数検証、0件無言終了、1件失効時継続 | 反映済 (`PLAN` §18.1) | **スクリプト側反映済 (`adbe39c`)** |
 | `23-1`〜`23-2` | `6-3` 案2 | 事前条件 | 厳格パス一致＋IP正規化、`StoreConfig` トップレベル保存＋専用API分離 | 反映済 (`PLAN` §20) | **基本実装済 (`Build 3`)・細部要補強 (`24-5`)** |
-| **`24-1`** | `FurimaServerNative.cs` | **重大・セキュリティ** | `StartCloudflared` (`127.0.0.1`) 経由のアクセスが `isLoopback` 無条件許可を踏み、Bearer・`trustedMuseIp` 制限を全APIで素通りする構造（さらに `GET /` が HTML 内へ `AUTH_TOKEN` を無認証埋込） | — | **合意済（方式1: `GET /` 403 遮断＋転送ヘッダ除外・Build 5 実装待ち）** |
-| **`24-2`** | `MainActivity.kt` / `FleaMarketViewModel.kt` | **重大・通知UI** | 完了通知の「いったん閉じる」がID集合管理されていないため `claudeRevision` 更新ごとに強制復活＋承認待ち「いったん閉じる」／帯抑止中に完了通知が長期マスクされる問題 | — | **合意済（`remainingCount` 整合＋`intersect` 掃除・Build 5 実装待ち）** |
-| **`24-3`** | `FleaMarketViewModel.kt` | **重大・通知操作** | `respondToClaudeApprovals` 末尾で途中失敗 (`approveFailed`) や11件以上残存時も無条件で `_claudeApprovalPeekRequested = false` にし、確認中ダイアログを閉じてしまう問題 | — | **合意済・Build 5 実装待ち** |
-| **`24-4`** | `FleaMarketViewModel.kt` | **重大・同期/通知遅延** | `heartbeatLoop` が単一コルーチン直列実行のため、写真同期 (`syncDeltaToPcServer`/`fetchServerItems`) 中に `claudeRevision` 検知が数十秒〜数分停止＋応答後の `lastKnownClaudeRevision` 未更新 | — | **合意済（独立 `/api/claude/revision` 監視＋専用直列化・Build 5 実装待ち）** |
-| **`24-5`** | `FurimaServerNative.cs` / `SyncStore.cs` | **高・IP検証/永続化** | `TryNormalizeTrustedIp` が IPv4 省略表記（`"100"` 等）やブロードキャストを受理、不正JSONで 500 応答、`SetTrustedMuseIp` が書込失敗を握り潰し 200 を返す問題 | — | **合意済・Build 5 実装待ち** |
-| **`24-6`** | `FurimaServerNative.cs` / `ClaudeJobStore.cs` | **高・同時実行整合** | `HandlePostClaudeJobResult`/`Error` の検証がロック外かつ、`HandleCancelClaudeJob`/`HandleCompleteClaudeJob` が `claudeResultWriteLock` 非取得で競合（取消後の結果書込など） | — | **合意済（最外層ロック順厳守・Build 5 実装待ち）** |
-| **`24-7`** | `PcServerClient.kt` / `FurimaServerNative.cs` | **高・同期整合** | スマホ未送信変更あり (`isDirty`) かつ端末時計が PC より進んでいる場合、返却済み `_ai` 写真の同期マージ全体がスキップされるリスク（単純加算マージのみでは削除済み写真復活リスクあり） | — | **合意済（対策1: 未Push削除ハッシュ記録ガード＋`isDirty` 維持・Build 5 実装待ち）** |
-| `24-8` | Android / Server / 運用 | 軽微・運用観察 | URL切替時のリビジョン・通知リセット漏れ、単一IPv4制約、一括失効時の連続保存、10〜22時自動wake実地未目撃 | — | **URL初期化合意・他は継続観察** |
+| **`24-1`** | `FurimaServerNative.cs` | **重大・セキュリティ** | `StartCloudflared` (`127.0.0.1`) 経由のアクセスが `isLoopback` 無条件許可を踏み、Bearer・`trustedMuseIp` 制限を全APIで素通りする構造＋`GET /` が HTML へ `AUTH_TOKEN` 埋込 | — | **解消・確認済 (`53052d4`)** |
+| **`24-2`** | `MainActivity.kt` / `FleaMarketViewModel.kt` | **重大・通知UI** | 完了通知の「いったん閉じる」再ポップアップ＋承認待ち抑止中の完了通知長期マスク問題 | — | **解消・確認済 (`53052d4`)** |
+| **`24-3`** | `FleaMarketViewModel.kt` | **重大・通知操作** | `respondToClaudeApprovals` 末尾で途中失敗や11件以上残存時も無条件で `_claudeApprovalPeekRequested = false` にする問題 | — | **解消・確認済 (`53052d4`)** |
+| **`24-4`** | `FleaMarketViewModel.kt` | **重大・同期/通知遅延** | `heartbeatLoop` 単一コルーチン直列実行による通知停止＋応答後の `lastKnownClaudeRevision` 未更新 | — | **解消・確認済 (`53052d4`)** |
+| **`24-5`** | `FurimaServerNative.cs` / `SyncStore.cs` | **高・IP検証/永続化** | IPv4 省略表記受理、不正JSON時 500、`SetTrustedMuseIp` 保存失敗握り潰し | — | **解消・確認済 (`53052d4`)** |
+| **`24-6`** | `FurimaServerNative.cs` / `ClaudeJobStore.cs` | **高・同時実行整合** | `HandleCancelClaudeJob`/`HandleCompleteClaudeJob` の `claudeResultWriteLock` 非取得＋結果追記前状態検証不足 | — | **解消・確認済 (`53052d4`)** |
+| **`24-7`** | `PcServerClient.kt` / `FleaMarketRepository.kt` | **高・同期整合** | スマホ未送信変更 (`isDirty`)＋時刻ズレ時の `_ai` 写真反映スキップ＋削除写真復活防止 | — | **基本実装済・残2件 (`25-1`, `25-2`)** |
+| `24-8` | Android / Server / 運用 | 軽微・運用観察 | URL切替時リセット漏れ・単一IPv4制約・一括失効保存・時間帯内初回wake観察 | — | **URL初期化確認済・他は継続観察** |
+| **`25-1`** | `FleaMarketRepository.kt` (`removePhotoFromItem`) | **中〜高・削除復活** | 詳細画面プレビューからの単体写真削除 `removePhotoFromItem` に `recordPendingPhotoDeletion` が抜けており、`isDirty` 中の加算マージで削除写真が復活するリスク | — | **未解決（追補修正待ち / §10）** |
+| **`25-2`** | `PcServerClient.kt` (`mergeServerPhotosAdditively`) | **高・画像欠損表示** | `isDirty` 中に `_ai` 写真を加算マージした後 `continue` するため `repairMissingOrCorruptThumbnailsForItem` が呼ばれず、`displayFile == null`（画像なし表示）のままになる問題 | — | **未解決（追補修正待ち / §10）** |
 
 ---
 
@@ -75,14 +77,9 @@
 5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 6. **交互レビュー・ループ運用**: 実装担当から修正案コミットが来たら仕様妥当性をレビューして本ファイルへ追記＋コミットし、双方合意後に実装再開。サブフェーズ等のレビュー終了単位で必ず本ファイルを更新・コミットすること。
 
-### 4.1 次の最優先レビュー対象: `24-1`〜`24-8` の修正実装（`v1.1 Build 5`）
-1. **ステップ2（`6-4` / `v1.2 Build 6`）へ進む前に、`v1.1 (Build 5)` の実装コミット（または設計疑問があれば §27 再回答コミット）を確認する。**
-2. `v1.1 (Build 5)` 修正実装コミット時は以下を重点確認する。
-   - **`24-1`**: 転送ヘッダ（`Cf-Connecting-Ip`・`Cf-Ray`・`X-Forwarded-For`・`Forwarded`・`X-Real-IP`）有無による `isLoopback` 除外に加え、**`GET /`（`ServeDashboardHtml`）経由の `AUTH_TOKEN` 無認証漏洩が完全に塞がれているか**（転送ヘッダ付き `GET /` の 403/401 遮断、または非埋込＋事前認証）。`IsTrustedClaudeExemptRequest` でも転送ヘッダを弾いているか。
-   - **`24-2`〜`24-4`**: `ClaudeCompletionDialog` の `_dismissedClaudeCompletionIds` 管理（`remainingCount` 整合・`intersect(unackedIds)` のみ掃除）、`respondToClaudeApprovals` 失敗時/残件時の一時確認フラグ保持、独立コルーチンが**独自に `GET /api/claude/revision` をポーリング**して `syncMutex` から分離されているか、かつ `claudeRefreshMutex` で応答操作直後の古い `fetchClaudeJobs` 上書きを防いでいるか。
-   - **`24-5`〜`24-6`**: IPv4 4オクテット厳格検証・不正JSON時 400・`SetTrustedMuseIp` 保存成否伝播、`claudeResultWriteLock` 最外層順序（`claudeResultWriteLock → lockObj → _jobLock`）の徹底とジョブ状態遷移の直列化。
-   - **`24-7`**: `isDirty` 中の写真加算マージで**ローカル削除済み写真が復活しないガード**（未Push削除ハッシュ除外／先Push／`resultMd5` 限定等）と `isDirty = true` 維持ができているか。
-   - **`24-8` / バージョン**: URL切替時リセット、バージョン表記3箇所同時更新（`v1.1 (Build 5)` / `1105`）。
+### 4.1 次の最優先レビュー対象: `25-1`・`25-2` 追補修正（`v1.1 Build 5` 仕上げ） → `6-4` 事前詳細計画
+1. **`25-1`（`FleaMarketRepository.kt` `removePhotoFromItem` の未Push削除記録）** および **`25-2`（`PcServerClient.kt` `mergeServerPhotosAdditively` 後のサムネイル即時取得）** の修正コミットを確認する（必要に応じて `tools/furima-server.exe` のリポジトリ同期要否も確認）。
+2. **`6-4`（`v1.2 Build 6` 単独ステップ）は必須ポイント2に従い、実装着手前にサブフェーズ詳細化計画を事前レビューする。**
 
 ### 4.2 今後のサブフェーズ事前／実装レビュー重点ポイント
 - **`6-4` (`v1.2 Build 6` 単独ステップ) ※詳細化後・実装後ともにレビュー必須**:
@@ -221,4 +218,33 @@
 - **判定: 完全合意成立（条件充足）** — 追加の協議往復なしで **`v1.1 (Build 5)`（`versionCode 1105`）の修正実装を開始して問題なし**。
 - **Build 5 実装時（および完了後レビュー時）の細部確認メモ**:
   - `24-7` の未Push削除記録における「商品キー」はローカル数値 `id` ではなく **`syncUuid`（ID衝突時も一意）** を用いること、また削除後にユーザーが**同一MD5の写真をその場で再追加**した場合は該当ハッシュを未Push削除記録から解除することが望ましい（完了後レビュー時にも併せて確認する）。
+
+---
+
+## 10. `v1.1 Build 5`（`53052d4` / `64525e2` / `1a3e48a`）実装コードレビュー結果（2026-11-17）
+
+### 10.1 検証済み（合格）項目
+- **`24-1`（`FurimaServerNative.cs:1335-1384, 1434-1437`）**: `HasForwardedHeaders` で5ヘッダ（`Cf-Connecting-Ip`・`Cf-Ray`・`X-Forwarded-For`・`Forwarded`・`X-Real-IP`）を判定し、`GET /` の転送ヘッダ付き／非ループバックアクセスを `403` で拒否、ループバック免除および `IsTrustedClaudeExemptRequest` の両方から転送ヘッダ保有リクエストを除外していることを確認。`HandleRequest` の他ルートはすべて `/api/` 配下で Bearer 認証下にある。
+- **`24-2`（`MainActivity.kt:140-156`, `FleaMarketViewModel.kt:883-917, 967-975`）**: `_dismissedClaudeCompletionIds` 導入、`remainingCount` 整合（除外後件数）、`intersect(unackedIds)` のみの掃除、`if (!showClaudeApprovalDialog)` 連動をすべて確認。
+- **`24-3`（`FleaMarketViewModel.kt:1060-1065`）**: `!approveFailed && moveFailedCount == 0 && _pendingClaudeApprovals.value.isEmpty()` の時のみリセットされることを確認。
+- **`24-4`（`FleaMarketViewModel.kt:849-851, 948-978, 1126-1145`, `PcServerClient.kt:263-305`）**: `startClaudeWatchLoop` が独立コルーチンで `GET /api/claude/revision` を直接ポーリングし、`claudeRefreshMutex` で `refreshClaudeJobStates` を直列化（ロック内 `_claudeActionInProgress` 確認・`ClaudeJobListResponseDto.claudeRevision` 反映）していることを確認。
+- **`24-5`（`FurimaServerNative.cs:1452-1565`, `SyncStore.cs:349-377`）**: IPv4 4オクテット正規形＋特別アドレス除外、IPv6 正規形・IPv4-mapped 再検証、不正JSON・型不一致時 `400`、`SetTrustedMuseIp` の成否伝播（失敗時 `500`）を確認。`FurimaServerNative.cs` / `SyncStore.cs` に C# 5 非互換構文（`$""`・`?.`・`nameof(`）が無いことも確認。
+- **`24-6`（`FurimaServerNative.cs:5657-5820, 5885-5967, 5977-6050, 6215-6260`）**: `HandleCancelClaudeJob`・`HandleCompleteClaudeJob` への最外層 `claudeResultWriteLock` 追加、`HandlePostClaudeJobResult`・`HandlePostClaudeJobError` でのロック内期限切れ再評価・トークン再検証・`MutateJob` 内ステータス再確認・追記失敗時の `resultPath` 掃除を確認。
+- **`24-8` ＆ バージョン統一**: `updatePcServerUrl` での変更時リセット、および 3箇所バージョン統一（`app/build.gradle.kts` `1105`・`tools/DashboardHtml.cs` `v1.1 (Build 5)`・`WebDashboardHtml.kt` `v1.1 (Build 5)`）を確認。
+
+### 10.2 新規指摘 2 件（いずれも `24-7` の実装詳細・追補修正推奨）
+
+1. **【中〜高 `25-1`】`removePhotoFromItem`（詳細画面からの単体写真削除）に未Push削除記録が抜けている**
+   - **箇所**: `app/src/main/java/com/example/myapplication/data/FleaMarketRepository.kt:361-408`（呼出元は `ItemDetailScreen.kt:149` → `FleaMarketViewModel.kt:449`）
+   - **事象**: `saveItem`（L316）と `deletePhotosByIds`（L602）には `recordPendingPhotoDeletion` が組み込まれている一方、**商品詳細画面の拡大プレビューから写真を1枚削除する `removePhotoFromItem` には `recordPendingPhotoDeletion` が入っていない**（L406 で `isDirty = true` だけ設定）。そのため、詳細画面から写真を消して未Push（500ms デバウンス中やオフライン中）のまま加算マージが走ると、消した写真が復活し得る。
+   - **修正案**: `removePhotoFromItem` 内（`dao.deletePhotosByItemId(itemId)` の前）にも `if (targetPhoto.md5Hash.isNotBlank()) { recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, targetPhoto.md5Hash) }` を追加する。
+
+2. **【高 `25-2`】`mergeServerPhotosAdditively` で追加された未保有 `_ai` 写真のサムネイル取得が走らず、`displayFile == null` のままになる**
+   - **箇所**: `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt:960-1030, 1104-1105, 1343-1348`
+   - **事象**: PC 側で生成されたばかりの `_ai` 写真はまだスマホに存在しないため、`mergeServerPhotosAdditively` では `filePath = ""`, `thumbnailPath = null` の `PhotoEntity` として Room へ挿入される（`PhotoEntity.displayFile` は `null` になる）。ところが `L1104-1105` が `mergeServerPhotosAdditively(...)` の直後に **`continue` するため、通常マージ末尾（`L1343-1348`）の `repairMissingOrCorruptThumbnailsForItem` が一切呼ばれない**。結果、`isDirty` が解消されて次の非 dirty Pull が走るまで、スマホ上では追加されたはずの `_ai` 写真が画像なし（欠損状態）のまま表示されてしまう。
+   - **修正案**: `mergeServerPhotosAdditively` から追加有無（`Boolean`）を返す（または加算挿入ありの場合に同箇所から `if (repairThumbnails && baseUrl.isNotBlank())` の `repairMissingOrCorruptThumbnailsForItem(existing.item.id, baseUrl, token)` を呼ぶ）ようにし、加算マージ直後にサムネイルを取得・生成して即時表示できるようにする。
+
+### 10.3 補足観察（配布バイナリ）
+- コミット `1a3e48a` で Android APK（`flea_market_app.apk`・`public/flea_market_app.apk`）は更新されている一方、`tools/furima-server.exe` のバイナリ更新は `53052d4`〜`1a3e48a` に含まれていない（ローカルでのビルド通過自体は確認済みとの報告）。上記 `25-1`・`25-2` の追補修正後に再ビルド・必要に応じ配布バイナリも同期すること。
+
 

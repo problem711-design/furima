@@ -768,3 +768,26 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
 
 ### 進行
 - 以上をもって **24-1〜24-8 の修正設計は双方合意**とする。`v1.1 (Build 5) / versionCode 1105` で一括実装し、完了後に再レビューを依頼する（必須ポイント1）。その後にステップ2（6-4）へ進む。
+
+---
+
+## 28. `v1.1 Build 5`（`53052d4` / `64525e2` / `1a3e48a`）実装コードレビュー結果（2026-11-17）
+
+実装コミット群を全ファイル確認した結果、**`24-1`〜`24-6` および `24-8`（＋3箇所バージョン統一・C# 5 互換）は指摘どおり過不足なく是正されていることを確認（合格）**。  
+一方、**`24-7` の実装で 2 件の具体的な取りこぼし（`25-1`, `25-2`）**が見つかったため、ステップ2（`6-4`）へ進む前にこの2点を追補修正してほしい。
+
+### 28.1 指摘内容（2件・いずれも Android 側の小規模修正）
+
+1. **【中〜高 `25-1`】`removePhotoFromItem`（詳細画面からの単体写真削除）への未Push削除記録漏れ**
+   - **箇所**: `app/src/main/java/com/example/myapplication/data/FleaMarketRepository.kt:361-408`（呼出元 `ItemDetailScreen.kt:149` → `FleaMarketViewModel.kt:449`）
+   - **事象**: `saveItem`（L316）と `deletePhotosByIds`（L602）には `recordPendingPhotoDeletion` が入っているが、詳細画面プレビューから1枚削除する `removePhotoFromItem` には入っておらず、`isDirty = true` のみ設定している。このまま未Push状態（デバウンス窓・オフライン削除後）で加算マージが走ると削除済み写真が復活する。
+   - **修正案**: `removePhotoFromItem` 内でも削除前後に `if (targetPhoto.md5Hash.isNotBlank()) { recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, targetPhoto.md5Hash) }` を呼ぶこと。
+
+2. **【高 `25-2`】`mergeServerPhotosAdditively` 後のサムネイル即時取得が走らず、未保有 `_ai` 写真が画像なし表示になる**
+   - **箇所**: `app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt:960-1030, 1104-1105, 1343-1348`
+   - **事象**: `isDirty` 中に PC から新規の `_ai` 写真が降りてくると、`mergeServerPhotosAdditively` はローカル実ファイル未保有のため `filePath = ""`, `thumbnailPath = null` で Room へ挿入する（`PhotoEntity.displayFile` は `null`）。しかし L1104 の直後に `continue` するため、末尾 L1343-1348 の `repairMissingOrCorruptThumbnailsForItem` がスキップされてしまい、`isDirty` 解消後の別 Pull が起きるまでスマホ上で画像が表示されない。
+   - **修正案**: `mergeServerPhotosAdditively` が新規追加有無（`additions.isNotEmpty()`）を返し、`true` かつ `repairThumbnails && baseUrl.isNotBlank()` の場合は通常マージと同じく `repairMissingOrCorruptThumbnailsForItem(existing.item.id, baseUrl, token)` を即時実行すること（`isPhotoThumbnailDamagedOrMissing` は `displayFile == null && md5Hash.isNotBlank()` を `true` 判定するためそのまま動く）。
+
+### 28.2 補足確認事項
+- 上記2件を修正したら再チェック（確認コミット）へ提出すること（同 Build 5 内の追補修正扱いでも、規約どおり調整でも可）。あわせて PC サーバー実体（`tools/furima-server.exe`）の最新版同期が必要であれば反映しておくこと。
+
