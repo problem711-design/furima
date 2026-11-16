@@ -1200,3 +1200,64 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
    - 旧 `done_with_errors` ジョブの照合は `string.Equals(..., StringComparison.OrdinalIgnoreCase)` とし、前ジョブで `M1` 成功・今回ジョブで `M2` 成功といった**分割再加工による全エラー解消**も正しく `errorDismissed = true` になるよう、同一商品の全 `okJob` 集合に対して判定すること。
 3. **`PLAN` §27.4 の文書位置整理（記録時対応で可）**
    - `4726e97` で追記された `### 27.4` が現在 `## 28.`（Build 7 実装記録、L769）の後ろ（L794）に配置されているため、Build 8 の実装記録（`## 29`）を追記するタイミングで `## 28.` の前（`§27.3` の直後）へ移動して文書順を整えること。
+
+
+---
+
+## 37. レビュー担当エージェント：`v1.3 Build 8`（`6036425` / `9d40c81`）再レビュー結果（2026-11-17）
+
+### 37.1 総合判定：【要小規模是正（却下 — `37-1`・`37-2` 是正完了まで `6-6` 進行不可）】
+
+Build 8 の実装コミット **`6036425`**（13 ファイル変更）・バイナリコミット **`9d40c81`** を精査し、§32（`32-1`〜`32-7`）・§34（`34-1`〜`34-5`）・§36.2 の 3 チェックポイントのほぼ全件が意図どおり実装されていることを確認した。
+一方で、Build 8 の追加実装に起因する **高リスク不具合 1 件（`37-1`）** と **合意仕様の未実装 1 件（`37-2`）**、および軽微堅牢化・整理 1 件（`37-3`）を新規に検出したため、これらを是正したうえで `6-5` を通過させ `6-6`（Build 9）へ進むべきと判断する。
+
+---
+
+### 37.2 合格・改善確認済み事項
+- **導出と表示（`32-1`, `32-2`, `32-4`, `32-6`, `34-1`, `34-2`, `34-5`）**:
+  - PC（`DashboardHtml.cs:2408-2464`）・スマホ（`FleaMarketViewModel.kt:1013-1061`）ともに、「加工済み」が `job.photos` 所属チェック外の `results[].resultMd5` 基準へ修正され、MD5／UUID が小文字正規化されていることを確認。
+  - PC の `collectBundleUuidSet(item)`（`DashboardHtml.cs:2408-2427`）が多段 `mergedParentId`＋`childItemId` 循環防止付きで導出・スナップショット・一括既読化に共用され、ビューア中は `viewerSessionSeenMap` 固定＋背後カード即時反映（`L2290-2325, L2502-2503`）になっていることを確認。
+  - スマホは `ItemDetailScreen.kt:713-737` へもチップ表示を追加し、`Detail`・`Edit` 双方が `collectAsState()` 値を `claudePhotoLabelKey` へ直接渡しつつ `beginLabelVisit`／`endLabelVisit` で `一覧→詳細→編集` 中のスナップショットを保持することを確認。
+- **サーバー・同期基盤（`32-3`, `32-6`, `32-7`, `34-1`, `34-3`, `34-4`, `§36.2`）**:
+  - `ClaudeJobStore.cs`：`OrdinalIgnoreCase` 小文字正規化、`labelSeenRevision` 永続化と `1` 正規化、`MarkLabelsSeen` の単一ロック・単一保存・変更時限定加算、`CleanupLocked` の既読掃除（`labelSeenRevision` 非加算・`seenPruned` で保存）、`MutateJobWithErrorSupersede` による単一ロック・分割再加工対応の厳密 supersede 自動 `errorDismissed` 化（`L479-538`）を確認。
+  - `FurimaServerNative.cs`：`HandlePostClaudeJobError` の `sourceMd5` 小文字化（`L5948`）、`/api/claude/labels/seen` の `itemUuids` 対応＋`seenAt`/`labelSeenRevision` 返却（`L6271-6297`）、`status`／`heartbeat`／`jobs` への `labelSeenRevision` 同梱を確認。
+  - `FleaMarketViewModel.kt`：`refreshKnownRevisions`（`L962-964`）が `lastKnownLabelSeenRevision` を先行上書きせず `refreshClaudeJobStates` を呼ぶ点（`§36.2-1`）、`startHeartbeatLoop`（`L1396`）が `syncMutex` の外で `labelSeenRevision` を監視する点を確認。
+- **ビルド・静的検証**:
+  - 3 箇所バージョン表記（`app/build.gradle.kts` `1308`／`"1.3"`、`DashboardHtml.cs` `v1.3 (Build 8)`、`WebDashboardHtml.kt` `v1.3 (Build 8)`）および APK／PC `.exe` バイナリ同期（`9d40c81`、APK SHA256 一致）を確認。
+  - `tools/*.cs` C# 5 構文違反なし、`DashboardHtml.cs` 抽出 JS の `node --check` 終了コード `0`、およびユーザー側ローカルビルドテスト通過報告を確認。
+
+---
+
+### 37.3 却下理由（新規検出事項 `37-1`〜`37-3`）
+
+#### `37-1`【高・無限ポーリング＆既読同期停止】`updatePcServerUrl` での `lastKnownLabelSeenRevision` 等リセット漏れ
+- **該当箇所**: `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt:1467-1483`（対比: `L979-984`, `L1396`）
+- **現象と根拠**:
+  `updatePcServerUrl` にはレビュー `24-8` に基づき「接続先を切り替えたら前サーバーのカウンタ・通知状態を引き継がない」として `lastKnownDataRevision`・`lastKnownSettingsRevision`・`lastKnownClaudeRevision` を `-1L` へリセットする処理があるが、Build 8 で追加された **`lastKnownLabelSeenRevision`・`_claudeJobsForLabels`・`_claudeLabelSeenAt`・`_labelVisitSnapshot`** のリセットが抜けている。
+  本アプリは PC 再起動ごとに `trycloudflare` URL が変わるほか、別 PC／初期化済み `claude_jobs.json` へ接続する場面があり、接続先の `labelSeenRevision` が以前保持していた値より小さい場合（例：前サーバー `10` → 新サーバー `3`）：
+  1. `startHeartbeatLoop`（`L1396`）の `hb.labelSeenRevision (3) != lastKnownLabelSeenRevision (10)` が **4 秒ごとに永久に真** になり、`/api/claude/jobs` を取得し続ける **無限ポーリングループ** に陥る。
+  2. さらに `refreshClaudeJobStates`（`L979-984`）が `fetched.labelSeenRevision (3) >= lastKnownLabelSeenRevision (10)` を偽と判定するため **`_claudeLabelSeenAt` が永遠に更新されず**、`lastKnownLabelSeenRevision` も `10` のまま下がらず、新サーバーでの他端末既読共有が `labelSeenRevision` が `10` に追いつくまで完全停止する（前サーバーの既読辞書も残存する）。
+- **修正案**:
+  - `updatePcServerUrl`（`if (changed)` ブロック）で `lastKnownLabelSeenRevision = 0L`、`_claudeJobsForLabels.value = emptyList()`、`_claudeLabelSeenAt.value = emptyMap()`、`_labelVisitSnapshot.value = emptyMap()` を必ず初期化する。
+  - あわせて、`refreshClaudeJobStates`（`L979-984`）の先祖返り防止も、単なる「`lastKnownLabelSeenRevision` 以上」ではなく「`markClaudeLabelSeen` 実行中の並行世代保護」または「`startHeartbeatLoop` が差分 (`!=`) で取り直しを要求した際はサーバー値（`fetched.labelSeenRevision`）を採用できる」ようにしておくと、同一 URL のまま PC 側の `claude_jobs.json` を削除・再作成したケース（`10 → 1`）でも無限ループにならない（推奨：`markSeenSeq` カウンタで `refresh` 中に自端末の `markSeen` が走った場合のみ旧取得の辞書上書きを抑制、あるいは `updatePcServerUrl` リセット＋`wasConnected` 復帰時のリセット方針に揃える）。
+
+#### `37-2`【中・合意仕様の未実装】既読 API 失敗時の「最大完了時刻への丸め」欠落（`§33.5`）
+- **該当箇所**: `FleaMarketViewModel.kt:1084` / `DashboardHtml.cs:2492`
+- **現象と根拠**:
+  §33.5 で実装担当自身が「既読 API の応答が得られない場合は当該商品の最大の完了時刻以上に丸める」と明記し合意していたが、実装では：
+  - `FleaMarketViewModel.kt:1084`: `_claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to System.currentTimeMillis())`
+  - `DashboardHtml.cs:2492`: `let serverSeenAt = Date.now();`
+  となっており、オフラインや一時通信失敗時に対象商品の `max(completedAt)` 以上へ丸める処理が入っていない。結果として、時計がサーバーより遅れているスマホ端末で一時通信失敗が起きた場合、一覧へ戻って再オープンした際に「加工済み」が消えない（§33.5 の自己約束と未整合）。
+- **修正案**:
+  - `markClaudeLabelSeen` のフォールバック時刻を `max(現在クライアント時刻, 当該UUID集合の対象完了ジョブ群の max completedAt)` とする（サーバー応答で `seenAt > 0` が返れば従来どおり確定値で上書き）。
+
+#### `37-3`【軽微・堅牢化＆整理】高速遷移時の閲覧セッション終了保護と未使用 DTO 削除
+- **該当箇所**: `ItemListScreen.kt:154`（対比 `MainActivity.kt:122-124`）、`SyncDtos.kt:184`
+- **内容**:
+  1. `ItemListScreen.kt:154` の `LaunchedEffect(Unit) { viewModel.endLabelVisit() }` は、`NavHost` の画面遷移アニメ中に素早く戻る操作をした場合、`main_tabs` がまだコンポジションから外れていないと再実行されない可能性がある。すでに `currentRoute` を購読している `MainActivity.kt:122-124` 側で `LaunchedEffect(currentRoute) { if (!currentRoute.startsWith("item_detail") && !currentRoute.startsWith("item_edit")) viewModel.endLabelVisit() }` を呼ぶ方がアニメ競合に対して確実。
+  2. `SyncDtos.kt:184` の旧 `ClaudeLabelSeenRequestDto` が全箇所から未使用のまま残存しているため削除整理すること。
+
+---
+
+### 37.4 次ステップ
+上記 **`37-1`・`37-2`**（および **`37-3`**）は影響範囲が局所的で修正量も小さい（合計十数行）ため、修正・再ビルドのうえ再提出いただければ速やかに確認し、合格をもって **`6-6`（Build 9）** へ進む（別案があれば先に協議も可）。

@@ -9,20 +9,20 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `4726e97`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `9d40c81`）
 
-- **最後に確認を完了したリモートコミット**:
-  - `187a74c`（`PLAN` §27 ステップ 3 詳細化）
-  - `cffe97f` / `6127767`（`v1.3 Build 7` フェーズ `6-5` 初版実装・バイナリ同梱）
-  - `21e7be1`（実装担当回答 `REVIEW` §33 / `PLAN` §27.1.1・§27.1.3 改定）
-  - `4726e97`（実装担当回答 `REVIEW` §35 / `PLAN` §27 全体改定＋§27.4 実装条件追加 / 台帳 §17）
+- **最後にレビューを完了したリモートコミット**:
+  - `cffe97f` / `6127767`（`v1.3 Build 7` フェーズ `6-5` 初版）
+  - `4726e97`（`PLAN` §27 改定・`REVIEW` §35 双方合意）
+  - `6036425` / `9d40c81`（`v1.3 Build 8` フェーズ `6-5` 是正実装・バイナリ更新）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
   - 実装レビュー（合格済）: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)・是正バッチ (`v1.1 Build 5`, `1a3e48a`)・ステップ2 `6-4` ＆ 追補 `25-1`/`25-2` (`v1.2 Build 6`, `e0d831b`)**
-  - 実装レビュー（Build 7 却下 → **是正設計 双方合意完了**）: **ステップ3 `6-5`（`REVIEW` §32〜§36）**
-- **現在のステータス（`6-5` 是正方針 双方合意完了 → `v1.3 Build 8` 実装着工可）**:
-  - `32-1`〜`32-7` および最終補記 `34-1`〜`34-5` のすべてで双方合意が完了し、`PLAN` §27・§27.4 へ反映された（`4726e97` / `REVIEW` §35〜§36 / 本台帳 §17〜§18）。
-  - **実装担当は `v1.3 Build 8（1308）` の実コード是正＋ビルドへ着工可**。Build 8 完了後の再レビュー通過をもって `6-6`（Build 9）→ `6-7`（Build 10）へ進む（実装時の重点確認点 3 件を `REVIEW` §36.2 へ記録済）。
+  - 実装レビュー（**要小規模是正・却下**）: **ステップ3 `6-5`（`v1.3 Build 8`, `6036425` / `9d40c81` / `REVIEW` §37）**
+- **現在のステータス（Build 8 再レビュー：`32-1`〜`32-7` / `34-1`〜`34-5` / `§36.2` は実装確認済、新規検出 `37-1`〜`37-3` の是正待ち）**:
+  - `32-1`〜`32-7`・`34-1`〜`34-5`・`§36.2` の 3 重点チェック・3 箇所バージョン `v1.3 (Build 8)`／バイナリ同期・C# 5 互換・JS `node --check` はいずれも合格を確認。
+  - 一方で、Build 8 追加実装から **高リスク 1 件（`37-1`: `updatePcServerUrl` の `lastKnownLabelSeenRevision` 等リセット漏れによる 4 秒無限ポーリング＆既読停止）** と **中リスク 1 件（`37-2`: `§33.5` の失敗時 `maxCompletedAt` 丸め未実装）**（および軽微 `37-3`）を検出し**要小規模是正（却下）**とした（詳細: 本台帳 §19 / `REVIEW` §37）。
+  - **`37-1`・`37-2`（および `37-3`）の是正＋再ビルド・再レビュー通過後に `6-6`（Build 9）へ進む**。
 
 ---
 
@@ -41,7 +41,7 @@
 | **先行UI** | **ダッシュボード小規模 UI 調整**（ヘッダー折り返し・接続ピル・右カラム独立スクロール） | **`v1.1 (Build 4)`** (`1104`) | — | **完了 (`§5.3`)** | JS構文 `node --check` 通過 (`2d04a38`) | **指摘なし** | `2d04a38` (`PLAN` §23) |
 | **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | 完了 (`f96661f`) | **完了 (`§10`・`25-1`/`25-2` は Build 6 解消)** | ローカルAPK/PCビルド済 (`1a3e48a`) | **全件解消済 (`Build 6` `e0d831b`)** | `53052d4`, `64525e2`, `1a3e48a`, `1344670` |
 | **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING` ＋ `25-1`/`25-2`） | **`v1.2 (Build 6)`** (`1206`) | 完了 (`§30`・条件付き同意) | **完了 (`§13` / `§31`・合格)** | ローカルAPK/PCビルド＋JS静的確認済 (`e0d831b`) | **合格（軽微観察のみ）** | `1344670`, `e0d831b`, `REVIEW` §31 |
-| **Step 3** | **`6-5`**（加工ラベル＋`§31.3` 一括復元揃え） | **`v1.3 (Build 7 → Build 8是正)`** (`1307`→`1308`) | **完了・双方合意済 (`4726e97`)** | **Build 7 却下 (`§32`) → 是正合意済 (`§36`・Build 8 実装待ち)** | Build 7 静的確認済 (`6127767`) | **`32-1`〜`32-7`＋`34-1`〜`34-5` 全面合意（Build 8 実装着工可）** | `187a74c`〜`4726e97`, `REVIEW` §32〜§36 |
+| **Step 3** | **`6-5`**（加工ラベル＋`§31.3` 一括復元揃え） | **`v1.3 (Build 8)`** (`1308`) | **完了 (`4726e97`)** | **Build 8 再レビュー（`§19` / `§37`・要小規模是正）** | ローカルビルド報告＋JS/C#5/バイナリ確認済 (`9d40c81`) | **`32-1`〜`34-5` 解消確認／残 `37-1`〜`37-3`（小規模是正待ち）** | `6036425`, `9d40c81`, `REVIEW` §37 |
 | **Step 3** | **`6-6`〜`6-7`**（ジョブ一覧改善・右カラム再編） | `v1.3 (Build 9〜10)` | 詳細化済 (`187a74c`, `PLAN` §27.2〜3※要Build採番更新) | 未（`6-5` Build 8 合格後・`6-7` 完了時必須） | 未 | — | `PLAN` §16, §27.2〜27.3 |
 
 ---
@@ -67,14 +67,17 @@
 | **`25-1`** | `FleaMarketRepository.kt` (`removePhotoFromItem`) | **中〜高・削除復活** | 詳細画面プレビューからの単体写真削除 `removePhotoFromItem` に `recordPendingPhotoDeletion` が抜けており、`isDirty` 中の加算マージで削除写真が復活するリスク | 反映済 (`PLAN` §25.5, §26.4) | **解消・確認済 (`1344670` / `REVIEW` §31.2)** |
 | **`25-2`** | `PcServerClient.kt` (`mergeServerPhotosAdditively`) | **高・画像欠損表示** | `isDirty` 中に `_ai` 写真を加算マージした後 `continue` するため `repairMissingOrCorruptThumbnailsForItem` が呼ばれず、`displayFile == null`（画像なし表示）のままになる問題 | 反映済 (`PLAN` §25.5, §26.4) | **解消・確認済 (`1344670` / `REVIEW` §31.2)** |
 | **`30-1`〜`30-6`** | `6-4` 全般（`Android` / `FurimaServerNative.cs` / `DashboardHtml.cs` / `SyncStore.cs`） | **事前確定条件・網羅チェック** | ①`HandleMergeItems` 子前提検証＋`HandleUpdateItem` 子`statusLabel`連動＋`PcServerClient`親参照化、②「まとめ売却済」統一、③`updateItemStatus`/`HandleUpdateItem` の `soldPrice` 正規化、④`SyncStore.GetCleanupCandidates` 二重ループとも `SOLD` のみ維持、⑤`#stat-sold-count` (`SOLD+SHIPPING`) と `#count-sold` (`SOLD` のみ) 分離、⑥狭幅チップ折返し・`ItemQuickActionDialog` 5状態選択・見落とし全数チェックリスト反映 | 反映済 (`PLAN` §26) | **全件反映・段階2合格確認済 (`e0d831b` / `REVIEW` §31.2)** |
-| **`32-1`** | `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **致命的・対象相違** | 「加工済み（`done`）」判定が `job.photos` 必須＋`r.sourceMd5` 参照のため `_ai` 生成写真（`resultMd5`）に一切付かず元写真側に付く／元写真削除時に消える | 反映済 (`PLAN` §27.1.1 / `21e7be1`) | **方針合意済 (`REVIEW` §33.1)・Build 8 実装待ち** |
-| **`32-2`** | `DashboardHtml.cs` / `ItemDetailScreen.kt` / `ItemEditScreen.kt` | **致命的・視認不能** | 開時即時 `markClaudeLabelSeen`（＋ラベル非表示の `ItemDetailScreen` での既読化）により、開いた画面の写真グリッドで「加工済み」を一度も見られない | 反映済 (`PLAN` §27.1.1, §27.1.4 / `4726e97`) | **全面合意済 (`REVIEW` §33.2, §36)・Build 8 実装待ち** |
-| **`32-3`** | `ClaudeJobStore.cs` / `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **重大・共有不発** | `claudeRevision` 非更新と両端末の `claudeRevision` 変化限定ポーリングが衝突し、起動中端末間の既読共有が機能しない | 反映済 (`PLAN` §27.1.2, §27.4 / `4726e97`) | **全面合意済 (`REVIEW` §33.3, §36)・Build 8 実装待ち** |
-| **`32-4`** | `ItemEditScreen.kt` (`L217-218, 833`) / `ItemDetailScreen.kt` | **高・描画追従漏れ** | `collectAsState()` した `claudeJobsForLabels`/`claudeLabelSeenAt` を読まず `StateFlow.value` を参照しており、編集中に状態変化しても再コンポーズされない | 反映済 (`REVIEW` §35.1 / `4726e97`) | **全面合意済 (`REVIEW` §33.4, §36・詳細画面にも適用)・Build 8 実装待ち** |
-| **`32-5`** | `FleaMarketViewModel.kt` / `DashboardHtml.cs` / `FurimaServerNative.cs` | **高・時計ズレ** | クライアント時計（`System.currentTimeMillis`/`Date.now`）で楽観既読時刻を書き `seen` API がサーバー確定時刻を返さないため、時計遅れ端末でローカル既読が効かない | 反映済 (`PLAN` §27.1.2 / `4726e97`) | **全面合意済 (`REVIEW` §33.5, §36)・Build 8 実装待ち** |
-| **`32-6`** | `FurimaServerNative.cs` (`L5945`) / `ClaudeJobStore.cs` | **中・大小文字不一致** | `HandlePostClaudeJobError` の `sourceMd5` が `.ToLower()` されず大文字報告時にJS/Kotlin側「エラー」ラベルが消える＋`_labelSeenAt` が大小文字区別 | 反映済 (`REVIEW` §33.6) | **全面合意済 (`REVIEW` §33.6, §36)・Build 8 実装待ち** |
-| **`32-7`** | `DashboardHtml.cs` / `ClaudeJobStore.cs` / `PLAN` / `PcServerClient.kt` | **中・追従/掃除/文言** | まとめ親カードへの子ジョブ追従欠落（`REVIEW_PROGRESS` §4.1）、再加工成功後も旧エラー残留、`_labelSeenAt` 掃除欠落、`PLAN §27.1.3`「右上」表記ズレ、コメント位置ズレ | 反映済 (`PLAN` §27.1.1〜3 / `4726e97`) | **全面合意済 (`REVIEW` §33.7, §36)・Build 8 実装待ち** |
-| **`34-1`〜`34-5`** | PC/Server/Android (`6-5` Build 8 是正設計) | **着工前補記** | ①まとめ親開時の全子孫 UUID（多段再帰）一括既読化＆`itemUuids` API 拡張、②スマホ `詳細→編集` スナップショット引継ぎ、③エラー supersede の `okJob.completedAt > errTime` 厳密化＆完了時自動 `errorDismissed`、④`GET /api/claude/jobs` 先祖返り防止・`syncMutex` 外監視・`CleanupLocked` 保存/非加算、⑤`PLAN §27` Build 採番（8/9/10）＆詳細画面文言整合 | 反映済 (`PLAN` §27.1.1〜4, §27.4 / `4726e97`) | **全面合意済 (`REVIEW` §35〜§36)・Build 8 実装着工可** |
+| **`32-1`** | `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **致命的・対象相違** | 「加工済み（`done`）」判定が `job.photos` 必須＋`r.sourceMd5` 参照のため `_ai` 生成写真（`resultMd5`）に一切付かず元写真側に付く／元写真削除時に消える | 反映済 (`PLAN` §27.1.1 / `21e7be1`) | **解消・確認済 (`6036425` / `REVIEW` §37.2)** |
+| **`32-2`** | `DashboardHtml.cs` / `ItemDetailScreen.kt` / `ItemEditScreen.kt` | **致命的・視認不能** | 開時即時 `markClaudeLabelSeen`（＋ラベル非表示の `ItemDetailScreen` での既読化）により、開いた画面の写真グリッドで「加工済み」を一度も見られない | 反映済 (`PLAN` §27.1.1, §27.1.4 / `4726e97`) | **解消・確認済 (`6036425` / `REVIEW` §37.2)** |
+| **`32-3`** | `ClaudeJobStore.cs` / `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **重大・共有不発** | `claudeRevision` 非更新と両端末の `claudeRevision` 変化限定ポーリングが衝突し、起動中端末間の既読共有が機能しない | 反映済 (`PLAN` §27.1.2, §27.4 / `4726e97`) | **解消・確認済 (`6036425`・URL切替時は残 `37-1`)** |
+| **`32-4`** | `ItemEditScreen.kt` (`L217-218, 833`) / `ItemDetailScreen.kt` | **高・描画追従漏れ** | `collectAsState()` した `claudeJobsForLabels`/`claudeLabelSeenAt` を読まず `StateFlow.value` を参照しており、編集中に状態変化しても再コンポーズされない | 反映済 (`REVIEW` §35.1 / `4726e97`) | **解消・確認済 (`6036425` / `REVIEW` §37.2)** |
+| **`32-5`** | `FleaMarketViewModel.kt` / `DashboardHtml.cs` / `FurimaServerNative.cs` | **高・時計ズレ** | クライアント時計で楽観既読時刻を書き `seen` API がサーバー確定時刻を返さないため時計遅れ端末でローカル既読が効かない（§33.5 は失敗時 `maxCompletedAt` 丸めも合意） | 反映済 (`PLAN` §27.1.2 / `4726e97`) | **オンライン部解消 (`6036425`)・失敗時丸め未実装 (`37-2`)** |
+| **`32-6`** | `FurimaServerNative.cs` (`L5945`) / `ClaudeJobStore.cs` | **中・大小文字不一致** | `HandlePostClaudeJobError` の `sourceMd5` が `.ToLower()` されず大文字報告時にJS/Kotlin側「エラー」ラベルが消える＋`_labelSeenAt` が大小文字区別 | 反映済 (`REVIEW` §33.6) | **解消・確認済 (`6036425` / `REVIEW` §37.2)** |
+| **`32-7`** | `DashboardHtml.cs` / `ClaudeJobStore.cs` / `PLAN` / `PcServerClient.kt` | **中・追従/掃除/文言** | まとめ親カードへの子ジョブ追従欠落、再加工成功後も旧エラー残留、`_labelSeenAt` 掃除欠落、`PLAN §27.1.3`「右上」表記ズレ、コメント位置ズレ | 反映済 (`PLAN` §27.1.1〜3 / `4726e97`) | **解消・確認済 (`6036425` / `REVIEW` §37.2)** |
+| **`34-1`〜`34-5`** | PC/Server/Android (`6-5` Build 8 是正設計) | **着工前補記** | ①まとめ親開時の全子孫 UUID（多段再帰）一括既読化＆`itemUuids` API 拡張、②スマホ `詳細→編集` スナップショット引継ぎ、③エラー supersede の厳密化＆完了時自動 `errorDismissed`、④`labelSeenRevision` 先祖返り防止・`syncMutex` 外監視・`CleanupLocked` 保存/非加算、⑤`PLAN §27` 採番・文言整合 | 反映済 (`PLAN` §27.1.1〜4, §27.4 / `4726e97`) | **基本解消・確認済 (`6036425`・関連残件 `37-1`, `37-3`)** |
+| **`37-1`** | `FleaMarketViewModel.kt` (`L1467-1483`, `L979-984`, `L1396`) | **高・無限ループ＆停止** | `updatePcServerUrl` で `lastKnownLabelSeenRevision`・`_claudeJobsForLabels`・`_claudeLabelSeenAt`・`_labelVisitSnapshot` が未リセットのため、`trycloudflare` 再発行等で `labelSeenRevision` が前サーバーより小さい先へ切替えると 4 秒おき無限 `/api/claude/jobs` ポーリング＆既読更新永久停止 | 既定 (`24-8` 延長) | **新規検出・是正待ち (`REVIEW` §37.3)** |
+| **`37-2`** | `FleaMarketViewModel.kt` (`L1084`) / `DashboardHtml.cs` (`L2492`) | **中・合意未実装** | §33.5 合意の「既読 API 応答失敗時は当該商品の最大 `completedAt` 以上へ丸める」フォールバックが未実装で、時計遅れ端末の一時失敗時にローカル既読が効かない | 反映済 (`REVIEW` §33.5) | **新規検出・是正待ち (`REVIEW` §37.3)** |
+| **`37-3`** | `ItemListScreen.kt` (`L154`) / `SyncDtos.kt` (`L184`) | **軽微・堅牢化/整理** | ①`endLabelVisit()` の `MainActivity` `currentRoute` 監視側への移設（高速遷移アニメ競合防止）、②未使用 `ClaudeLabelSeenRequestDto` の削除整理 | — | **新規検出・是正推奨 (`REVIEW` §37.3)** |
 
 ---
 
@@ -88,7 +91,7 @@
 5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 6. **交互レビュー・ループ運用**: 実装担当から修正案コミットが来たら仕様妥当性をレビューして本ファイルへ追記＋コミットし、双方合意後に実装再開。サブフェーズ等のレビュー終了単位で必ず本ファイルを更新・コミットすること。
 
-### 4.1 次の最優先レビュー対象: **`v1.3 Build 8（1308）` 実装後再レビュー**（`6-5` 是正 `32-1`〜`32-7`＋`34-1`〜`34-5`＋`§36.2` 確認点）および `6-7` 完了時
+### 4.1 次の最優先レビュー対象: **`6-5` 残件 `37-1`〜`37-3` 是正再確認**（合格後 `6-6` 開始）および `6-7` 完了時
 1. **【最優先】`6-5` 指摘 `32-1`〜`32-7` の協議合意＆再修正レビュー**:
    - `32-1`（`resultMd5` 対象化）・`32-2`（開時セッション内スナップショット表示＋`ItemDetailScreen` 既読抑止または表示）・`32-3`/`32-5`（`labelSeenRevision` による UI 既読専用同期＋サーバー確定時刻返却）・`32-4`（`ItemEditScreen` `State` 購読）・`32-6`（`HandlePostClaudeJobError` MD5 小文字正規化等）・`32-7`（まとめ親追従・再加工エラー解消方針・`_labelSeenAt` 掃除・`PLAN §27.1.3` 整合）の合意と実装検証。
    - なお `FurimaServerNative.HandleBatchRestoreItems`（`§31.3`）は `cffe97f` にて解消確認済み。
@@ -360,3 +363,13 @@
 - `4726e97`（`REVIEW` §35・`PLAN` §27 改定・`PROGRESS.md` 更新）を確認し、補記 **`34-1`〜`34-5`** の全件合意および `PLAN` §27.1.1〜§27.1.4・§27.4 への正確な反映を確認した。
 - これをもって **`6-5` 是正仕様の双方合意を完了**とし、**`v1.3 Build 8（1308）` の実コード修正・ビルド着工を正式承認**する（`6-6` / `Build 9` は Build 8 再レビュー通過後に開始）。
 - Build 8 再レビュー時の重点照合メモ 3 点（①`refreshKnownRevisions` で `lastKnownLabelSeenRevision` を先行上書きして PC 既読を飲み込まないこと、②完了時自動 `errorDismissed` の単一 `_jobLock` 処理・UUID `OrdinalIgnoreCase`・分割再加工の全解消判定、③次回 `## 29` 追記時に `PLAN §27.4` の位置を `## 28` の前へ整頓すること）を `REVIEW_CLAUDE_SEND_PHASE6.md` §36.2 へ記録した。
+
+## 19. `v1.3 Build 8`（`6036425` / `9d40c81`）フェーズ `6-5` 再レビュー結果（2026-11-17）
+
+- `6036425`（Build 8 是正本体 13 ファイル）と `9d40c81`（APK／`.exe` 配布バイナリ）および `PLAN` §29 を精査した（詳細: `REVIEW_CLAUDE_SEND_PHASE6.md` §37）。
+- **総合判定: 【要小規模是正（却下 — `37-1`・`37-2` 是正完了まで `6-6` 進行不可）】**
+  - **合格確認**: `32-1`〜`32-7`（`32-5` の失敗時丸めを除く）・`34-1`〜`34-5`・`§36.2` の 3 重点チェック（`refreshKnownRevisions` 非上書き・`MutateJobWithErrorSupersede` 単一ロック分割解消・`PLAN §27.4` 移動）・バージョン 3 箇所 `v1.3 (Build 8)`／APK SHA256 一致・C# 5 互換・JS `node --check`（0 error）。
+  - **新規検出・要是正**:
+    1. **`37-1`（高）**: `FleaMarketViewModel.updatePcServerUrl`（`L1467-1483`）に `lastKnownLabelSeenRevision` と関連 3 StateFlow のリセットが抜けており、`trycloudflare` URL 変更／別サーバー切替で `labelSeenRevision` が下がった際に 4 秒毎 `/api/claude/jobs` 無限ループ＆`_claudeLabelSeenAt` 更新永久停止を起こす。
+    2. **`37-2`（中）**: §33.5 合意の「既読 API 応答失敗時は当該商品の最大 `completedAt` 以上に丸める」処理が `FleaMarketViewModel.kt:1084`・`DashboardHtml.cs:2492` の双方で未実装。
+    3. **`37-3`（軽微）**: `ItemListScreen.kt:154` の `endLabelVisit()` を `MainActivity.kt:123` の `currentRoute` 監視へ移設推奨＋`SyncDtos.kt:184` 未使用 `ClaudeLabelSeenRequestDto` の削除整理。
