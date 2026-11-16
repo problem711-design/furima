@@ -9,19 +9,19 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `1a3e48a`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `70313fc`）
 
-- **最後にレビューを完了したリモートコミット**:
-  - `53052d4`（`v1.1 Build 5` 修正バッチ `24-1`〜`24-8` 実装）
-  - `64525e2`（`mergeServerPhotosAdditively` への `suspend` 付与コンパイル修正）
-  - `1a3e48a`（Android APK バイナリ更新）
+- **最後に確認したリモートコミット**:
+  - `70313fc`（`REVIEW_CLAUDE_SEND_PHASE6.md` §29 実装担当回答 ＋ `PLAN_CLAUDE_SEND_PHASE6.md` §25 ステップ2 `6-4` 詳細化案）
+  - （直前の実装完了コミット群: `53052d4` / `64525e2` / `1a3e48a` — `v1.1 Build 5`）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
   - 実装レビュー: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)・是正バッチ (`v1.1 Build 5`, `1a3e48a`)**
-- **現在のステータス（`24-1`〜`24-6`・`24-8` 是正確認済 / `24-7` の残2件 `25-1`・`25-2` 追補後に `6-4` 着手可）**:
-  - サーバー側（`24-1`・`24-5`・`24-6`）およびスマホ UI／監視・リセット（`24-2`・`24-3`・`24-4`・`24-8`）、ならびに 3箇所バージョン統一（`v1.1 Build 5` / `1105`）と C# 5 互換はすべて実装確認済み・合格。
-  - 一方、`24-7`（スマホ側の写真加算マージ＆未Push削除記録）に **2点の取りこぼしバグ（`25-1`: `removePhotoFromItem` 経路への未Push削除記録漏れ、`25-2`: `mergeServerPhotosAdditively` 後のサムネ即時取得/修復スキップ）** を検出した（詳細は §10 / `REVIEW` §28）。
-  - **どちらも Android 側の小規模修正（数行）であり、追補修正（＋C# バイナリの同期漏れ確認）を反映してからステップ2（`6-4` / `v1.2 Build 6`）の詳細化へ進むこと。**
+  - 事前詳細計画レビュー: **`6-4`（`v1.2 Build 6`）事前設計レビュー完了（`REVIEW` §30 / 本台帳 §12 — 条件付き同意）**
+- **現在のステータス（`6-4` 事前詳細化合意済・`v1.2 Build 6` 実装＋`25-1`/`25-2` 同梱修正待ち）**:
+  - `§29` の方針（`25-1`・`25-2` の2件を `6-4` と同一コミットの `v1.2 Build 6` で同梱修正し、配布バイナリも同時に再ビルド・同期する方針）を**条件付きで受け入れ済み**（`§30.1`）。
+  - `PLAN §25`（`6-4` 詳細化）については、**`§25.7` 確認3点への回答（`§30.3`）、着工前に固定すべき曖昧点・不整合6件の確定（`§30.4`）、全数照合による見落とし防止チェックリスト（`§30.5`）**をすべて反映する条件で**実装着手に同意（条件付き同意）**した。
+  - 次は実装担当による `v1.2 Build 6`（`6-4`＋`25-1`＋`25-2`）完了後の**必須ポイント2・段階2（実装後コードレビュー）**を実施する。
 
 ---
 
@@ -38,8 +38,8 @@
 | **Step 1** | **`6-3` 前半**（公開窓口 `GET /api/claude/revision`＋監視スクリプト） | **`v1.1 (Build 2)`** (`1102`) | 完了 (`§22.2`) | 完了 (`§23`) | 実機疎通確認済 | `22-1`〜`22-2` 反映済 | `6db610c`, `adbe39c`, `5097143` |
 | **Step 1** | **`6-3` 後半（案2）**（許可 Tailscale IP 免除＋特別当直検証） | **`v1.1 (Build 3)`** (`1103`) | 完了 (`§23`) | **完了 (`§5`・要修正)** | ローカル実機/PCビルド済 (`d627d56`) | **未解決 `24-1`, `24-5`, `24-6`, `24-7`（修正案待ち）** | `1468b8c`〜`d627d56` |
 | **先行UI** | **ダッシュボード小規模 UI 調整**（ヘッダー折り返し・接続ピル・右カラム独立スクロール） | **`v1.1 (Build 4)`** (`1104`) | — | **完了 (`§5.3`)** | JS構文 `node --check` 通過 (`2d04a38`) | **指摘なし** | `2d04a38` (`PLAN` §23) |
-| **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | 完了 (`f96661f`) | **完了 (`§10`・軽微追補2件)** | ローカルAPK/PCビルド済 (`1a3e48a`) | **`24-1`〜`24-6`/`24-8` 済・残 `25-1`, `25-2` (`24-7`)** | `53052d4`, `64525e2`, `1a3e48a` |
-| **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING`）※単独 | `v1.2 (Build 6)` | **未（詳細化前・レビュー必須）** | **未着手（実装後レビュー必須）** | 未 | — | `PLAN` §16, §23 |
+| **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | 完了 (`f96661f`) | **完了 (`§10`・`25-1`/`25-2` 繰越合意)** | ローカルAPK/PCビルド済 (`1a3e48a`) | **`24-1`〜`24-6`/`24-8` 済・`25-1`/`25-2` は `Build 6` 同梱 (`§29`/`§30.1`)** | `53052d4`, `64525e2`, `1a3e48a`, `70313fc` |
+| **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING` ＋ `25-1`/`25-2`） | `v1.2 (Build 6)` | **完了 (`§30`・条件付き同意)** | **未着手（実装後レビュー必須・段階2）** | 未 | **確定条件6件・確認3点・網羅リスト提示済 (`§30`/`§12`)** | `PLAN` §16, §23, §25 (`70313fc`) |
 | **Step 3** | **`6-5`〜`6-7`**（加工ラベル・ジョブ一覧・右カラム再編） | `v1.3 (Build 7〜9)` | 未（詳細化待ち） | 未（`6-5`・`6-7` 完了時レビュー必須） | 未 | — | `PLAN` §16, §23 |
 
 ---
@@ -62,8 +62,9 @@
 | **`24-6`** | `FurimaServerNative.cs` / `ClaudeJobStore.cs` | **高・同時実行整合** | `HandleCancelClaudeJob`/`HandleCompleteClaudeJob` の `claudeResultWriteLock` 非取得＋結果追記前状態検証不足 | — | **解消・確認済 (`53052d4`)** |
 | **`24-7`** | `PcServerClient.kt` / `FleaMarketRepository.kt` | **高・同期整合** | スマホ未送信変更 (`isDirty`)＋時刻ズレ時の `_ai` 写真反映スキップ＋削除写真復活防止 | — | **基本実装済・残2件 (`25-1`, `25-2`)** |
 | `24-8` | Android / Server / 運用 | 軽微・運用観察 | URL切替時リセット漏れ・単一IPv4制約・一括失効保存・時間帯内初回wake観察 | — | **URL初期化確認済・他は継続観察** |
-| **`25-1`** | `FleaMarketRepository.kt` (`removePhotoFromItem`) | **中〜高・削除復活** | 詳細画面プレビューからの単体写真削除 `removePhotoFromItem` に `recordPendingPhotoDeletion` が抜けており、`isDirty` 中の加算マージで削除写真が復活するリスク | — | **未解決（追補修正待ち / §10）** |
-| **`25-2`** | `PcServerClient.kt` (`mergeServerPhotosAdditively`) | **高・画像欠損表示** | `isDirty` 中に `_ai` 写真を加算マージした後 `continue` するため `repairMissingOrCorruptThumbnailsForItem` が呼ばれず、`displayFile == null`（画像なし表示）のままになる問題 | — | **未解決（追補修正待ち / §10）** |
+| **`25-1`** | `FleaMarketRepository.kt` (`removePhotoFromItem`) | **中〜高・削除復活** | 詳細画面プレビューからの単体写真削除 `removePhotoFromItem` に `recordPendingPhotoDeletion` が抜けており、`isDirty` 中の加算マージで削除写真が復活するリスク | 反映済 (`PLAN` §25.5) | **`Build 6 (6-4)` 同梱修正合意（§29・§30.1 / 段階2で実コード検証）** |
+| **`25-2`** | `PcServerClient.kt` (`mergeServerPhotosAdditively`) | **高・画像欠損表示** | `isDirty` 中に `_ai` 写真を加算マージした後 `continue` するため `repairMissingOrCorruptThumbnailsForItem` が呼ばれず、`displayFile == null`（画像なし表示）のままになる問題 | 反映済 (`PLAN` §25.5) | **`Build 6 (6-4)` 同梱修正合意（§29・§30.1 / 段階2で実コード検証）** |
+| **`30-1`〜`30-6`** | `6-4` 全般（`Android` / `FurimaServerNative.cs` / `DashboardHtml.cs` / `SyncStore.cs`） | **事前確定条件・網羅チェック** | ①`HandleMergeItems` 子前提検証＋`HandleUpdateItem` 子`statusLabel`連動＋`PcServerClient`親参照化、②「まとめ売却済」統一、③`updateItemStatus`/`HandleUpdateItem` の `soldPrice` 正規化、④`SyncStore.GetCleanupCandidates` 二重ループとも `SOLD` のみ維持、⑤`#stat-sold-count` (`SOLD+SHIPPING`) と `#count-sold` (`SOLD` のみ) 分離、⑥狭幅チップ折返し・`ItemQuickActionDialog` 5状態選択・`openMergeModal`/`PcServerClient` Pull `soldAt`/`TrashScreen`/`HandleRestoreItem` 等の見落とし防止 | 提示済 (`REVIEW` §30 / 本台帳 §12) | **事前確定済・`Build 6` 実装反映＆段階2検証待ち** |
 
 ---
 
@@ -77,9 +78,12 @@
 5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 6. **交互レビュー・ループ運用**: 実装担当から修正案コミットが来たら仕様妥当性をレビューして本ファイルへ追記＋コミットし、双方合意後に実装再開。サブフェーズ等のレビュー終了単位で必ず本ファイルを更新・コミットすること。
 
-### 4.1 次の最優先レビュー対象: `25-1`・`25-2` 追補修正（`v1.1 Build 5` 仕上げ） → `6-4` 事前詳細計画
-1. **`25-1`（`FleaMarketRepository.kt` `removePhotoFromItem` の未Push削除記録）** および **`25-2`（`PcServerClient.kt` `mergeServerPhotosAdditively` 後のサムネイル即時取得）** の修正コミットを確認する（必要に応じて `tools/furima-server.exe` のリポジトリ同期要否も確認）。
-2. **`6-4`（`v1.2 Build 6` 単独ステップ）は必須ポイント2に従い、実装着手前にサブフェーズ詳細化計画を事前レビューする。**
+### 4.1 次の最優先レビュー対象: 必須ポイント2・段階2（`v1.2 Build 6` 実装完了後レビュー）
+1. **最優先追補検証（`25-1`・`25-2`）**: `FleaMarketRepository.kt` (`removePhotoFromItem` の `recordPendingPhotoDeletion`) および `PcServerClient.kt` (`mergeServerPhotosAdditively` 後のサムネイル即時取得) の実装漏れがないこと。
+2. **`6-4` 本体の横断検証（`REVIEW` §30.3〜§30.5 準拠確認）**:
+   - `DRAFT_DONE`・`SHIPPING` 追加に伴う Android / `FurimaServerNative.cs` / `DashboardHtml.cs` / `SyncStore.cs` / `LocalWebServer.kt`・`WebDashboardHtml.kt` の表示統一・配色・ソート9段・まとめ親子連動・売上集計と整理保護（`SOLD` のみ）の分離。
+   - **3箇所バージョン同期（`v1.2 (Build 6)` / `versionCode 1206`）＋配布バイナリ同期（APK・`tools/furima-server.exe`）**、および C# 5 互換・抽出 JS `node --check`。
+3. ステップ3（`6-5`〜`6-7`）へ進む前に上記段階2レビューの合格を得ること。
 
 ### 4.2 今後のサブフェーズ事前／実装レビュー重点ポイント
 - **`6-4` (`v1.2 Build 6` 単独ステップ) ※詳細化後・実装後ともにレビュー必須**:
@@ -256,3 +260,31 @@
 - `24-1`〜`24-6`・`24-8` の合格を確認。詳細は `REVIEW_CLAUDE_SEND_PHASE6.md` §29。
 - `25-1`・`25-2` は指摘どおり受け入れ、利用者の指示により **6-4（v1.2 Build 6）の実装と同一コミットで追補修正**する（計画 §25.5）。
 - 6-4 の詳細化（計画 §25）を提出する。必須ポイント2のとおり、実装前の詳細化レビューをお願いする。
+
+---
+
+## 12. レビュー担当確認・事前レビュー結果（§29 回答 ＋ 計画 §25「6-4 詳細化」への回答）（2026-11-17）
+
+基準コミット `70313fc`（`REVIEW` §29 ＋ `PLAN` §25）を実コード全層と突合して検証した（詳細全量は `REVIEW_CLAUDE_SEND_PHASE6.md` §30 を参照）。
+
+### 12.1 §29（`25-1`・`25-2` の `Build 6` 同梱方針）判定: 【条件付きで受け入れ】
+- `25-1`（`FleaMarketRepository.kt` `removePhotoFromItem`）と `25-2`（`PcServerClient.kt` `mergeServerPhotosAdditively` 後の即時サムネ修復）を **`6-4`（`v1.2 Build 6`）と同一コミットで修正する方針（`PLAN §25.5`）を受け入れ**。
+- **付帯条件**: ① `Build 6` 実装完了後の第2段階レビューで `25-1`・`25-2` を最優先検証すること、② 3箇所バージョン統一（`v1.2 (Build 6)` / `1206`）と合わせ配布バイナリ（APK・`tools/furima-server.exe`）も同時更新・同期すること。
+
+### 12.2 計画 §25（フェーズ `6-4` 詳細化）総合判定: 【条件付き同意】
+- `§25.7` 確認3点への回答、着工前に確定すべき仕様不整合6件、実コード照合による見落とし防止チェックリストを実装へ組み込む前提で、**`v1.2 (Build 6)`（`versionCode 1206`）の実装へ進んでよい**（確定案に別案・調整がある場合のみ着工前に §31 で折り返すこと）。
+
+### 12.3 確定事項サマリ（詳細は `REVIEW` §30.3〜§30.5）
+1. **`§25.7` 確認点1（PC `#filter-unshared`）**: 実コード（`DashboardHtml.cs:44, 1765, 1800, 2077`）は `isShared` ではなく `status === 'DRAFT'` のみ判定している。**「未出品」を「下書き」（`DRAFT || DRAFT_DONE`）へ改称統合**し、「発送準備中」を加えて6ボタン構成に揃える。
+2. **`§25.7` 確認点2（並び順＆`DRAFT_DONE` 配色）**:
+   - **並び順**: `§25.3` を支持し、まとめ含め **`1: まとめ LISTED` → `2: まとめ SHIPPING` → `3: 単品 LISTED` → `4: 単品 SHIPPING` → `5: まとめ DRAFT_DONE` → `6: まとめ DRAFT` → `7: 単品 DRAFT_DONE` → `8: 単品 DRAFT` → `9: SOLD/その他`** に固定する（Android 側は既存 `SortOption` 維持）。
+   - **配色衝突回避**: Android 一覧カード（`ItemListScreen.kt:846-901`）は隣接する同期バッジに青系（`#4F46E5` / `#0284C7`）、`LISTED` に Dynamic `primary` を使っているため、青系を避けて **`DRAFT_DONE`＝ティール（`#0D9488` / `bg-teal-600`）、`LISTED`＝固定エメラルド緑（`#059669` 等 / `bg-emerald-600`）、`SHIPPING`＝アンバー（`#D97706` / `bg-amber-600`）、`DRAFT`＝スレート、`SOLD`＝ローズ赤、`MERGED`＝パープル** に統一する。
+3. **着工前確定6件（`§30.4`）**:
+   - ① `FurimaServerNative.HandleMergeItems`（`L3626-3641`）へのサーバー側子前提チェック（`DRAFT`/`DRAFT_DONE`/`LISTED` 以外の `childItemIds` を 400 拒否）追加、**`HandleUpdateItem`（`L2516-2573`）への `MERGED` 子 `statusLabel` 連動更新追加（現在完全に欠落）**、`PcServerClient.kt:636` の親ステータス参照による子ラベル出し分け。
+   - ② 「まとめ売却」と「まとめ売却済」の混在を廃し、統一表（`まとめ出品中` / `まとめ発送準備中` / `まとめ売却済` 等）へ統一。
+   - ③ `FleaMarketRepository.updateItemStatus`（`L410-420`）と `HandleUpdateItem`（`L2544`）で売却系離脱時の `soldPrice = 0` クリア・売却系入り時の未設定 `soldPrice` 補完を他経路と揃える。
+   - ④ `SyncStore.GetCleanupCandidates`（`L627-740`）は**第1ループ（保護収集）も第2ループ（候補抽出）も厳格に `"SOLD"` のみ**を維持し、`SHIPPING` の写真保護を絶対に壊さない（`DashboardHtml.cs:588` 案内文のみ更新、Android `L814` も `SOLD` のみ維持）。
+   - ⑤ PC サイドバー実績 `#stat-sold-count`（`SOLD + SHIPPING`）とヘッダフィルタ `#count-sold`（`SOLD` のみ）の集計配列を分離。
+   - ⑥ Android 一覧チップ行（`ItemListScreen.kt:533-583`）と編集/一括ダイアログの横スクロール／`FlowRow` 化による狭幅溢れ防止、および `ItemQuickActionDialog`（`L231-262`）の5ステータス直接選択対応。
+4. **最重要見落とし防止箇所（`§30.5`）**: `ItemEntity.kt:43` (`getCalculatedProfit`)、`PcServerClient.kt:1157, 1191`（Pull 時の `resolvedSoldAt` が `SOLD` のみだと同期で `SHIPPING` の売却日時が消える）、`TrashScreen.kt:384`、`FurimaServerNative.cs` `HandleRestoreItem`/`HandleBatchRestoreItems`（`L2748, 2762, 2954, 2969`）、`DashboardHtml.cs:3090`（`openMergeModal` の否定判定 `=== 'SOLD'`）。
+

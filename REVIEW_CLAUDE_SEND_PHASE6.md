@@ -802,3 +802,123 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
 - **修正時期**: 利用者の指示により、この2件は **6-4（v1.2 Build 6）の実装と同一のコミットで追補修正**する（計画 §25.5 に明記）。ステップ2へ進む前提として本節に記録する。
 - **配布バイナリ（台帳 §10.3）**: サーバー実体の同期は 6-4 実装後の再ビルド時にあわせて行う。
 - 6-4 の詳細化を計画 §25 に書いた。必須ポイント2のとおり、**コード着手前に詳細化レビューをお願いする**。
+
+---
+
+## 30. レビュー担当確認・事前レビュー結果（§29 回答 ＋ 計画 §25「6-4 詳細化」への回答）（2026-11-17）
+
+`70313fc`（`REVIEW` §29・`PLAN` §25）を確認した。結論は以下のとおり。
+
+### 30.1 §29（`25-1`・`25-2` の Build 6 同梱修正）への回答：【条件付きで受け入れ】
+- `25-1`（`FleaMarketRepository.kt:361-408` `removePhotoFromItem` の未Push削除記録漏れ）および `25-2`（`PcServerClient.kt:961-1029, 1104-1105, 1343-1348` `mergeServerPhotosAdditively` 後のサムネイル即時修復スキップ）の2件を、利用者の指示どおり **`6-4`（`v1.2 Build 6`）と同一コミットで修正する方針（`PLAN §25.5`）を受け入れる**。
+- **条件**:
+  1. `6-4` 実装完了後の第2段階レビュー（必須ポイント2・段階2）で、`25-1`・`25-2` の修正を最優先項目として改めて検証する。
+  2. `v1.2 (Build 6)` のビルド完了後、3箇所バージョン統一（`app/build.gradle.kts` `1206` / `"1.2 (Build 6)"`、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt`）にあわせ、配布バイナリ（APK・`tools/furima-server.exe`）の同期も揃えること。
+
+---
+
+### 30.2 計画 §25（フェーズ 6-4 詳細化）総合判定：【条件付き同意】
+全体方針（売却系 `{SOLD, SHIPPING}`、表示名統一と「出品中」既定フォールバック全廃、30日写真整理からの `SHIPPING` 除外、データ移行なし）は妥当。  
+ただし、実コード全体と突合した結果、**① `§25.7` の確認事項への回答**、**② 着工前に固定すべき仕様の曖昧点・不整合（6点）**、**③ 実コード上で見落としやすい該当箇所の網羅リスト** を検出した。これらを実装へ組み込む前提で **`6-4`（`v1.2 Build 6` / `versionCode 1206`）の実装へ進んでよい**（確定案に調整・別案がある場合は実装前に §31 で折り返すこと）。
+
+---
+
+### 30.3 `§25.7`（レビューで確認したい点 1〜3）への回答
+
+#### 確認点1: 管理画面の現行「未出品」フィルタ（`#filter-unshared`）の実体と統合／併置
+- **実コード確認結果**:
+  - `tools/DashboardHtml.cs:44`: `<button onclick='setFilter("UNSHARED")' id='filter-unshared' ...>未出品 (<span id='count-unshared'>0</span>)</button>`
+  - `tools/DashboardHtml.cs:1765`: `const unshared = active.filter(i => i.status === 'DRAFT');`
+  - `tools/DashboardHtml.cs:1800`: `document.getElementById('count-unshared').innerText = unshared.length;`
+  - `tools/DashboardHtml.cs:2077`: `if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT') return false;`
+  - 識別子こそ `UNSHARED` / `filter-unshared` だが、**実体は `isShared`（PC送信・同期状態）のフィルタではなく、純粋に `status === 'DRAFT'` のステータスフィルタ**である（未同期判定はカード上部 `L2161` の `!item.isShared` 小バッジのみ）。
+- **推奨結論: 「下書き」へ統合（併置しない）**
+  - 文言を「未出品」→ **「下書き」** に改め、判定条件を `item.status === 'DRAFT' || item.status === 'DRAFT_DONE'` へ拡張する。
+  - これに **「発送準備中」** ボタンを追加して「すべて / 下書き / 出品中 / 発送準備中 / 売却済 / ゴミ箱」の6ボタンにすれば Android 側（`§25.4`・`§9.2 2-3`・`§10`）と1対1で揃い、ヘッダー幅の増大も最小限に抑えられる（`UNSHARED` を別で残す理由はない。可能ならキー・ID も `'DRAFT'` / `filter-draft` / `count-draft` に整理し、`setFilter` (`L1815`) を含む参照箇所すべてを一貫させること）。
+
+#### 確認点2: 並び順の `SHIPPING` 位置（§25.3）＆ `DRAFT_DONE` バッジ色（§25.4）
+1. **並び順のズレ検出（`§9.2 (2-3)` vs `§25.3`）と確定案**:
+   - 現行 `DashboardHtml.cs:2098-2105` は `1: まとめ LISTED` → `2: まとめ DRAFT` → `3: 単品 LISTED` → `4: 単品 DRAFT` → `5: その他(SOLD)`。
+   - `§9.2 (2-3)` では `SHIPPING` を `SOLD` と同じ最下位「その他」へ置いていたが、`§25.3` では「まとめ出品中 → 出品中 → **発送準備中** → 下書き済み → 下書き中 → 売却済み」を提案しており、(a) `SHIPPING` の位置が上へ移り、(b) `まとめ×(SHIPPING / DRAFT_DONE / DRAFT)` の優先順位が記述から抜けている。
+   - **推奨確定案**: **「発送準備中 (`SHIPPING`) は出品中 (`LISTED`) の直後・下書き系より上」とする `§25.3` の考え方を採用する**（発送準備中は今すぐ梱包・発送が必要な作業中タスクであり、未公開の下書きより先に出す方が運用に合致する）。まとめ商品の相対順位も含め、次の明確な順序に固定すること:
+     - **順位1**: まとめ `LISTED`
+     - **順位2**: まとめ `SHIPPING`
+     - **順位3**: 単品 `LISTED`
+     - **順位4**: 単品 `SHIPPING`
+     - **順位5**: まとめ `DRAFT_DONE`
+     - **順位6**: まとめ `DRAFT`
+     - **順位7**: 単品 `DRAFT_DONE`
+     - **順位8**: 単品 `DRAFT`
+     - **順位9**: `SOLD` およびその他
+   - なお Android 側 `FleaMarketViewModel.filteredItems`（`L209-229`）は既存のユーザー選択 `SortOption`（新着順／売却日順／価格順／利益順）を維持する。
+2. **`DRAFT_DONE` バッジ色とカード配色衝突の回避（`ItemListScreen.kt:846-901` / `DashboardHtml.cs:2174`）**:
+   - **重要発見**: Android `CompactItemCard`（`ItemListScreen.kt:846-886`）では、現在 **`LISTED` が `MaterialTheme.colorScheme.primary`**（Dynamic Color で青系になり得る）、すぐ右隣に並ぶ **「未同期」バッジが `Color(0xFF4F46E5)`（インディゴ青）**、**「送信済み」バッジが `Color(0xFF0284C7)`（スカイブルー）** を使っている。さらにまとめバッジが `Color(0xFFE65100)`（濃オレンジ）。
+   - そのため `DRAFT_DONE` に一般的な「青系」を当てると、**隣接する「送信済み (`#0284C7`)」「未同期 (`#4F46E5`)」「`LISTED`」と色が衝突して見分けが付かなくなる**。また PC 管理画面（`DashboardHtml.cs:2174`）は現在 `DRAFT` に `bg-amber-500`、`LISTED` に `bg-emerald-600`、`SOLD` に `bg-rose-600` を使っている。
+   - **推奨統一配色（両プラットフォームで互いに被らない色相）**:
+     - `DRAFT`（下書き中）: **グレー／スレート**（Android `Color(0xFF64748B)`、PC `bg-slate-500`）
+     - `DRAFT_DONE`（下書き済み）: **ティール（青緑）**（Android `Color(0xFF0D9488)`、PC `bg-teal-600`）※青の同期バッジ2種とも緑の出品中ともはっきり分離できる
+     - `LISTED`（出品中）: **エメラルド／グリーン**（Android `Color(0xFF059669)` または `Color(0xFF2E7D32)` の固定色にすると壁紙由来 `primary` との衝突も消える、PC `bg-emerald-600`）
+     - `SHIPPING`（発送準備中）: **アンバー／オレンジ**（Android `Color(0xFFD97706)`、PC `bg-amber-600`）※Android の `まとめ` 濃オレンジ `0xFFE65100` と並んでも視認可能な明るめアンバー
+     - `SOLD`（売却済み）: **ローズ／レッド**（Android `Color(0xFFC62828)`、PC `bg-rose-600`）
+     - `MERGED`（まとめ子）: **パープル**（Android `Color(0xFF6A1B9A)`、PC `bg-purple-600`）
+     - 不明コード: **濃スレート**（Android `Color(0xFF334155)`、PC `bg-slate-700`）で生コード文字列を表示
+
+---
+
+### 30.4 着工前に確定すべき仕様上の曖昧点・不整合（6件）
+
+1. **§25.2「まとめ作成時の親 `asStatus`・子前提チェック・親更新時の子ラベル連動漏れ」**:
+   - **サーバー側の子前提検証抜け**: `FurimaServerNative.cs:3626-3641`（`HandleMergeItems`）には現在、指定された `childItemIds` が `SOLD`・`SHIPPING`・`MERGED`・削除済みでないかのサーバー側検証が無い（UI チェックのみ）。`400` で拒否する検証を追加すること（`DRAFT`・`DRAFT_DONE`・`LISTED` のみ許可）。
+   - **`HandleUpdateItem` の子ラベル更新欠落（重大な抜け穴）**: `HandleBatchUpdateItems`（`L3161-3174`）はまとめ親のステータス変更時に子の `statusLabel` を更新しているが、**単体編集 `HandleUpdateItem`（`L2516-2573`）には `mergedParentId == itemId` の子 `statusLabel` を更新する処理が全く存在しない**。結果、まとめ作成（`LISTED` 等）後に個別編集で親を `SHIPPING` や `SOLD` に進めても子の `statusLabel` が更新されない。`HandleUpdateItem` にも子商品の `statusLabel` 連動更新（親が `SHIPPING` なら `"まとめ発送準備中"`、`SOLD` なら `"まとめ売却済"` 等）を必ず追加すること。
+   - 同様に Android→PC 同期の `PcServerClient.kt:636` も現在 `MERGED` の `statusLabel` を `"まとめ売却"` で固定送信しているため、送信バッチ内（`itemsWithPhotos`）の親アイテムの `status` を参照して `"まとめ出品中"` / `"まとめ発送準備中"` / `"まとめ売却済"` / `"まとめ下書き中"` / `"まとめ下書き済み"` へ書き分けること。
+2. **「まとめ売却済」vs「まとめ売却」の表示名統一**:
+   - 現在コード内に `"まとめ売却"`（`FurimaServerNative.cs:2748, 2762, 2954`, `PcServerClient.kt:636`, `LocalWebServer.kt:674`）と `"まとめ売却済"`（`FurimaServerNative.cs:2969, 3164, 3670`, `ItemDetailScreen.kt:434`, `CsvExporter.kt:40`）が混在している。
+   - §25.1 の統一表どおり **`まとめ出品中` / `まとめ発送準備中` / `まとめ売却済`**（親が下書き系の場合は `まとめ下書き中` / `まとめ下書き済み`）へ揃えて `"まとめ売却"` の揺れを廃すること（カード内の省スペース短縮表記を使う場所のみ明記のうえ統一）。
+3. **`FleaMarketRepository.updateItemStatus`（`L410-420`）と `HandleUpdateItem`（`L2544`）の `soldPrice` リセット不整合**:
+   - `saveItem`（`ItemEditScreen.kt:1225`）・`batchUpdateItems`（`FleaMarketRepository.kt:672-677`）・`HandleBatchUpdateItems`（`FurimaServerNative.cs:3122-3128`）は非売却系へ戻すと `soldPrice = 0` を確定する一方、`FleaMarketRepository.updateItemStatus`（`L410-420`）は `soldAt` だけ操作して `soldPrice` をクリアせず、売却系に入る際も `soldPrice` を補完しない。`HandleUpdateItem`（`L2544`）も受信値を無条件保存している。
+   - **統一仕様**: クイック操作等 `updateItemStatus` 経由でも、売却系から外れたら `soldPrice = 0, soldAt = null`、売却系へ入った場合（未設定なら `soldPrice = item.price`・`soldAt = existing ?: now`）に揃える。`HandleUpdateItem` でも非売却系ステータス時は `soldPrice = 0` に正規化すること。
+4. **`tools/SyncStore.cs:602-745` (`GetCleanupCandidates`) の二重ループ保護（`SHIPPING` 保護不変条件）**:
+   - `GetCleanupCandidates` には **第1ループ（`L627-663`: アクティブ商品の参照写真ハッシュ／パス保護）** と **第2ループ（`L668-740`: 削除候補抽出）** がある。
+   - もし第1ループの `st == "SOLD"`（`L631`）や `parentStatus == "SOLD"`（`L642`）を `IsSoldFamily` に変えてしまうと、**同じ写真を持つ別 `SOLD` 商品経由の整理で `SHIPPING` 商品の写真が削除対象に落ちてしまう**。
+   - 第1ループ・第2ループとも **厳格に `"SOLD"` のみ** を維持し、`SHIPPING` は写真保護対象に残すこと（`DashboardHtml.cs:588` 案内文も「出品中・下書き・発送準備中の写真は削除対象に含まれません」へ更新。Android `FleaMarketViewModel.cleanupSoldPhotosOlderThan` `L814` も `"SOLD"` のみ維持）。
+5. **PC 管理画面のサイドバー集計 `#stat-sold-count` とヘッダフィルタ `#count-sold` の分離**:
+   - 現在 `DashboardHtml.cs:1766, 1789, 1802` は単一配列 `sold` でサイドバー実績件数 `#stat-sold-count` とフィルタ件数 `#count-sold` の両方を出している。
+   - 売上集計系（`totalSales`, `totalProfit`, `totalFee`, `totalShipping`, `totalExpense`, `avgPrice`, `margin`, `#stat-sold-count`）は **`SOLD` + `SHIPPING`（売却系）** で集計する一方、ヘッダフィルタ件数の **`#count-sold` は `SOLD` のみ、`#count-shipping` は `SHIPPING` のみ** と明確に分離すること（サイドバー `#stat-sold-count` の補助表示として内訳を添えてもよい）。
+6. **Android モバイル狭幅でのチップ溢れ対策 ＆ `ItemQuickActionDialog` 導線明確化**:
+   - `ItemListScreen.kt:533-583`（一覧フィルタ行）は右端に `"${visibleItems.size} / ${filteredItems.size}件"` があるため、5チップ化すると狭幅端末で文字が潰れる。チップ側を `Modifier.weight(1f).horizontalScroll(rememberScrollState())` または `FlowRow` 構成に改めること。
+   - `ItemEditScreen.kt:1014` および `BatchEditDialog.kt:133` のステータスチップ行も同様に `FlowRow` 化すること。
+   - `§25.4` の「一覧のワンタップ状態切替は従来3状態に留め〜」について、実コードの `ItemListScreen.kt` にはカード上の直接ワンタップトグルはなく、長押しメニュー `ItemQuickActionDialog.kt:231-262` に1ボタンのトグル（`onToggleStatus`）がある。`ItemQuickActionDialog` 内に5ステータス選択（例: チップ一覧または「ステータスを変更…」からの選択UI）を持たせ、`DRAFT_DONE`・`SHIPPING` を含め直接切り替えられるよう実装を確定すること。
+
+---
+
+### 30.5 見落とし注意箇所の全数チェックリスト（`§25.7` 確認点3 への回答）
+
+実コードを全数照合した際、特に見落としやすい箇所を太字で強調して列挙する（実装時の抜け漏れチェック表として利用すること）:
+
+1. **【最重要見落とし候補】Android 利益計算・同期Pull・詳細・ゴミ箱の個別 `SOLD` 判定**:
+   - `ItemEntity.kt:43`（`getCalculatedProfit` の `basePrice` が `status == "SOLD"` のみ → ここを直さないと `SHIPPING` 値引き時に利益・同期 DTO・CSV・`PROFIT_DESC` がすべてズレる）
+   - **`PcServerClient.kt:1157, 1191`**（Pull マージ時の `resolvedSoldAt = if (status == "SOLD") ... else null` → 既存更新 `L1157`・新規作成 `L1191` の両方を売却系にしないと、**PC 側の `SHIPPING` をスマホへ同期した瞬間にスマホ側の `soldAt` が `null` に消える**）
+   - `PcServerClient.kt:633-639`（Push 時 `statusLabel` の統一表対応・親参照による `MERGED` 子ラベル算出）
+   - `ItemDetailScreen.kt:134, 432-446, 614`（`basePrice`、バッジ文言・色、実売却価格・売却成立日時の表示条件）
+   - `ItemEditScreen.kt:437, 1014-1033, 1049, 1225`（プレビュー `basePrice`、5チップ化、実売却価格入力欄表示、保存時 `soldPrice`）
+   - **`TrashScreen.kt:384`**（`displayPrice` が `item.status == "SOLD"` 判定のまま）
+   - `ListingValidationBanner.kt:43`（`SHIPPING` に加え `MERGED` も警告スキップ対象に揃えると安全）
+   - `FleaMarketViewModel.kt:201-206, 215-216, 220-221, 294`（フィルタ、価格ソート2箇所、期間別売上集計。`L814` `cleanupSoldPhotosOlderThan` は `"SOLD"` のみ維持）
+   - `FleaMarketRepository.kt:169, 202, 412, 457, 469, 671, 673` ＋ `SalesAnalysisScreen.kt:111` ＋ `CsvExporter.kt:38-43, 56` ＋ `ItemListScreen.kt:165-171, 533-576, 668, 696, 771, 846-861` ＋ `ItemQuickActionDialog.kt:71-86, 199, 231-262` ＋ `BatchEditDialog.kt:133-141, 285-294`
+   - `LocalWebServer.kt:229, 670-676` ＆ `WebDashboardHtml.kt:568-570, 995-997`（§25.4 の範囲で表示ラベル統一のみ反映、編集UI追加や既存構造改修はスコープ外）
+2. **【重要見落とし候補】PC サーバー（`tools/FurimaServerNative.cs`）**:
+   - 共通ヘルパー化推奨: `IsSoldStatusFamily(status)`・`GetStatusLabel(status)`・`GetMergedChildStatusLabel(parentStatus)`
+   - `HandleSyncItems`（`L2159`, `L2220`）、`HandleUpdateItem`（`L2514, L2536, L2544, L2558` ＋ 子ラベル連動更新追加）、`HandleBatchUpdateItems`（`L3117, L3123, L3143, L3151, L3164`）、`HandleCreateItem`（`L3309, L3311, L3348, L3359`）、`HandleMergeItems`（子商品前提検証追加 ＋ `L3670, L3694, L3696, L3709`）
+   - **`HandleRestoreItem`（`L2748, L2762`）＆ `HandleBatchRestoreItems`（`L2954, L2969`）**: 特に `HandleRestoreItem` の L2762 は子 `statusLabel` を `"まとめ売却"` で無条件上書き、`HandleBatchRestoreItems` L2969 は2択のみ、親自身 L2748/L2954 も4択三項演算子のまま残っているため要置換。
+3. **【重要見落とし候補】PC 管理画面（`tools/DashboardHtml.cs`）**:
+   - **`openMergeModal`（`L3090-3091`）**: `updateSelectionBar` (`L1875`) は `LISTED || DRAFT` の肯定列挙だが、`openMergeModal` (`L3090`) は `i.status === 'SOLD' || isItemTrashed(i)` の**否定判定**になっている。ここを更新し忘れると選択バーを外れて直呼び出しや判定ズレ時に `SHIPPING` がすり抜ける。`!isMergeEligibleStatus(i.status) || isItemTrashed(i)` へ揃えること。
+   - **一括編集プレビュー & `createItem` トースト & CSV**: `batch-status-value` (`L232-236`)、`updateBatchEditPreview` (`L1979, L1981`)、`createItem` 実売却価格 (`L3805`)＆トースト文言 (`L3859`)、`downloadPcCsv` (`L3989-3993, L4000, L4007`)、`openEditModal`/`setModalStatus`/`calcModalProfit`/`updateItem` (`L3229-3248, L3346-3347, L3562`)、`evaluateListingWarningsObj` とカード呼び出し（`L2138, L2164, L3378`）、`renderItems` 価格色・表示価格・カードバッジ（`L2127, L2174-2175, L2210`）、`updateStats` / `setFilter` / `renderItems` フィルタ判定、`L588` 整理案内文。
+   - **C# 5 互換・JS 構文確認**: `tools/*.cs` で補間文字列や `?.` を使わないこと（変更完了時は `DashboardHtml.cs` 抽出 JS の `node --check` も実施推奨）。
+   - **単体テスト補強（推奨）**: `CsvExporterTest.kt` 等に `DRAFT_DONE`・`SHIPPING`・未知コードのテストケースを足すと回帰防止に有効。
+
+---
+
+### 30.6 次の進行
+- 上記（`§30.1`〜`§30.5`）をすべて反映する前提で、**このまま `v1.2 (Build 6)`（`versionCode 1206`）の実装（`6-4`＋`25-1`＋`25-2`）へ進んでよい**（確定案や配色・順位に異論／別案がある場合のみ先に §31 をコミットすること）。
+- **`v1.2 (Build 6)` 実装完了後、ステップ3（`6-5`〜`6-7`）へ進む前に必ず第2段階レビュー（必須ポイント2・段階2）を依頼すること。**
+
