@@ -1896,6 +1896,10 @@ class FurimaServerNative
             {
                 HandleGetClaudeJobs(req, res);
             }
+            else if (rawPath == "/api/claude/labels/seen" && req.HttpMethod == "POST")
+            {
+                HandleMarkClaudeLabelSeen(req, res);
+            }
             else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/cancel") && req.HttpMethod == "POST")
             {
                 string cancelJobId = rawPath.Substring("/api/claude/jobs/".Length);
@@ -3005,7 +3009,18 @@ class FurimaServerNative
                     EnsureItemSyncUuid(item);
                     item["deletedAt"] = null;
                     item["isDeleted"] = false;
-                    item["statusLabel"] = GetStatusLabel(st);
+                    if (st == "MERGED")
+                    {
+                        // §31.3: 単体復元と揃え、子自身が対象の場合も親の状態から表示名を決める
+                        int pid = item.ContainsKey("mergedParentId") ? ParseIntSafe(item["mergedParentId"], 0) : 0;
+                        var parentItem = pid > 0 ? itemsDb.Find(i => i != null && ParseIntSafe(i["id"], 0) == pid) : null;
+                        string pst = parentItem != null && parentItem.ContainsKey("status") && parentItem["status"] != null ? parentItem["status"].ToString() : "LISTED";
+                        item["statusLabel"] = GetMergedChildStatusLabel(pst);
+                    }
+                    else
+                    {
+                        item["statusLabel"] = GetStatusLabel(st);
+                    }
                     item["updatedAt"] = now;
                     item["syncedToPhone"] = false;
                     affected++;
@@ -5065,7 +5080,8 @@ class FurimaServerNative
             {
                 { "status", "ok" },
                 { "jobs", list },
-                { "claudeRevision", GetClaudeRevision() }
+                { "claudeRevision", GetClaudeRevision() },
+                { "labelSeenAtByItemUuid", ClaudeJobStore.GetLabelSeenAtSnapshot() }
             });
         }
         catch (Exception ex)
@@ -6239,6 +6255,39 @@ class FurimaServerNative
 
     // エラー警告の解消 (フェーズ 6-1a)。通知の確認 (ack) とは別のフラグで管理する。
     // 冪等仕様は HandleAckClaudeJob と同型 (変化したときだけ保存とリビジョン更新)。
+    // フェーズ 6-5: 加工済みラベルの既読化 (商品カードを開いた端末から呼ばれる)。
+    private static void HandleMarkClaudeLabelSeen(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            string itemUuid = "";
+            if (!string.IsNullOrEmpty(jsonStr))
+            {
+                JObject json = JObject.Parse(jsonStr);
+                itemUuid = (json.Value<string>("itemUuid") ?? "").Trim();
+            }
+            if (string.IsNullOrEmpty(itemUuid))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "itemUuid が必要です" } });
+                return;
+            }
+            ClaudeJobStore.MarkLabelSeen(itemUuid);
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleMarkClaudeLabelSeen エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
     private static void HandleDismissClaudeJobError(HttpListenerResponse res, string jobId)
     {
         try

@@ -155,7 +155,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.2 (Build 6)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 7)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -2218,6 +2218,7 @@ public static class DashboardHtml
                                     ${isSold ? '売却済' : (isMergedChild ? 'まとめ' : statusLabelOf(item.status))}
                                    </span>`
                             }
+                            ${!trashed ? claudeItemLabelChip(item) : ''}
                         </div>
                         ${photos.length > 0 ? `<div class='absolute bottom-1.5 right-1.5 bg-black/60 text-white text-[10px] font-bold px-1.5 py-0.5 rounded flex items-center gap-1'><i class='fa-solid fa-camera'></i> ${photos.length}</div>` : ''}
                     </div>
@@ -2281,6 +2282,7 @@ public static class DashboardHtml
         function openPhotoViewer(itemId) {
             const item = allItems.find(i => i.id === itemId);
             if (!item) return;
+            markClaudeLabelSeen(item.syncUuid || '');
 
             currentViewerItemId = itemId;
             currentViewerTab = 'group';
@@ -2380,6 +2382,74 @@ public static class DashboardHtml
 
         let claudeJobsCache = [];
 
+        // フェーズ 6-5: 加工ラベル (導出は §27.1.1、既読は §27.1.2)
+        let labelSeenAtByItemUuid = {};
+        const CLAUDE_LABEL_DONE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+        const CLAUDE_LABEL_META = {
+            error: { text: 'エラー', cls: 'bg-rose-600 text-white' },
+            processing: { text: '加工中', cls: 'bg-blue-600 text-white' },
+            approval: { text: '承認待ち', cls: 'bg-amber-400 text-amber-900' },
+            waiting: { text: '待機中', cls: 'bg-slate-500 text-white' },
+            done: { text: '加工済み', cls: 'bg-emerald-600 text-white' }
+        };
+
+        function claudePhotoLabel(itemUuid, md5) {
+            if (!itemUuid || !md5) return null;
+            let hasProcessing = false, hasApproval = false, hasWaiting = false, hasDone = false;
+            const seenAt = labelSeenAtByItemUuid[itemUuid] || 0;
+            const now = Date.now();
+            for (const job of claudeJobsCache) {
+                if (job.itemUuid !== itemUuid) continue;
+                if (job.status === 'done_with_errors' && !job.errorDismissed && (job.errors || []).some(e => e.sourceMd5 === md5)) {
+                    return { key: 'error', text: CLAUDE_LABEL_META.error.text, cls: CLAUDE_LABEL_META.error.cls };
+                }
+                if (!(job.photos || []).some(p => p.md5 === md5)) continue;
+                if (job.status === 'approved' || job.status === 'processing') hasProcessing = true;
+                else if (job.status === 'approval_pending') hasApproval = true;
+                else if (job.status === 'queued') hasWaiting = true;
+                if ((job.status === 'done' || job.status === 'done_with_errors') && (job.results || []).some(r => r.sourceMd5 === md5)) {
+                    if (job.completedAt > seenAt && (now - job.completedAt) <= CLAUDE_LABEL_DONE_WINDOW_MS) hasDone = true;
+                }
+            }
+            if (hasProcessing) return { key: 'processing', text: CLAUDE_LABEL_META.processing.text, cls: CLAUDE_LABEL_META.processing.cls };
+            if (hasApproval) return { key: 'approval', text: CLAUDE_LABEL_META.approval.text, cls: CLAUDE_LABEL_META.approval.cls };
+            if (hasWaiting) return { key: 'waiting', text: CLAUDE_LABEL_META.waiting.text, cls: CLAUDE_LABEL_META.waiting.cls };
+            if (hasDone) return { key: 'done', text: CLAUDE_LABEL_META.done.text, cls: CLAUDE_LABEL_META.done.cls };
+            return null;
+        }
+
+        function claudeItemLabel(item) {
+            const uuid = item.syncUuid || '';
+            if (!uuid) return null;
+            const order = { error: 0, processing: 1, approval: 2, waiting: 3, done: 4 };
+            const counts = {};
+            (item.photos || []).forEach(p => {
+                const l = claudePhotoLabel(uuid, p.md5Hash);
+                if (l) counts[l.key] = (counts[l.key] || 0) + 1;
+            });
+            const keys = Object.keys(counts).sort((a, b) => order[a] - order[b]);
+            if (!keys.length) return null;
+            const key = keys[0];
+            const showCount = (key === 'error' || key === 'done') && counts[key] > 1;
+            return { key: key, text: CLAUDE_LABEL_META[key].text + (showCount ? ' ×' + counts[key] : ''), cls: CLAUDE_LABEL_META[key].cls };
+        }
+
+        function claudeItemLabelChip(item) {
+            const l = claudeItemLabel(item);
+            if (!l) return '';
+            return `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${l.cls}' title='Muse 加工状態'>${l.text}</span>`;
+        }
+
+        async function markClaudeLabelSeen(itemUuid) {
+            if (!itemUuid) return;
+            labelSeenAtByItemUuid[itemUuid] = Date.now();
+            try {
+                await fetch('/api/claude/labels/seen', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ itemUuid: itemUuid }) });
+            } catch (e) {}
+            renderItems();
+            if (currentViewerItemId) renderViewerPhotos();
+        }
+
         function claudeJobStatusInfo(status, queue) {
             switch (status) {
                 case 'queued': return queue === 'waiting'
@@ -2404,6 +2474,9 @@ public static class DashboardHtml
                 const data = await res.json();
                 claudeJobsCache = Array.isArray(data.jobs) ? data.jobs : [];
                 if (typeof data.claudeRevision === 'number') lastKnownClaudeRevision = data.claudeRevision;
+                if (data.labelSeenAtByItemUuid) labelSeenAtByItemUuid = data.labelSeenAtByItemUuid;
+                renderItems();
+                if (currentViewerItemId) renderViewerPhotos();
             } catch (e) {}
         }
 
@@ -2713,6 +2786,8 @@ public static class DashboardHtml
 
         function renderSinglePhotoCard(photo, index) {
             const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
+            const viewerItemForLabel = allItems.find(i => i.id === currentViewerItemId);
+            const photoLabel = viewerItemForLabel ? claudePhotoLabel(viewerItemForLabel.syncUuid || '', photo.md5Hash) : null;
             const fileName = (photo.fileName || '').trim();
             const isChecked = selectedViewerPhotoIndices.has(index);
             return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between transition'>
@@ -2723,6 +2798,7 @@ public static class DashboardHtml
                     <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black/95 p-1 rounded shadow cursor-pointer flex items-center justify-center border border-white/30' title='写真を選択（ゴミ箱移動・Muse送信）'>
                         <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='toggleViewerPhotoSelect(${index}, event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
                     </label>
+                    ${photoLabel ? `<span class='absolute bottom-1 left-1 ${photoLabel.cls} text-[9px] font-bold px-1.5 py-0.5 rounded pointer-events-none shadow'>${photoLabel.text}</span>` : ''}
                 </div>
                 ${fileName ? `<div class='px-1.5 py-0.5 bg-slate-100/90 border-t border-slate-100 text-[9px] font-mono text-slate-600 truncate' title='${escapeHtml(fileName)}'>${escapeHtml(fileName)}</div>` : ''}
                 <div class='p-1.5 bg-slate-50 border-t border-slate-100 flex items-center gap-1 text-[10px]'>
@@ -3478,6 +3554,7 @@ public static class DashboardHtml
             await fetchSettings();
             const item = allItems.find(i => i.id === id);
             if (!item) return;
+            markClaudeLabelSeen(item.syncUuid || '');
 
             document.getElementById('edit-id').value = item.id;
             document.getElementById('edit-title').value = item.title || '';

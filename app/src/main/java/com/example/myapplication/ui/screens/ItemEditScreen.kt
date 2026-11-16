@@ -213,6 +213,13 @@ fun ItemEditScreen(
         }
     }
 
+    // フェーズ 6-5: 加工ラベル表示のためのジョブ状態購読と、開いた時点での既読化
+    val claudeJobsForLabels by viewModel.claudeJobsForLabels.collectAsState()
+    val claudeLabelSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
+    LaunchedEffect(loadedItem?.syncUuid) {
+        loadedItem?.syncUuid?.takeIf { it.isNotBlank() }?.let { viewModel.markClaudeLabelSeen(it) }
+    }
+
     LaunchedEffect(itemId) {
         if (itemId != 0) {
             val itemWithPhotos = viewModel.getItemById(itemId)
@@ -822,6 +829,26 @@ fun ItemEditScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
+                            // フェーズ 6-5: 加工ラベルチップ (左下)
+                            val claudeLabelKey = photoEntity?.md5Hash?.takeIf { it.isNotBlank() }?.let { md5 ->
+                                viewModel.claudePhotoLabelKey(loadedItem?.syncUuid ?: "", md5)
+                            }
+                            if (claudeLabelKey != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(3.dp)
+                                        .background(claudeLabelColor(claudeLabelKey), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = claudeLabelText(claudeLabelKey),
+                                        color = if (claudeLabelKey == "approval") Color.Black else Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                             if (photoSelectionMode) {
                                 Box(
                                     modifier = Modifier
@@ -1389,4 +1416,23 @@ private fun insertTemplateAtCursor(current: TextFieldValue, insertText: String):
     val updatedText = current.text.substring(0, start) + insertText + current.text.substring(end)
     val newCursor = start + insertText.length
     return TextFieldValue(text = updatedText, selection = TextRange(newCursor))
+}
+
+// フェーズ 6-5: 加工ラベルの表示名と色 (PC 管理画面のパレットに合わせる)
+private fun claudeLabelText(key: String): String = when (key) {
+    "error" -> "エラー"
+    "processing" -> "加工中"
+    "approval" -> "承認待ち"
+    "waiting" -> "待機中"
+    "done" -> "加工済み"
+    else -> ""
+}
+
+private fun claudeLabelColor(key: String): Color = when (key) {
+    "error" -> Color(0xFFE11D48)
+    "processing" -> Color(0xFF2563EB)
+    "approval" -> Color(0xFFFBBF24)
+    "waiting" -> Color(0xFF64748B)
+    "done" -> Color(0xFF059669)
+    else -> Color.Gray
 }

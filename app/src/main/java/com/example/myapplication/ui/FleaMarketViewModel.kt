@@ -863,6 +863,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private val _pendingClaudeApprovals = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
     val pendingClaudeApprovals: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _pendingClaudeApprovals.asStateFlow()
 
+    // フェーズ 6-5: 加工ラベル導出用の全ジョブと既読マップ (refreshClaudeJobStates で更新)
+    private val _claudeJobsForLabels = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
+    val claudeJobsForLabels: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _claudeJobsForLabels.asStateFlow()
+    private val _claudeLabelSeenAt = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val claudeLabelSeenAt: StateFlow<Map<String, Long>> = _claudeLabelSeenAt.asStateFlow()
+
     // フェーズ 6-2 (6-2-2): 「いったん閉じる」で非表示にした承認待ちのジョブID集合。
     // この集合に含まれない承認待ちが新たに現れた場合にだけダイアログを再表示する。
     private val _dismissedClaudeApprovalIds = MutableStateFlow<Set<String>>(emptySet())
@@ -955,6 +961,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             if (fromWatch && _claudeActionInProgress.value) return@withLock false
             val fetched = pcServerClient.fetchClaudeJobs(url, token) ?: return@withLock false
             val jobs = fetched.jobs
+            _claudeJobsForLabels.value = jobs
+            _claudeLabelSeenAt.value = fetched.labelSeenAtByItemUuid
             val pending = jobs
                 .filter { it.status == "approval_pending" }
                 .sortedBy { it.createdAt }
@@ -976,6 +984,52 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 lastKnownClaudeRevision = fetched.claudeRevision
             }
             true
+        }
+    }
+
+    // フェーズ 6-5: 写真単位の加工ラベル導出 (優先度: エラー > 加工中 > 承認待ち > 待機中 > 加工済み。§27.1.1)
+    // 戻り値はラベル種別キー ("error" / "processing" / "approval" / "waiting" / "done")、無ければ null。
+    fun claudePhotoLabelKey(itemUuid: String, md5: String): String? {
+        if (itemUuid.isBlank() || md5.isBlank()) return null
+        var hasProcessing = false
+        var hasApproval = false
+        var hasWaiting = false
+        var hasDone = false
+        val seenAt = _claudeLabelSeenAt.value[itemUuid] ?: 0L
+        val now = System.currentTimeMillis()
+        for (job in _claudeJobsForLabels.value) {
+            if (job.itemUuid != itemUuid) continue
+            if (job.status == "done_with_errors" && !job.errorDismissed && job.errors.any { it.sourceMd5 == md5 }) {
+                return "error"
+            }
+            if (job.photos.none { it.md5 == md5 }) continue
+            when (job.status) {
+                "approved", "processing" -> hasProcessing = true
+                "approval_pending" -> hasApproval = true
+                "queued" -> hasWaiting = true
+            }
+            if ((job.status == "done" || job.status == "done_with_errors") && job.results.any { it.sourceMd5 == md5 }) {
+                if (job.completedAt > seenAt && (now - job.completedAt) <= 3L * 24 * 60 * 60 * 1000) hasDone = true
+            }
+        }
+        return when {
+            hasProcessing -> "processing"
+            hasApproval -> "approval"
+            hasWaiting -> "waiting"
+            hasDone -> "done"
+            else -> null
+        }
+    }
+
+    // フェーズ 6-5: 商品を開いたら加工済みラベルを既読化する (楽観的にローカルへ反映し、サーバーへも送る)
+    fun markClaudeLabelSeen(itemUuid: String) {
+        if (itemUuid.isBlank()) return
+        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (itemUuid to System.currentTimeMillis())
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            try { pcServerClient.postClaudeLabelSeen(itemUuid, url, token) } catch (e: Exception) { }
         }
     }
 

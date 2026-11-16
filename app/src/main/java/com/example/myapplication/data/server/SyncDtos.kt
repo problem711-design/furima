@@ -136,6 +136,7 @@ data class ClaudeJobDto(
     @param:Json(name = "status") val status: String = "",
     @param:Json(name = "createdAt") val createdAt: Long = 0L,
     @param:Json(name = "approvalRequestedAt") val approvalRequestedAt: Long = 0L,
+    @param:Json(name = "completedAt") val completedAt: Long = 0L,
     @param:Json(name = "acknowledged") val acknowledged: Boolean = false,
     @param:Json(name = "errorDismissed") val errorDismissed: Boolean = false,
     @param:Json(name = "results") val results: List<ClaudeJobResultDto> = emptyList(),
@@ -159,7 +160,14 @@ data class ClaudeJobErrorDto(
 data class ClaudeJobListResponseDto(
     @param:Json(name = "status") val status: String = "",
     @param:Json(name = "jobs") val jobs: List<ClaudeJobDto> = emptyList(),
-    @param:Json(name = "claudeRevision") val claudeRevision: Long = 0L
+    @param:Json(name = "claudeRevision") val claudeRevision: Long = 0L,
+    // フェーズ 6-5: 加工済みラベルの既読時刻 (itemUuid -> ms)。旧サーバー応答では空。
+    @param:Json(name = "labelSeenAtByItemUuid") val labelSeenAtByItemUuid: Map<String, Long> = emptyMap()
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeLabelSeenRequestDto(
+    @param:Json(name = "itemUuid") val itemUuid: String
 )
 
 @JsonClass(generateAdapter = true)

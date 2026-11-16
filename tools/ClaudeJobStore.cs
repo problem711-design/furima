@@ -60,6 +60,8 @@ public class ClaudeJobsFile
 {
     public long claudeRevision { get; set; }
     public List<ClaudeJob> jobs { get; set; }
+    // フェーズ 6-5: 加工済みラベルの既読時刻 (itemUuid -> ms)。カードを開いたら消える表示の共有状態。
+    public Dictionary<string, long> labelSeenAtByItemUuid { get; set; }
 }
 
 public static class ClaudeJobStore
@@ -67,6 +69,7 @@ public static class ClaudeJobStore
     private static readonly object _jobLock = new object();
     private static List<ClaudeJob> _jobList = null;
     private static long _claudeRevision = 0;
+    private static Dictionary<string, long> _labelSeenAt = new Dictionary<string, long>();
 
     // 終端ジョブの保持期間 (30日)。写真ゴミ箱の保持期間と同水準。
     private const long RetentionMs = 30L * 24L * 60L * 60L * 1000L;
@@ -110,6 +113,10 @@ public static class ClaudeJobStore
                 {
                     jobs = file.jobs;
                     _claudeRevision = file.claudeRevision > 0 ? file.claudeRevision : 1;
+                    if (file.labelSeenAtByItemUuid != null)
+                    {
+                        _labelSeenAt = new Dictionary<string, long>(file.labelSeenAtByItemUuid);
+                    }
                 }
             }
             if (_claudeRevision <= 0) _claudeRevision = 1;
@@ -167,13 +174,37 @@ public static class ClaudeJobStore
             var file = new ClaudeJobsFile
             {
                 claudeRevision = _claudeRevision > 0 ? _claudeRevision : 1,
-                jobs = _jobList
+                jobs = _jobList,
+                labelSeenAtByItemUuid = _labelSeenAt
             };
             File.WriteAllText(path, JsonConvert.SerializeObject(file, Formatting.Indented), Encoding.UTF8);
         }
         catch (Exception ex)
         {
             Console.WriteLine("[警告] claude_jobs.json の保存に失敗しました: " + ex.Message);
+        }
+    }
+
+    // フェーズ 6-5: 加工済みラベルの既読スナップショットを返す (一覧応答に同梱して全端末で共有する)。
+    public static Dictionary<string, long> GetLabelSeenAtSnapshot()
+    {
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            return new Dictionary<string, long>(_labelSeenAt);
+        }
+    }
+
+    // フェーズ 6-5: 商品カードを開いたときに加工済みラベルを既読化する。
+    // UI 状態のため claudeRevision は進めない (見張りを起こさない)。
+    public static void MarkLabelSeen(string itemUuid)
+    {
+        if (string.IsNullOrEmpty(itemUuid)) return;
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            _labelSeenAt[itemUuid] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            SaveJobsLocked();
         }
     }
 

@@ -131,6 +131,11 @@ fun ItemDetailScreen(
     val currentItem = itemWithPhotos!!.item
     val photos = itemWithPhotos!!.photos
 
+    // フェーズ 6-5: 開いたら加工済みラベルを既読化する
+    LaunchedEffect(currentItem.syncUuid) {
+        if (currentItem.syncUuid.isNotBlank()) viewModel.markClaudeLabelSeen(currentItem.syncUuid)
+    }
+
     // フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める
     val allItemsForDetail by viewModel.itemsWithPhotos.collectAsState()
     val parentStatusForDetail = currentItem.mergedParentId?.let { pid ->
