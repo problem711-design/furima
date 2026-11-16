@@ -958,7 +958,7 @@ class PcServerClient(
      * ローカル写真の削除・上書き、商品項目の変更は一切行わない。
      * 実ファイルの解決は通常マージと同じ規則 (同一 MD5 の既存写真から流用) に従う。
      */
-    private fun mergeServerPhotosAdditively(
+    private suspend fun mergeServerPhotosAdditively(
         obj: JSONObject,
         itemId: Int,
         itemSyncUuid: String,
