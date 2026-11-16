@@ -127,13 +127,13 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - `data/local/DefaultSettings.kt`：`promptTemplates: List<TextTemplate> = emptyList()` を追加。
 - `data/server/SyncDtos.kt`：`SyncSettingsDto` に `@param:Json(name = "promptTemplates") val promptTemplates: List<SyncTextTemplateDto> = emptyList()` を追加。
 - `data/server/PcServerClient.kt`：`toSyncSettingsDto` / `applyServerSettingsDto` に `promptTemplates` の相互変換を追加。
-- `data/DefaultSettingsManager.kt`：永続化がデータクラス経由であることを確認し、フィールド追加以外の変更が不要なことを検証（手書きキー変換がある場合は同所へ追加）。
+- `data/DefaultSettingsManager.kt`：**手書きキー保存が必須対応**（レビュー指摘4-2）。現行は `SharedPreferences` へ `title_templates_json` / `description_templates_json` を個別保存しているため、`prompt_templates_json` の読み書き（45〜67行目・103〜104行目のパターン）を追加する。漏らすとアプリ再起動で `promptTemplates` が消える。
 - [] **5-1-3: PC管理画面のテンプレート編集に `prompt` カテゴリ追加 (`tools/DashboardHtml.cs`)**
-- `pcSettings` の初期値・設定読込（`titleTemplates` 処理箇所）・設定保存ペイロードに `promptTemplates` を追加。
+- `pcSettings` の初期値（976行目付近）、`fetchSettings()`（1184行目付近）、`savePcSettingsPayload()`（1266行目付近）の**3箇所すべて**の手書きマッピングへ `promptTemplates` を追加する（レビュー指摘4-4）。`renderTemplateSelects()`（1237行目付近）との連動も確認する。
 - テンプレート編集モーダルのカテゴリ分岐（`title` / `desc`）へ `prompt` を追加し、設定画面に「プロンプトテンプレート」一覧セクション（`renderTemplateListHtml` 流用）を追加。文言は「画像加工プロンプト」であることが分かる表記にする。
 - 初期データとして、既存の確定テンプレート（窓辺・海／窓辺・森／夕方の部屋）の3件をユーザーが設定画面から登録する運用とし、コードへの埋め込みはしない。
 - [] **5-1-4: スマホ設定UIへのプロンプトテンプレート編集追加**
-- `ui/screens/SettingsStorageScreen.kt` の既存テンプレート編集（タイトル／説明）に、プロンプト用セクションを追加（同じ編集ダイアログを流用）。
+- `ui/screens/SettingsStorageScreen.kt` の既存テンプレート編集（タイトル／説明）に、プロンプト用セクションを追加（同じ編集ダイアログを流用）。 **あわせて `persistSettingsNow()`（140〜174行目）が `DefaultSettings(...)` を全引数手書きで構築しているため、`promptTemplatesList` の状態と引数の追加が必須**（レビュー指摘4-3。漏らすと他の設定を保存した瞬間に `promptTemplates` が空で上書きされる）。
 - [] **5-1-5: バージョン統一更新 (`Build 8`) ＆ 検証**
 - 3箇所を **`v1.0.0 (Build 8)`** へ統一（`WebDashboardHtml.kt` は本フェーズではバージョン表記のみ）。
 - 検証：PC⇔スマホ双方からプロンプトテンプレートを登録・編集し、他方へ同期されること。旧バージョンの相手とも設定同期が壊れないこと（未知フィールド無視・欠落時空リスト）。
@@ -146,18 +146,21 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ### 実装タスクチェックリスト
 - [] **5-2-1: ジョブストア新設 (`tools/ClaudeJobStore.cs` 新規、`tools/build-exe.bat` 変更)**
 - `PhotoTrashEntry` 管理のパターンに倣い、`ClaudeJob` クラスと静的ストア（`claude_jobs.json` の読込／保存、`lock` 保護、作成・取得・一覧・状態更新）を実装。保存先は `syncDir`。
+- ジョブ履歴の自動整理（レビュー指摘10-1）：`acknowledged == true` の完了ジョブと、取消・拒否の終端ジョブは30日経過後に自動削除する（ゴミ箱の30日保持と同水準）。サーバー起動時とジョブ作成時に掃除する。
 - `build-exe.bat` のコンパイル対象へ `ClaudeJobStore.cs` を追加。
 - [] **5-2-2: `claudeRevision` 新設と応答追加 (`tools/FurimaServerNative.cs`)**
 - `dataRevision` の隣へ `claudeRevision` フィールド＋ `BumpClaudeRevision()` / `GetClaudeRevision()` を追加（155〜172行目のパターンを複製）。
 - `/api/server/status` と `/api/server/heartbeat` の**両方**の応答に `claudeRevision` を追加。
 - ジョブの作成・状態遷移・取消のたびに `BumpClaudeRevision()` を呼ぶ。商品データ自体は変えないため `dataRevision` は更新しない。
 - [] **5-2-3: ジョブ作成／一覧／詳細／取消API (`tools/FurimaServerNative.cs` の `HandleRequest` へ分岐追加)**
-- `POST /api/claude/jobs`：ボディ `{itemId, photos: [{md5, fileName}], templateId, origin}`。サーバー側で商品の存在と各MD5がその商品の写真に実在することを検証し、テンプレートの現在内容を `promptText` へスナップショットして保存。検証失敗は 400 で理由を返す。
+- `POST /api/claude/jobs`：ボディ `{itemId, itemUuid?, photos: [{md5, fileName}], templateId, origin}`。**商品特定は `itemUuid`（`syncUuid`）が指定されていればそれを最優先で引き当て、PC側の `item["id"]` を確定する（Q1・レビュー指摘1）。スマホ発では `itemUuid` を必須送信とする**（スマホとPCで整数IDが一致しないケースがあるため）。サーバー側で商品の存在と各MD5がその商品の写真に実在することを検証し、テンプレートの現在内容を `promptText` へスナップショットして保存。検証失敗は 400 で理由を返す。
+- **まとめ商品（Bundle）の扱い（Q5・レビュー指摘6）**：フェーズ5ではまとめ親商品からの送信は受け付けない（400で理由を返す）。子商品を個別に開いて子商品単位で送る運用とする。親フォルダ／親 `photos` と子商品側の二重管理を避けるためであり、親対応は将来課題として記録する。
 - `GET /api/claude/jobs`（`status` 絞り込み可）／ `GET /api/claude/jobs/{jobId}` / `POST /api/claude/jobs/{jobId}/cancel`。
 - 応答に `jobToken` を含めない（発行は 5-4。詳細応答でも `approved` 状態かつ 5-4 実装後に限る）。
 - [] **5-2-4: PCギャラリーへの送信UI追加 (`tools/DashboardHtml.cs`)**
 - ギャラリーツールバー（`viewer-trash-selected-btn` の隣）へ、テンプレート選択 `<select id='viewer-claude-template'>`（`pcSettings.promptTemplates` から生成。0件時は無効化＋設定への案内文）と「Museに送る」ボタン（`viewer-claude-send-btn`）を追加。選択数 0 の時はボタン無効（ゴミ箱ボタンと同じ `updateViewerSelectionUi` 系の更新に相乗り）。
-- `sendViewerPhotosToClaude()`：`selectedViewerPhotoIndices` から対象写真の `md5` / `fileName` を集め（写真オブジェクトの保持形式は既存ギャラリー実装に合わせる）、`POST /api/claude/jobs`（`origin: "pc"`）を呼ぶ。成功時は選択を解除し、ジョブ一覧モーダルを開くかトースト相当の表示で知らせる（既存UIの通知手段に合わせる）。
+- `sendViewerPhotosToClaude()`：`selectedViewerPhotoIndices` から対象写真の `md5` / `fileName` を集め（写真オブジェクトの保持形式は既存ギャラリー実装に合わせる）、**送信直前に現在の商品写真とMD5で照合し（ライブ更新によるインデックスずれ対策・Q6）、対象のファイル名一覧を示す確認ダイアログを出してから**、`POST /api/claude/jobs`（`origin: "pc"`）を呼ぶ。照合で一致しない写真があれば送信を中止して知らせる。成功時は選択を解除し、ジョブ一覧モーダルを開くかトースト相当の表示で知らせる（既存UIの通知手段に合わせる）。
+- チェックボックスの `title` 文言（2338行目付近 `選択して写真ゴミ箱へ移動`）を汎用文言（例：`写真を選択（ゴミ箱移動・Muse送信）`）へ変更する（レビュー指摘7-3）。ツールバー（`#viewer-action-bar`）はボタン追加で幅が逼迫するため、折り返し可能な2段構成にする（レビュー指摘7-4）。選択状態そのもののMD5キー化は将来課題として記録する。
 - ジョブ一覧モーダル（`claude-jobs-modal`、写真ゴミ箱モーダルの型を流用）：状態バッジ、商品名、枚数、テンプレート名、作成日時、取消ボタンを表示。`pollServerRevisions()` で `claudeRevision` の変化を検知したら一覧を再取得する。
 - [] **5-2-5: バージョン統一更新 (`Build 9`) ＆ 検証**
 - 検証：PCギャラリーからジョブを作成し、サーバー再起動後も `claude_jobs.json` から復元されること。存在しないMD5での作成が弾かれること。テンプレートを後から編集しても、作成済みジョブの `promptText` が変わらないこと。
@@ -171,11 +174,12 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - [] **5-3-1: 編集画面サムネイル選択モード (`app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt`)**
 - 写真グリッドに選択モードを追加：長押しで開始（商品一覧の選択モードと操作感を統一）、サムネイル右上にチェックボックスを重ね表示、選択中は上部にアクションバー（選択件数／「削除」／「Museに送る」／「解除」）を表示。
 - 既存のプレビュー単品削除（`PhotoPreviewDialog` の `onDeletePhoto` と取り消しピル）は**変更しない**。
-- [] **5-3-2: 選択一括削除**
-- 保存済み写真の一括削除は `FleaMarketRepository.deletePhotosByIds`（フェーズ 4-1-2 の安全な一括削除）へ寄せる。未保存（URI）写真は既存の編集画面内削除フローで処理する。
-- 一括削除の取り消しピル対応は行わず、代わりに実行前確認ダイアログを出す（単品削除の取り消し挙動とは異なることを仕様として明記）。
+- [] **5-3-2: 選択一括削除**（編集バッファ方式に統一・Q2）
+- **即時DB削除（`deletePhotosByIds`）は使わない**（レビュー指摘2）。編集画面の既存方式に揃え、確認ダイアログの後に `existingFilePaths` / `newImageUris` から選択分を一括除外し、「保存する」で確定する（初版計画書の「即時DB削除へ寄せる」は撤回）。
+- 一括削除の取り消しピル対応は行わず、実行前確認ダイアログのみとする（単品削除の取り消し挙動とは異なることを仕様として明記）。
 - [] **5-3-3: スマホ発「Museに送る」**
-- `data/server/PcServerClient.kt` に `createClaudeJob(...)` を追加（保存済みサーバーURL＋Bearerトークンで `POST /api/claude/jobs`、`origin: "phone"`）。対象はPC同期済みの保存済み写真のみ（MD5を持つもの）。未保存写真が混ざる場合は対象から外し、その旨を表示する。
+- `data/server/PcServerClient.kt` に `createClaudeJob(...)` を追加（保存済みサーバーURL＋Bearerトークンで `POST /api/claude/jobs`、`origin: "phone"`、**`itemUuid`（`syncUuid`）を必須で送る**）。
+- **送信前ガード（Q2・レビュー指摘2）**：`itemId == 0`（新規作成中）または `hasUnsavedChanges == true` の場合は送信をブロックし、「保存してからMuseに送ってください」と案内する。対象写真は `md5Hash` が空でなく `isPcSynced` のものだけとし、未同期・新規URI写真が混ざる場合は対象外として件数と理由を表示する。
 - テンプレート選択ダイアログ（新規 `ui/components/ClaudeSendDialog.kt`）：`promptTemplates` をプルダウン表示し、選択して送信。PC未接続時は送信不可とし、既存の同期ステータス表示の流儀で理由を示す。
 - `ui/FleaMarketViewModel.kt` に送信ラッパーと結果状態（成功／失敗の表示）を追加。
 - [] **5-3-4: バージョン統一更新 (`Build 10`) ＆ 検証**
@@ -193,12 +197,21 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - `GET /api/claude/jobs/{jobId}` の応答に、`status == approved`（または `processing`）の場合のみ `jobToken` と有効期限を含めるよう変更（5-2-3 の制限をここで解除）。
 - `GET /api/claude/jobs/{jobId}/photos/{md5}`：ヘッダ `X-Claude-Job-Token` が当該ジョブの有効なトークンと一致し、状態が `approved` / `processing` の場合のみ原本バイトを返す。初回取得時に `processing` へ遷移。トークン期限切れの場合はジョブを `approval_expired` へ戻し `BumpClaudeRevision()`（再承認が必要）。
 - トークン検証はジョブ単位に閉じ、他のジョブ・他のAPIには使えないことを実装で保証する。
+- **CORS許可ヘッダ追加（レビュー指摘8-1・必須）**：`Access-Control-Allow-Headers`（1358行目付近）へ `X-Claude-Job-Token`, `X-Source-Md5`, `X-File-Name` を追加する。
+- **`jobToken` の位置づけの正確な定義（レビュー指摘8-2）**：既存Bearerは他のAPIも通過するため、`jobToken` は権限分離ではなく「スマホ承認が完了しない限りジョブ実行APIが通らないセーフティロック（誤操作・無断実行防止ゲート）」として定義する。
+- **タイムアウトと再承認（Q7・レビュー指摘8-4）**：`approval_pending` は10分で失効し、ジョブは `queued` へ戻る（終端にしない）。`jobToken` の期限切れ判定は、写真取得・結果返却・完了・詳細取得の**全ジョブトークン対象API**で行い、切れていれば `approval_expired` とした上で再び `request-approval` を受け付ける（ジョブの作り直しは不要）。失効判定は各APIアクセス時に遅延評価する。
+- **配達用コピー仕様（画像形式・サイズ方針／確定事項9）**：`GET /api/claude/jobs/{jobId}/photos/{md5}` は原本をそのまま返さず、次の配達用コピーを生成して返す。原本ファイルは一切変更しない。生成物は `syncDir` の外（サーバーの一時領域）に置き、フォルダ監視の対象にしない。
+  - 形式がJPEG/PNGで長辺2048px以下、かつサイズ上限（目安5MB）以内なら、再エンコードせずそのまま返す（劣化ゼロ）。
+  - 長辺が2048pxを超える、またはサイズ上限を超える場合は、PC側で長辺2048pxへ縮小しJPEG品質90で再エンコードして返す（フル解像度写真と通常写真の差は、生成側の出力サイズでは実質出ない想定）。
+  - EXIFの向きは既存の回転補正の流儀で正立させてから返す。
+  - **HEIFは対象外**（運用方針として使用しない）。HEIF等の未対応形式が対象に含まれる場合は、その写真だけエラーとしてジョブに記録し、他の写真は継続する。
 - [] **5-4-2: ハートビートへの `claudeRevision` 相乗り（Android）**
 - `data/server/SyncDtos.kt` の `HeartbeatInfo` と `data/server/PcServerClient.kt` の `HeartbeatInfo` 構築箇所へ `claudeRevision: Long = 0L` を追加（旧サーバー応答にフィールドが無くても 0 で安全）。
 - `ui/FleaMarketViewModel.kt`：`lastKnownClaudeRevision` を追加し、ハートビートループ内に**独立分岐**を新設：不一致を検知したら `GET /api/claude/jobs` から `approval_pending` と「未確認の完了ジョブ」を取得して `StateFlow`（`pendingClaudeApproval` / `unackedClaudeCompletions`）を更新する。**既存のデータPull／設定Pull分岐と `isDirty` 保護には一切触れない**。この分岐の例外は握りつぶしてログのみ（次回ハートビートで再試行）とし、同期本体を止めない。
 - サーバー側の `claudeRevision` 更新漏れが無いよう、ジョブ状態を変える全APIで `BumpClaudeRevision()` を呼ぶことを 5-4-1 と合わせて実装する。
 - [] **5-4-3: 承認ダイアログ（フリマ管理アプリ内）**
-- 新規 `ui/components/ClaudeApprovalDialog.kt`：商品名、写真枚数、テンプレート名、返却先フォルダ名、リクエスト経過時間を表示し、「実行を承認」「拒否」の2ボタン。`pendingClaudeApproval` が非空の時に一覧画面（`ItemListScreen`）側で表示する。
+- 新規 `ui/components/ClaudeApprovalDialog.kt`：商品名、写真枚数、テンプレート名、返却先フォルダ名、リクエスト経過時間を表示し、「実行を承認」「拒否」の2ボタン。**表示場所は `ItemListScreen` ではなく `MainActivity.kt` の `FleaMarketApp()`（`NavHost` の外側の共通オーバーレイ）とする（Q3・レビュー指摘3）**。どのタブ・どの詳細／編集画面にいても承認できるようにするため。完了通知（5-5-4）も同じ配置とする。
+- **フォアグラウンド必須の明記**：アプリがバックグラウンド／画面OFFの間はハートビートが止まり得るため、承認は「フリマ管理アプリを開いている間に届く。閉じていた場合は次に開いた直後のハートビートで表示される」ことを仕様とし、運用（6-1）にも転記する。
 - 承認／拒否は `PcServerClient.postClaudeApproval(jobId, approved)` → `POST /api/claude/jobs/{jobId}/approval`。応答後は `StateFlow` をクリアし、次のハートビートで整合させる。
 - **Muse アプリ側に承認UIは作らない**（確定事項2）。
 - [] **5-4-4: バージョン統一更新 (`Build 11`) ＆ 検証**
@@ -211,7 +224,9 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 
 ### 実装タスクチェックリスト
 - [] **5-5-1: 結果返却API (`tools/FurimaServerNative.cs`)**
-- `POST /api/claude/jobs/{jobId}/results`：ジョブトークン必須。ヘッダ `X-Source-Md5`（元写真のMD5）と `X-File-Name`（希望ベース名）を受け、ボディの画像バイトを既存のマジックバイト検証に通し、商品フォルダへ `{元ファイル名のベース}_ai{拡張子}` で保存する（同名があれば `_ai2`, `_ai3`…と連番）。
+- `POST /api/claude/jobs/{jobId}/results`：ジョブトークン必須。ヘッダ `X-Source-Md5`（元写真のMD5）と `X-File-Name`（希望ベース名）を受け、ボディの画像バイトを既存のマジックバイト検証に通す。保存名は **ベース名の優先順位「`job.photos[].fileName` → サニタイズ済み `X-File-Name` → フォルダ内実ファイル → フォールバック名」＋ `_ai` ＋ `DetectImageExtension(bytes)` の拡張子**とする（元ファイル名の拡張子は使わない＝Q4・レビュー指摘5-B/5-C）。同名があれば `_ai2`, `_ai3`…と連番。`X-File-Name` は `Path.GetFileName` ＋不正文字除去＋長さ制限でサニタイズし、自動取込の除外パスに該当しないことを確認する。受付サイズ上限（目安25MB）を設け、超過はエラーで返す（レビュー指摘10-3）。
+- **冪等性（レビュー指摘10-2）**：同一ジョブ・同一 `sourceMd5` の結果が既に `job.results` にある場合、再登録せず既存レコードを成功として返す（通信リトライによる `_ai2` 増殖を防ぐ）。
+- **`FileSystemWatcher` との競合回避（レビュー指摘5-A）**：書き込み前にロック外でマジックバイト検証とMD5計算を済ませ、ファイル書き込み直後にロック保護下で `photoStatCache`・`hashToFilePathMap`・`item["photos"]` を即時更新して、ウォッチャー側の再取込・再ハッシュ・二重の `BumpDataRevision()` を抑制する。
 - 登録はフォルダ取込スキャン（フェーズ 4-4）と同一の登録処理を再利用し、`items_data.json` へ写真を追加、`syncedToPhone = false` 相当の扱い＋ `BumpDataRevision()` でスマホ・PC双方へ伝播させる。ジョブの `results` へ `{sourceMd5, resultFileName, resultMd5}` を追記。
 - `POST /api/items/{id}/photos/add` は**使わない**（自動名のため。5-2 調査結果参照）。
 - [] **5-5-2: 完了・確認API**
@@ -222,6 +237,7 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - [] **5-5-4: スマホの完了表示**
 - 5-4-2 の `unackedClaudeCompletions` を使い、完了ダイアログ／バナー（同期ステータスダイアログの流儀に合わせる）で「商品名・成功/失敗枚数」を通知し、「確認」ボタンで ack を送る。写真そのものは既存データPullで自動的に届く（追加実装なし）。
 - Muse チャット側でも処理完了を報告する（運用。コード変更なし）。
+- **既知の反映遅延（レビュー指摘9・仕様メモ）**：対象商品に未同期のローカル写真が残っている間は、既存のマージガード（`hasUnpushedLocalPhoto`）によりスマホ側への `_ai` 写真取り込みが次の自動同期まで遅れることがある。異常ではないため、5-5-5 の検証では「全て同期済みの商品」を前提条件とする。
 - [] **5-5-5: バージョン統一更新 (`Build 12`) ＆ 検証**
 - 検証：承認→取得→生成（手動で1枚）→返却→同一フォルダに `_ai` 名で登録され、PCギャラリーとスマホの両方に現れること。完了通知が両端末に出て、片方で確認すると両方から消えること。元写真が実行前に削除されていた場合は当該写真だけエラー記録となり、ジョブ全体は `done_with_errors` で完了できること。
 
@@ -229,7 +245,7 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 
 ## 6. Claude側の運用手順固定と試運転（コード変更なし）
 
-- [] **6-1: 実行セッションの開始手順**：ユーザーがスマホから当該セッションのトンネルURLとBearerトークンを渡す → Claudeは `GET /api/claude/jobs?status=queued` で対象ジョブを確認 → `request-approval` を送り、スマホ承認を待つ（無応答・拒否・期限切れはその時点で中止し、ユーザーへ報告）。
+- [] **6-1: 実行セッションの開始手順**：ユーザーがスマホから当該セッションのトンネルURLとBearerトークンを渡す → Claudeは `GET /api/claude/jobs?status=queued` で対象ジョブを確認 → `request-approval` を送り、スマホ承認を待つ（無応答・拒否・期限切れはその時点で中止し、ユーザーへ報告）。 **承認待ちの間、ユーザーはフリマ管理アプリをフォアグラウンドで開いておく**（バックグラウンドでは承認ダイアログが次回起動時まで届かないため）。
 - [] **6-2: 処理手順**：承認後、ジョブの `promptText`（スナップショット）をそのまま使い、写真を1枚ずつ「原本から新規生成」する。結果はJPGへ変換し、`results` APIで1枚ずつ返却する。失敗した写真は理由を記録し、残りは続行する。最後に `complete` を送り、このチャットで完了（成功／失敗の内訳）を報告する。
 - [] **6-3: 試運転**：1ジョブ・2〜3枚で全経路（作成→承認→取得→生成→返却→完了→ack共有）を通し、問題があれば該当フェーズへ差し戻して本計画書と `PROGRESS.md` に記録する。
 
@@ -263,3 +279,24 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 3. **承認／完了UIの配置（5-4-3 / 5-5-4）**：`ItemListScreen` 限定ではなく `MainActivity.kt`（`FleaMarketApp()`）の全体オーバーレイに配置する。
 4. **5-1 設定同期の実装漏れ対策**：`FurimaServerNative.cs` の `ParseDefaultSettingsConfig()`、`DefaultSettingsManager.kt`（手書きキー `prompt_templates_json`）、`SettingsStorageScreen.kt`（`persistSettingsNow()`）、`DashboardHtml.cs`（`fetchSettings` / `savePcSettingsPayload` / `pcSettings` 初期値）をすべて明記する。
 5. **5-5 結果返却と既存機構の整合**：`FileSystemWatcher` との競合回避、保存拡張子の統一（`DetectImageExtension` 優先）、`X-File-Name` サニタイズ、まとめ商品（`Bundle`）写真の返却先ルール、および PC ギャラリー選択のライブ更新時ずれ防止を確定する。
+
+
+---
+
+## 10. 協議結果（2026-11-16・レビュー指摘への回答と確定事項）
+
+`REVIEW_CLAUDE_SEND_PHASE5.md` の指摘11件と協議事項Q1〜Q7について、以下の通り確定し、本書の各節へ反映した。
+
+- **Q1（商品特定キー）**：`itemUuid`（`syncUuid`）優先解決を採用。スマホ発は必須送信（5-2-3 / 5-3-3）。
+- **Q2（編集画面の一括削除・送信ガード）**：一括削除は編集バッファ方式（保存時確定）に統一し、即時DB削除案は撤回。Muse送信は未保存時にブロック（5-3-2 / 5-3-3）。
+- **Q3（ダイアログ配置）**：承認・完了とも `MainActivity.kt` の `FleaMarketApp()` 全体オーバーレイへ配置。フォアグラウンド必須を明記（5-4-3 / 6-1）。
+- **Q4（返却の拡張子・Watcher排他）**：拡張子は `DetectImageExtension(bytes)`、ベース名は `job.photos[].fileName` 優先、書き込み直後のキャッシュ即時更新で競合回避（5-5-1）。
+- **Q5（まとめ商品）**：フェーズ5では親からは送信不可とし、子商品単位で送る（5-2-3）。
+- **Q6（PC選択のずれ）**：選択管理のMD5キー化は将来課題とし、当面は送信直前の照合＋ファイル名確認ダイアログで防ぐ（5-2-4）。
+- **Q7（タイムアウト・再承認）**：`approval_pending` は10分で失効して `queued` へ戻り、トークン期限切れ後も同一ジョブで再リクエスト可能（5-4-1）。
+- **指摘4（5-1の漏れ4箇所）**：全て変更対象へ明記（5-1-1〜5-1-4）。
+- **指摘8（セキュリティ）**：CORS許可ヘッダ追加、一覧APIへの `jobToken` 非露出、`jobToken` の位置づけ（セーフティロック）の正確な定義を反映（0.6 / 5-4-1）。
+- **指摘9（反映遅延）**：既知の挙動として仕様メモに明記（5-5-4）。
+- **指摘10（肥大化・冪等性・サイズ）**：終端ジョブの30日自動整理、結果返却の冪等性、サイズ上限を反映（5-2-1 / 5-5-1）。
+- **指摘11（用語）**：命名規約を冒頭に明記。
+- **画像形式・サイズ方針（ユーザー追加確定）**：HEIFは使用しない。基本はアプリ内カメラの2048px運用とし、フル解像度写真はPC側の配達用コピーで2048pxへ統一する（確定事項9 / 5-4-1）。

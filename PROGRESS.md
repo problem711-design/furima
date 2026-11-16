@@ -9,7 +9,7 @@
 > - フェーズ 3.1 計画書: [PLAN_CAMERA_AND_PREVIEW_FIX.md](PLAN_CAMERA_AND_PREVIEW_FIX.md)
 > - フェーズ 3.2 計画書: [PLAN_PHASE_3_2.md](PLAN_PHASE_3_2.md)
 > - **現行実装計画書 (フェーズ 4 / 重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱[案A] ➔ 同期ステータス％表示＆メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
-> - **次期実装計画書 (フェーズ 5 / 「Museに送る」一括画像加工連携)**: [PLAN_CLAUDE_SEND_PHASE5.md](PLAN_CLAUDE_SEND_PHASE5.md)（2026-11-16 策定・協議待ち / **事前レビュー指摘**: [REVIEW_CLAUDE_SEND_PHASE5.md](REVIEW_CLAUDE_SEND_PHASE5.md)）
+> - **次期実装計画書 (フェーズ 5 / 「Museに送る」一括画像加工連携)**: [PLAN_CLAUDE_SEND_PHASE5.md](PLAN_CLAUDE_SEND_PHASE5.md)（2026-11-16 策定・**協議済み（計画書 §10 に協議結果を記録）** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE5.md](REVIEW_CLAUDE_SEND_PHASE5.md)）
 
 ---
 
