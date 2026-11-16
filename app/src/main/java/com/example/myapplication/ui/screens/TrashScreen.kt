@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.ui.FleaMarketViewModel
 import java.text.NumberFormat
 import java.text.SimpleDateFormat
@@ -381,7 +382,7 @@ fun TrashScreen(
                         val deletedAt = item.deletedAt ?: now
                         val elapsedDays = ((now - deletedAt).coerceAtLeast(0L) / (24L * 60L * 60L * 1000L)).toInt()
                         val remainingDays = (30 - elapsedDays).coerceIn(0, 30)
-                        val displayPrice = if (item.status == "SOLD" && item.soldPrice > 0) item.soldPrice else item.price
+                        val displayPrice = if (isSoldFamilyStatus(item.status) && item.soldPrice > 0) item.soldPrice else item.price
 
                         val isSelected = selectedIds.contains(item.id)
                         Card(

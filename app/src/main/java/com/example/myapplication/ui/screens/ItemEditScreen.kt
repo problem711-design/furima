@@ -100,6 +100,7 @@ import coil.request.ImageRequest
 import coil.size.Precision
 import com.example.myapplication.data.PhotoStorageManager
 import com.example.myapplication.data.local.ItemEntity
+import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.components.CameraXCaptureDialog
@@ -434,7 +435,7 @@ fun ItemEditScreen(
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
     val inputPrice = priceText.toIntOrNull() ?: 0
     val inputSoldPrice = soldPriceText.toIntOrNull() ?: inputPrice
-    val basePrice = if (status == "SOLD" && inputSoldPrice > 0) inputSoldPrice else inputPrice
+    val basePrice = if (isSoldFamilyStatus(status) && inputSoldPrice > 0) inputSoldPrice else inputPrice
 
     val effectiveFeePercent = if (useCustomSettings) {
         feeRatePercentText.toIntOrNull() ?: defaultSettings.defaultFeeRatePercent
@@ -1011,7 +1012,10 @@ fun ItemEditScreen(
             // ステータス選択
             Text(text = "ステータス", fontWeight = FontWeight.Bold, fontSize = 14.sp)
             Spacer(modifier = Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 FilterChip(
                     selected = (status == "LISTED"),
                     onClick = { status = "LISTED" },
@@ -1025,10 +1029,22 @@ fun ItemEditScreen(
                     modifier = Modifier.testTag("status_sold_chip")
                 )
                 FilterChip(
+                    selected = (status == "SHIPPING"),
+                    onClick = { status = "SHIPPING" },
+                    label = { Text("発送準備中") },
+                    modifier = Modifier.testTag("status_shipping_chip")
+                )
+                FilterChip(
                     selected = (status == "DRAFT"),
                     onClick = { status = "DRAFT" },
-                    label = { Text("下書き") },
+                    label = { Text("下書き中") },
                     modifier = Modifier.testTag("status_draft_chip")
+                )
+                FilterChip(
+                    selected = (status == "DRAFT_DONE"),
+                    onClick = { status = "DRAFT_DONE" },
+                    label = { Text("下書き済み") },
+                    modifier = Modifier.testTag("status_draft_done_chip")
                 )
             }
 
@@ -1046,7 +1062,7 @@ fun ItemEditScreen(
                     .testTag("item_price_input")
             )
 
-            if (status == "SOLD") {
+            if (isSoldFamilyStatus(status)) {
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
                     value = soldPriceText,
@@ -1222,7 +1238,7 @@ fun ItemEditScreen(
                 onClick = {
                     if (isSaving) return@Button
                     val price = priceText.toIntOrNull() ?: 0
-                    val soldPrice = if (status == "SOLD") (soldPriceText.toIntOrNull() ?: price) else 0
+                    val soldPrice = if (isSoldFamilyStatus(status)) (soldPriceText.toIntOrNull() ?: price) else 0
                     val shippingCost = if (useCustomSettings) {
                         shippingCostText.toIntOrNull() ?: defaultSettings.defaultShippingCost
                     } else {

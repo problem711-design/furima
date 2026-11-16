@@ -72,6 +72,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.isSoldFamilyStatus
+import com.example.myapplication.data.local.mergedChildStatusLabelOf
+import com.example.myapplication.data.local.statusLabelOf
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.components.ListingValidationBanner
 import com.example.myapplication.ui.components.PhotoPreviewDialog
@@ -128,10 +131,16 @@ fun ItemDetailScreen(
     val currentItem = itemWithPhotos!!.item
     val photos = itemWithPhotos!!.photos
 
+    // フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める
+    val allItemsForDetail by viewModel.itemsWithPhotos.collectAsState()
+    val parentStatusForDetail = currentItem.mergedParentId?.let { pid ->
+        allItemsForDetail.firstOrNull { it.item.id == pid }?.item?.status
+    }
+
     val effectiveFeePercent = currentItem.getEffectiveFeeRatePercent(defaultSettings)
     val effectiveShipping = currentItem.getEffectiveShippingCost(defaultSettings)
     val effectiveExpense = currentItem.getEffectiveExpenseCost(defaultSettings)
-    val basePrice = if (currentItem.status == "SOLD" && currentItem.soldPrice > 0) currentItem.soldPrice else currentItem.price
+    val basePrice = if (isSoldFamilyStatus(currentItem.status) && currentItem.soldPrice > 0) currentItem.soldPrice else currentItem.price
     val calculatedFee = (basePrice * effectiveFeePercent) / 100
     val calculatedProfit = currentItem.getCalculatedProfit(defaultSettings)
 
@@ -430,17 +439,15 @@ fun ItemDetailScreen(
                         label = {
                             Text(
                                 when (currentItem.status) {
-                                    "SOLD" -> "売却済み"
-                                    "MERGED" -> "まとめ売却済"
-                                    "DRAFT" -> "下書き"
-                                    else -> "出品中"
+                                    "MERGED" -> mergedChildStatusLabelOf(parentStatusForDetail ?: "LISTED")
+                                    else -> statusLabelOf(currentItem.status)
                                 }
                             )
                         },
                         colors = SuggestionChipDefaults.suggestionChipColors(
                             containerColor = when (currentItem.status) {
-                                "SOLD", "MERGED" -> MaterialTheme.colorScheme.tertiaryContainer
-                                "DRAFT" -> Color.LightGray.copy(alpha = 0.5f)
+                                "SOLD", "SHIPPING", "MERGED" -> MaterialTheme.colorScheme.tertiaryContainer
+                                "DRAFT", "DRAFT_DONE" -> Color.LightGray.copy(alpha = 0.5f)
                                 else -> MaterialTheme.colorScheme.primaryContainer
                             }
                         )
@@ -611,7 +618,7 @@ fun ItemDetailScreen(
                         Text("出品設定価格:", color = Color.Gray)
                         Text(formatter.format(currentItem.price), fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
-                    if (currentItem.status == "SOLD") {
+                    if (isSoldFamilyStatus(currentItem.status)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("実際の売却価格:", color = Color.Gray)
                             Text(formatter.format(currentItem.soldPrice), fontWeight = FontWeight.Bold)

@@ -4,6 +4,8 @@ import android.content.Context
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.isSoldFamilyStatus
+import com.example.myapplication.data.local.statusLabelOf
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
@@ -226,7 +228,7 @@ class LocalWebServer(
 
                     var updatedItem = existing.item.copy(
                         status = newStatus,
-                        soldAt = if (newStatus == "SOLD") (existing.item.soldAt ?: System.currentTimeMillis()) else null,
+                        soldAt = if (isSoldFamilyStatus(newStatus)) (existing.item.soldAt ?: System.currentTimeMillis()) else null,
                         updatedAt = System.currentTimeMillis(),
                         isDirty = true
                     )
@@ -668,11 +670,8 @@ class LocalWebServer(
     private fun ItemWithPhotos.toDto(defaultSettings: DefaultSettings, baseUrl: String = ""): WebItemDto {
         val profit = item.getCalculatedProfit(defaultSettings)
         val statusLabel = when (item.status) {
-            "LISTED" -> "出品中"
-            "SOLD" -> "売却済み"
-            "DRAFT" -> "未出品"
-            "MERGED" -> "まとめ売却"
-            else -> item.status
+            "MERGED" -> "まとめ"
+            else -> statusLabelOf(item.status)
         }
         val photoDtos = photos.map { photo ->
             val pUrl = if (baseUrl.isNotEmpty()) "$baseUrl/api/photos/${photo.id}" else "/api/photos/${photo.id}"

@@ -9,7 +9,7 @@ data class ItemEntity(
     val id: Int = 0,
     val title: String,
     val description: String = "", // 商品説明文（任意）
-    val status: String = "DRAFT", // "DRAFT" (下書き・未出品), "LISTED" (出品中), "SOLD" (売却済み), "MERGED" (まとめ売却済み)
+    val status: String = "DRAFT", // "DRAFT" (下書き中), "DRAFT_DONE" (下書き済み), "LISTED" (出品中), "SHIPPING" (発送準備中), "SOLD" (売却済み), "MERGED" (まとめ子)
     val price: Int = 0, // 出品価格
     val soldPrice: Int = 0, // 実際の売却価格
     val shippingCost: Int = 210, // 個別送料 (円)
@@ -40,7 +40,7 @@ data class ItemEntity(
         if (useCustomSettings) expenseCost else defaultSettings.defaultExpenseCost
 
     fun getCalculatedProfit(defaultSettings: DefaultSettings): Int {
-        val basePrice = if (status == "SOLD" && soldPrice > 0) soldPrice else price
+        val basePrice = if (isSoldFamilyStatus(status) && soldPrice > 0) soldPrice else price
         val feeRate = getEffectiveFeeRatePercent(defaultSettings)
         val shipping = getEffectiveShippingCost(defaultSettings)
         val expense = getEffectiveExpenseCost(defaultSettings)
@@ -50,4 +50,28 @@ data class ItemEntity(
 
     val calculatedProfit: Int
         get() = getCalculatedProfit(DefaultSettings())
+}
+
+// フェーズ 6-4: 売却系ステータス {SOLD, SHIPPING} の共通判定。
+// 売却価格・売却日時の保持、利益計算、売上集計はすべてこの所属判定に揃える。
+fun isSoldFamilyStatus(status: String): Boolean = status == "SOLD" || status == "SHIPPING"
+
+// フェーズ 6-4: ステータス表示名の統一表。不明なコードは出品中へ倒さずコードそのものを返す。
+// MERGED は親ステータスから決まるため、ここでは扱わない (mergedChildStatusLabelOf を使う)。
+fun statusLabelOf(status: String): String = when (status) {
+    "DRAFT" -> "下書き中"
+    "DRAFT_DONE" -> "下書き済み"
+    "LISTED" -> "出品中"
+    "SHIPPING" -> "発送準備中"
+    "SOLD" -> "売却済み"
+    else -> status
+}
+
+// フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める。
+fun mergedChildStatusLabelOf(parentStatus: String): String = when (parentStatus) {
+    "DRAFT" -> "まとめ下書き中"
+    "DRAFT_DONE" -> "まとめ下書き済み"
+    "SHIPPING" -> "まとめ発送準備中"
+    "SOLD" -> "まとめ売却済"
+    else -> "まとめ出品中"
 }

@@ -1,6 +1,8 @@
 package com.example.myapplication.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +23,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.PublishedWithChanges
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -50,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.isSoldFamilyStatus
+import com.example.myapplication.data.local.statusLabelOf
 import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
@@ -59,6 +64,7 @@ fun ItemQuickActionDialog(
     itemWithPhotos: ItemWithPhotos,
     onDismiss: () -> Unit,
     onToggleStatus: () -> Unit,
+    onSelectStatus: (String) -> Unit,
     onNavigateToEdit: () -> Unit,
     onCopyText: () -> Unit,
     onUnmerge: () -> Unit,
@@ -69,20 +75,23 @@ fun ItemQuickActionDialog(
     val firstPhoto = itemWithPhotos.photos.firstOrNull()
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
     val isSold = item.status == "SOLD"
+    val isSoldFam = isSoldFamilyStatus(item.status)
     val isDraft = item.status == "DRAFT"
     val isBundle = item.mergedChildCount > 0 || item.bundleLevel > 0
 
     val statusBadgeColor = when (item.status) {
         "SOLD" -> Color(0xFFC62828)
         "MERGED" -> Color(0xFF6A1B9A)
-        "DRAFT" -> Color.Gray
-        else -> Color(0xFF2E7D32)
+        "DRAFT" -> Color(0xFF64748B)
+        "DRAFT_DONE" -> Color(0xFF0D9488)
+        "SHIPPING" -> Color(0xFFD97706)
+        "LISTED" -> Color(0xFF059669)
+        else -> Color(0xFF334155)
     }
     val statusBadgeLabel = when (item.status) {
         "SOLD" -> "売却済"
         "MERGED" -> "まとめ済"
-        "DRAFT" -> "下書き"
-        else -> "出品中"
+        else -> statusLabelOf(item.status)
     }
 
     var showDeleteConfirm by remember(item.id) { mutableStateOf(false) }
@@ -196,7 +205,7 @@ fun ItemQuickActionDialog(
                     Spacer(modifier = Modifier.height(2.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = formatter.format(if (isSold && item.soldPrice > 0) item.soldPrice else item.price),
+                            text = formatter.format(if (isSoldFam && item.soldPrice > 0) item.soldPrice else item.price),
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp,
                             color = MaterialTheme.colorScheme.primary
@@ -228,38 +237,72 @@ fun ItemQuickActionDialog(
                 HorizontalDivider()
                 Spacer(modifier = Modifier.height(4.dp))
 
-                // 1. ステータス切り替え
-                val toggleIcon = when {
-                    isSold || isDraft -> Icons.Default.PublishedWithChanges
-                    else -> Icons.Default.CheckCircle
-                }
-                val toggleLabel = when {
-                    isSold -> "出品中に戻す"
-                    isDraft -> "出品中にする"
-                    else -> "売却済みにする"
-                }
-                val toggleSubtitle = when {
-                    isSold -> "未売却として通常出品中へ戻します"
-                    isDraft -> "下書きから通常出品中へ公開します"
-                    else -> "売却完了として売上集計へ反映"
-                }
-                val toggleTint = when {
-                    isSold -> MaterialTheme.colorScheme.primary
-                    else -> Color(0xFF2E7D32)
-                }
-
-                QuickActionButton(
-                    icon = toggleIcon,
-                    label = toggleLabel,
-                    subtitle = toggleSubtitle,
-                    tint = toggleTint,
-                    testTagName = "quick_action_toggle_status",
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onToggleStatus()
-                        onDismiss()
+                // 1. ステータス切り替え (ワンタップは従来の範囲のみ。新コードへは回さない)
+                if (item.status != "MERGED") {
+                    val isShipping = item.status == "SHIPPING"
+                    val isDraftLike = isDraft || item.status == "DRAFT_DONE"
+                    val toggleIcon = when {
+                        isSold || isDraftLike -> Icons.Default.PublishedWithChanges
+                        else -> Icons.Default.CheckCircle
                     }
-                )
+                    val toggleLabel = when {
+                        isSold -> "出品中に戻す"
+                        isDraftLike -> "出品中にする"
+                        else -> "売却済みにする"
+                    }
+                    val toggleSubtitle = when {
+                        isSold -> "未売却として通常出品中へ戻します"
+                        isDraftLike -> "下書きから通常出品中へ公開します"
+                        isShipping -> "発送を終えて売却済みにします"
+                        else -> "売却完了として売上集計へ反映"
+                    }
+                    val toggleTint = when {
+                        isSold -> MaterialTheme.colorScheme.primary
+                        else -> Color(0xFF2E7D32)
+                    }
+
+                    QuickActionButton(
+                        icon = toggleIcon,
+                        label = toggleLabel,
+                        subtitle = toggleSubtitle,
+                        tint = toggleTint,
+                        testTagName = "quick_action_toggle_status",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onToggleStatus()
+                            onDismiss()
+                        }
+                    )
+
+                    // レビュー §30.4-6: 5ステータスへ直接切り替えるチップ列 (下書き済み・発送準備中を含む)
+                    Text(
+                        text = "ステータスを変更",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("DRAFT", "DRAFT_DONE", "LISTED", "SHIPPING", "SOLD").forEach { code ->
+                            FilterChip(
+                                selected = item.status == code,
+                                onClick = {
+                                    if (item.status != code) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        onSelectStatus(code)
+                                        onDismiss()
+                                    }
+                                },
+                                label = { Text(statusLabelOf(code), fontSize = 11.sp) },
+                                modifier = Modifier.testTag("quick_action_status_chip_$code")
+                            )
+                        }
+                    }
+                }
 
                 // 2. 商品情報の編集
                 QuickActionButton(

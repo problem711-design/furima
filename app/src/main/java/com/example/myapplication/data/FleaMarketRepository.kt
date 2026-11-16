@@ -6,6 +6,7 @@ import com.example.myapplication.data.local.AppDatabase
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemDao
 import com.example.myapplication.data.local.ItemEntity
+import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.data.local.SalesSummary
@@ -166,7 +167,7 @@ class FleaMarketRepository(private val context: Context) {
             var soldCount = 0
 
             for (item in items) {
-                if (item.status == "SOLD") {
+                if (isSoldFamilyStatus(item.status)) {
                     soldCount++
                     val price = if (item.soldPrice > 0) item.soldPrice else item.price
                     totalSales += price
@@ -199,7 +200,7 @@ class FleaMarketRepository(private val context: Context) {
     ): Long = withContext(Dispatchers.IO) {
         val existingItem = if (id != 0) dao.getItemWithPhotosById(id)?.item else null
         val now = System.currentTimeMillis()
-        val soldAt = if (status == "SOLD") {
+        val soldAt = if (isSoldFamilyStatus(status)) {
             existingItem?.soldAt ?: now
         } else {
             null
@@ -395,6 +396,10 @@ class FleaMarketRepository(private val context: Context) {
             }
         }
 
+        // レビュー 25-1: 詳細画面からの単体削除でも未Push削除を記録する (他の削除経路と同一)
+        if (targetPhoto.md5Hash.isNotBlank()) {
+            recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, targetPhoto.md5Hash)
+        }
         val now = System.currentTimeMillis()
         val reindexed = remaining.mapIndexed { idx, photo ->
             photo.copy(displayOrder = idx, updatedAt = now)
@@ -409,9 +414,18 @@ class FleaMarketRepository(private val context: Context) {
 
     suspend fun updateItemStatus(item: ItemEntity, newStatus: String) {
         val now = System.currentTimeMillis()
-        val soldAt = if (newStatus == "SOLD") (item.soldAt ?: now) else null
+        // レビュー §30.4-3: 売却系の出入りを他経路 (保存・一括編集) と揃える。
+        // 売却系から外れたら売却価格・日時を消し、入った場合は未設定の売却価格を出品価格で補う。
+        val inFamily = isSoldFamilyStatus(newStatus)
+        val soldAt = if (inFamily) (item.soldAt ?: now) else null
+        val soldPrice = when {
+            !inFamily -> 0
+            item.soldPrice > 0 -> item.soldPrice
+            else -> item.price
+        }
         val updated = item.copy(
             status = newStatus,
+            soldPrice = soldPrice,
             soldAt = soldAt,
             updatedAt = now,
             isDirty = true
@@ -454,7 +468,7 @@ class FleaMarketRepository(private val context: Context) {
             description = mergedDescription,
             status = asStatus,
             price = totalSoldPrice,
-            soldPrice = if (asStatus == "SOLD") totalSoldPrice else 0,
+            soldPrice = if (isSoldFamilyStatus(asStatus)) totalSoldPrice else 0,
             shippingCost = newShippingCost,
             feeRatePercent = newFeeRatePercent,
             expenseCost = newExpenseCost,
@@ -466,7 +480,7 @@ class FleaMarketRepository(private val context: Context) {
             bundleLevel = maxChildLevel + 1,
             createdAt = now,
             updatedAt = now,
-            soldAt = if (asStatus == "SOLD") now else null,
+            soldAt = if (isSoldFamilyStatus(asStatus)) now else null,
             syncUuid = java.util.UUID.randomUUID().toString(),
             deletedAt = null,
             isDirty = true
@@ -668,9 +682,9 @@ class FleaMarketRepository(private val context: Context) {
             }
 
             val nextStatus = spec.newStatus ?: existing.status
-            val nextSoldAt = if (nextStatus == "SOLD") (existing.soldAt ?: now) else null
+            val nextSoldAt = if (isSoldFamilyStatus(nextStatus)) (existing.soldAt ?: now) else null
             val nextSoldPrice = when {
-                nextStatus != "SOLD" -> 0
+                !isSoldFamilyStatus(nextStatus) -> 0
                 spec.priceMode != BatchPriceMode.NONE -> nextPrice
                 existing.soldPrice > 0 -> existing.soldPrice
                 else -> nextPrice

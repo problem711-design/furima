@@ -7,6 +7,9 @@ import com.example.myapplication.data.PhotoStorageManager
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.FeePreset
 import com.example.myapplication.data.local.PhotoEntity
+import com.example.myapplication.data.local.isSoldFamilyStatus
+import com.example.myapplication.data.local.mergedChildStatusLabelOf
+import com.example.myapplication.data.local.statusLabelOf
 import com.example.myapplication.data.local.TextTemplate
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -586,6 +589,7 @@ class PcServerClient(
             val itemsWithPhotos = dao.getAllItemsWithPhotosForSync()
             val pushedUpdatedAtById = itemsWithPhotos.associate { it.item.id to it.item.updatedAt }
             val idToUuidMap = itemsWithPhotos.associate { it.item.id to it.item.syncUuid }
+            val statusByIdMap = itemsWithPhotos.associate { it.item.id to it.item.status }
 
             val dtoList = mutableListOf<SyncItemDto>()
             val activeFolderNames = mutableListOf<String>()
@@ -632,10 +636,10 @@ class PcServerClient(
                         profit = item.getCalculatedProfit(repository.defaultSettings.value),
                         statusLabel = when {
                             item.deletedAt != null -> "ゴミ箱"
-                            item.status == "SOLD" -> "売却済み"
-                            item.status == "MERGED" -> "まとめ売却"
-                            item.status == "DRAFT" -> "未出品"
-                            else -> "出品中"
+                            item.status == "MERGED" -> mergedChildStatusLabelOf(
+                                item.mergedParentId?.let { statusByIdMap[it] } ?: "LISTED"
+                            )
+                            else -> statusLabelOf(item.status)
                         },
                         photos = photoDtoList,
                         mergedParentId = item.mergedParentId,
@@ -963,9 +967,9 @@ class PcServerClient(
         itemId: Int,
         itemSyncUuid: String,
         allExistingPhotos: List<PhotoEntity>
-    ) {
-        val photosArray = obj.optJSONArray("photos") ?: return
-        if (photosArray.length() == 0) return
+    ): Boolean {
+        val photosArray = obj.optJSONArray("photos") ?: return false
+        if (photosArray.length() == 0) return false
         val dao = repository.getDao()
         val currentPhotos = dao.getPhotosByItemId(itemId)
         val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }.toSet()
@@ -1025,7 +1029,9 @@ class PcServerClient(
         }
         if (additions.isNotEmpty()) {
             dao.insertPhotos(additions)
+            return true
         }
+        return false
     }
 
     /**
@@ -1101,7 +1107,16 @@ class PcServerClient(
                 // PC 側で返却された _ai 写真などが、未送信変更のある間もスマホへ届くようにするため。
                 // 未Push削除として記録されたハッシュは対象から外し、削除した写真を復活させない。
                 // 商品項目と isDirty には一切触れない。
-                mergeServerPhotosAdditively(obj, existing.item.id, existing.item.syncUuid, allExistingPhotos)
+                val addedPhotos = mergeServerPhotosAdditively(obj, existing.item.id, existing.item.syncUuid, allExistingPhotos)
+                // レビュー 25-2: 加算マージで未保有の写真が増えた場合は、その場でサムネイル修復も行う
+                // (通常マージ末尾の修復は continue で飛ばされてしまうため)
+                if (addedPhotos && repairThumbnails && baseUrl.isNotBlank()) {
+                    try {
+                        repairMissingOrCorruptThumbnailsForItem(existing.item.id, baseUrl, token)
+                    } catch (e: Exception) {
+                        Log.e("PcServerClient", "Additive merge thumbnail repair failed for item ${existing.item.id}", e)
+                    }
+                }
                 continue
             }
 
@@ -1154,7 +1169,7 @@ class PcServerClient(
                     else -> existing.item.createdAt
                 }
                 val resolvedUpdatedAt = if (serverUpdatedAt > 0L) serverUpdatedAt else existing.item.updatedAt
-                val resolvedSoldAt = if (status == "SOLD") {
+                val resolvedSoldAt = if (isSoldFamilyStatus(status)) {
                     serverSoldAt ?: existing.item.soldAt
                 } else {
                     null
@@ -1188,7 +1203,7 @@ class PcServerClient(
                 val now = System.currentTimeMillis()
                 val resolvedCreatedAt = serverCreatedAt ?: now
                 val resolvedUpdatedAt = if (serverUpdatedAt > 0L) serverUpdatedAt else resolvedCreatedAt
-                val resolvedSoldAt = if (status == "SOLD") serverSoldAt else null
+                val resolvedSoldAt = if (isSoldFamilyStatus(status)) serverSoldAt else null
                 // ID衝突時は id = 0 で自動採番インサートして別レコードとして保持
                 val insertId = if (!isIdCollision && byId == null && serverId > 0) serverId else 0
                 val newItem = com.example.myapplication.data.local.ItemEntity(

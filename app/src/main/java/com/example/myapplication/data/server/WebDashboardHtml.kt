@@ -25,7 +25,7 @@ object WebDashboardHtml {
             <div class="flex items-center space-x-2.5 shrink-0">
                 <i class="fa-solid fa-boxes-stacked text-xl text-indigo-200"></i>
                 <h1 class="font-bold text-base tracking-tight whitespace-nowrap">フリマ出品・商品PC管理</h1>
-                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.1 (Build 5)</span>
+                <span class="bg-indigo-700/80 text-indigo-100 text-[11px] px-2 py-0.5 rounded font-mono font-semibold border border-indigo-500">v1.2 (Build 6)</span>
                 <span class="bg-indigo-500 text-[11px] px-2 py-0.5 rounded-full font-medium text-indigo-100 flex items-center gap-1 hidden md:inline-flex">
                     <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> スマホ接続中
                 </span>
@@ -195,7 +195,9 @@ object WebDashboardHtml {
                         <select id="form-status" class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none bg-white">
                             <option value="LISTED">出品中</option>
                             <option value="SOLD">売却済み</option>
-                            <option value="DRAFT">未出品・下書き</option>
+                            <option value="SHIPPING">発送準備中</option>
+                            <option value="DRAFT_DONE">下書き済み</option>
+                            <option value="DRAFT">下書き中</option>
                         </select>
                     </div>
                 </div>
@@ -567,7 +569,10 @@ object WebDashboardHtml {
 
                     let statusBadge = '<span class="bg-blue-100 text-blue-800 text-[11px] px-2 py-0.5 rounded-full font-bold">出品中</span>';
                     if (isSold) statusBadge = '<span class="bg-emerald-100 text-emerald-800 text-[11px] px-2 py-0.5 rounded-full font-bold">売却済</span>';
-                    if (isMerged) statusBadge = '<span class="bg-purple-100 text-purple-800 text-[11px] px-2 py-0.5 rounded-full font-bold">まとめ売却</span>';
+                    if (item.status === 'SHIPPING') statusBadge = '<span class="bg-amber-100 text-amber-800 text-[11px] px-2 py-0.5 rounded-full font-bold">発送準備中</span>';
+                    if (item.status === 'DRAFT') statusBadge = '<span class="bg-slate-200 text-slate-700 text-[11px] px-2 py-0.5 rounded-full font-bold">下書き中</span>';
+                    if (item.status === 'DRAFT_DONE') statusBadge = '<span class="bg-teal-100 text-teal-800 text-[11px] px-2 py-0.5 rounded-full font-bold">下書き済み</span>';
+                    if (isMerged) statusBadge = '<span class="bg-purple-100 text-purple-800 text-[11px] px-2 py-0.5 rounded-full font-bold">まとめ</span>';
 
                     const sharedBadge = item.isShared
                         ? '<span class="bg-indigo-100 text-indigo-700 text-[10px] px-1.5 py-0.5 rounded font-bold" title="PC送信済み"><i class="fa-solid fa-check"></i> PC済</span>'
@@ -994,7 +999,10 @@ object WebDashboardHtml {
 
             let statusBadge = '<span class="bg-blue-100 text-blue-800 text-[10px] px-2 py-0.5 rounded-full font-bold">出品中</span>';
             if (item.status === 'SOLD') statusBadge = '<span class="bg-emerald-100 text-emerald-800 text-[10px] px-2 py-0.5 rounded-full font-bold">売却済</span>';
-            if (item.status === 'MERGED') statusBadge = '<span class="bg-purple-100 text-purple-800 text-[10px] px-2 py-0.5 rounded-full font-bold">まとめ売却済み</span>';
+            if (item.status === 'SHIPPING') statusBadge = '<span class="bg-amber-100 text-amber-800 text-[10px] px-2 py-0.5 rounded-full font-bold">発送準備中</span>';
+            if (item.status === 'DRAFT') statusBadge = '<span class="bg-slate-200 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">下書き中</span>';
+            if (item.status === 'DRAFT_DONE') statusBadge = '<span class="bg-teal-100 text-teal-800 text-[10px] px-2 py-0.5 rounded-full font-bold">下書き済み</span>';
+            if (item.status === 'MERGED') statusBadge = '<span class="bg-purple-100 text-purple-800 text-[10px] px-2 py-0.5 rounded-full font-bold">まとめ</span>';
             document.getElementById('quick-action-badge').innerHTML = statusBadge;
 
             const isSold = item.status === 'SOLD';

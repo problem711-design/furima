@@ -51,6 +51,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.myapplication.data.local.ItemEntity
+import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.ui.FleaMarketViewModel
 import com.example.myapplication.ui.TimeRange
@@ -108,7 +109,7 @@ fun SalesAnalysisScreen(
     }.timeInMillis
 
     val soldItems = itemsWithPhotos.filter {
-        it.item.status == "SOLD" && ((it.item.soldAt ?: it.item.createdAt) >= startOfPeriod)
+        isSoldFamilyStatus(it.item.status) && ((it.item.soldAt ?: it.item.createdAt) >= startOfPeriod)
     }
 
     // 1. 基本数値集計

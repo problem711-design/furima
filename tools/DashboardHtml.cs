@@ -41,8 +41,9 @@ public static class DashboardHtml
             <div class='flex items-center gap-2 flex-1 justify-end overflow-x-auto custom-scroll py-0.5'>
                 <div class='flex items-center gap-1 bg-indigo-800/60 p-0.5 rounded-lg shrink-0'>
                     <button onclick='setFilter(""ALL"")' id='filter-all' class='filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition'>すべて (<span id='count-all'>0</span>)</button>
-                    <button onclick='setFilter(""UNSHARED"")' id='filter-unshared' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>未出品 (<span id='count-unshared'>0</span>)</button>
+                    <button onclick='setFilter(""DRAFT"")' id='filter-draft' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>下書き (<span id='count-draft'>0</span>)</button>
                     <button onclick='setFilter(""LISTED"")' id='filter-listed' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>出品中 (<span id='count-listed'>0</span>)</button>
+                    <button onclick='setFilter(""SHIPPING"")' id='filter-shipping' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>発送準備中 (<span id='count-shipping'>0</span>)</button>
                     <button onclick='setFilter(""SOLD"")' id='filter-sold' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>売却済 (<span id='count-sold'>0</span>)</button>
                     <button onclick='setFilter(""TRASH"")' id='filter-trash' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'><i class='fa-solid fa-trash-can mr-0.5'></i> ゴミ箱 (<span id='count-trash'>0</span>)</button>
                 </div>
@@ -154,7 +155,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.1 (Build 5)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.2 (Build 6)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -231,8 +232,10 @@ public static class DashboardHtml
                     </label>
                     <select id='batch-status-value' onchange='document.getElementById(""batch-enable-status"").checked=true; updateBatchEditPreview();' class='w-full p-2 border border-slate-300 rounded bg-white text-xs font-bold'>
                         <option value='LISTED'>出品中 (LISTED)</option>
-                        <option value='DRAFT'>下書き (DRAFT)</option>
-                        <option value='SOLD'>売却済 (SOLD)</option>
+                        <option value='DRAFT'>下書き中 (DRAFT)</option>
+                        <option value='DRAFT_DONE'>下書き済み (DRAFT_DONE)</option>
+                        <option value='SHIPPING'>発送準備中 (SHIPPING)</option>
+                        <option value='SOLD'>売却済み (SOLD)</option>
                     </select>
                 </div>
 
@@ -585,7 +588,7 @@ public static class DashboardHtml
                 </div>
                 <div class='bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-[11px] text-slate-500 space-y-1'>
                     <p class='font-bold text-slate-700 flex items-center gap-1'><i class='fa-solid fa-shield-halved text-emerald-600'></i> 安全性のご案内</p>
-                    <p>・出品中・未出品の写真は削除対象に含まれません。</p>
+                    <p>・出品中・下書き・発送準備中の写真は削除対象に含まれません。</p>
                     <p>・PC上の写真ファイルのみをクリーンアップし、商品テキストデータはそのまま保持されます。</p>
                 </div>
             </div>
@@ -649,8 +652,10 @@ public static class DashboardHtml
                     <label class='block font-bold text-slate-700 mb-1.5'>ステータス</label>
                     <input type='hidden' id='add-status' value='DRAFT'>
                     <div class='flex flex-wrap gap-2'>
-                        <button type='button' id='add-status-chip-DRAFT' onclick='setModalStatus(""add"", ""DRAFT"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き (未出品)</button>
+                        <button type='button' id='add-status-chip-DRAFT' onclick='setModalStatus(""add"", ""DRAFT"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き中</button>
+                        <button type='button' id='add-status-chip-DRAFT_DONE' onclick='setModalStatus(""add"", ""DRAFT_DONE"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き済み</button>
                         <button type='button' id='add-status-chip-LISTED' onclick='setModalStatus(""add"", ""LISTED"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>出品中</button>
+                        <button type='button' id='add-status-chip-SHIPPING' onclick='setModalStatus(""add"", ""SHIPPING"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>発送準備中</button>
                         <button type='button' id='add-status-chip-SOLD' onclick='setModalStatus(""add"", ""SOLD"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>売却済み</button>
                     </div>
                 </div>
@@ -797,8 +802,10 @@ public static class DashboardHtml
                     <label class='block font-bold text-slate-700 mb-1.5'>ステータス</label>
                     <input type='hidden' id='edit-status' value='LISTED'>
                     <div class='flex flex-wrap gap-2'>
-                        <button type='button' id='edit-status-chip-DRAFT' onclick='setModalStatus(""edit"", ""DRAFT"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き (未出品)</button>
+                        <button type='button' id='edit-status-chip-DRAFT' onclick='setModalStatus(""edit"", ""DRAFT"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き中</button>
+                        <button type='button' id='edit-status-chip-DRAFT_DONE' onclick='setModalStatus(""edit"", ""DRAFT_DONE"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>下書き済み</button>
                         <button type='button' id='edit-status-chip-LISTED' onclick='setModalStatus(""edit"", ""LISTED"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>出品中</button>
+                        <button type='button' id='edit-status-chip-SHIPPING' onclick='setModalStatus(""edit"", ""SHIPPING"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>発送準備中</button>
                         <button type='button' id='edit-status-chip-SOLD' onclick='setModalStatus(""edit"", ""SOLD"")' class='px-3 py-1.5 rounded-lg text-xs font-bold border transition'>売却済み</button>
                     </div>
                 </div>
@@ -1757,22 +1764,50 @@ public static class DashboardHtml
             return Math.max(0, Math.min(30, Math.ceil(remainingMs / dayMs)));
         }
 
+        // フェーズ 6-4: ステータス共通ヘルパー (サーバー側の統一表と一致させる)
+        function isSoldFamilyStatus(status) { return status === 'SOLD' || status === 'SHIPPING'; }
+        function statusLabelOf(status) {
+            switch (status) {
+                case 'DRAFT': return '下書き中';
+                case 'DRAFT_DONE': return '下書き済み';
+                case 'LISTED': return '出品中';
+                case 'SHIPPING': return '発送準備中';
+                case 'SOLD': return '売却済み';
+                default: return status || '';
+            }
+        }
+        function statusBadgeClassOf(status) {
+            switch (status) {
+                case 'DRAFT': return 'bg-slate-500 text-white';
+                case 'DRAFT_DONE': return 'bg-teal-600 text-white';
+                case 'LISTED': return 'bg-emerald-600 text-white';
+                case 'SHIPPING': return 'bg-amber-600 text-white';
+                case 'SOLD': return 'bg-rose-600 text-white';
+                case 'MERGED': return 'bg-purple-600 text-white';
+                default: return 'bg-slate-700 text-white';
+            }
+        }
+        function isMergeEligibleStatus(status) { return status === 'DRAFT' || status === 'DRAFT_DONE' || status === 'LISTED'; }
+
         function updateStats() {
             // MERGED（まとめ内包済み）子商品とゴミ箱商品は通常有効件数から除外
             const active = allItems.filter(i => !isItemTrashed(i) && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
             const trashed = allItems.filter(i => isItemTrashed(i) && !(i.status === 'MERGED' && i.mergedParentId && i.mergedParentId > 0));
             const listed = active.filter(i => i.status === 'LISTED');
-            const unshared = active.filter(i => i.status === 'DRAFT');
+            const draft = active.filter(i => i.status === 'DRAFT' || i.status === 'DRAFT_DONE');
+            const shipping = active.filter(i => i.status === 'SHIPPING');
             const sold = active.filter(i => i.status === 'SOLD');
+            // レビュー §30.4-5: 売上集計は売却系 (SOLD + SHIPPING)、フィルタ件数は状態ごとに分離する
+            const soldFamily = active.filter(i => isSoldFamilyStatus(i.status));
 
-            const totalSales = sold.reduce((sum, i) => sum + (i.soldPrice > 0 ? i.soldPrice : (i.price || 0)), 0);
-            const totalProfit = sold.reduce((sum, i) => sum + (i.profit || 0), 0);
+            const totalSales = soldFamily.reduce((sum, i) => sum + (i.soldPrice > 0 ? i.soldPrice : (i.price || 0)), 0);
+            const totalProfit = soldFamily.reduce((sum, i) => sum + (i.profit || 0), 0);
 
             let totalFee = 0;
             let totalShipping = 0;
             let totalExpense = 0;
 
-            sold.forEach(i => {
+            soldFamily.forEach(i => {
                 const sp = i.soldPrice > 0 ? i.soldPrice : (i.price || 0);
                 const feeRate = i.feeRatePercent != null ? i.feeRatePercent : pcSettings.defaultFeeRatePercent;
                 const shipping = i.shippingCost != null ? i.shippingCost : pcSettings.defaultShippingCost;
@@ -1783,10 +1818,10 @@ public static class DashboardHtml
             });
 
             const margin = totalSales > 0 ? ((totalProfit / totalSales) * 100).toFixed(1) : '0.0';
-            const avgPrice = sold.length > 0 ? Math.round(totalSales / sold.length) : 0;
+            const avgPrice = soldFamily.length > 0 ? Math.round(totalSales / soldFamily.length) : 0;
 
             document.getElementById('stat-listed-count').innerText = listed.length + '品';
-            document.getElementById('stat-sold-count').innerText = sold.length + '品';
+            document.getElementById('stat-sold-count').innerText = soldFamily.length + '品';
             document.getElementById('stat-total-sales').innerText = '¥' + totalSales.toLocaleString();
             document.getElementById('stat-total-profit').innerText = '¥' + totalProfit.toLocaleString();
             document.getElementById('stat-profit-margin').innerText = margin + '%';
@@ -1797,8 +1832,9 @@ public static class DashboardHtml
             document.getElementById('stat-total-expense').innerText = '¥' + totalExpense.toLocaleString();
 
             document.getElementById('count-all').innerText = active.length;
-            document.getElementById('count-unshared').innerText = unshared.length;
+            document.getElementById('count-draft').innerText = draft.length;
             document.getElementById('count-listed').innerText = listed.length;
+            document.getElementById('count-shipping').innerText = shipping.length;
             document.getElementById('count-sold').innerText = sold.length;
             const trashCountElem = document.getElementById('count-trash');
             if (trashCountElem) trashCountElem.innerText = trashed.length;
@@ -1812,7 +1848,8 @@ public static class DashboardHtml
                 btn.className = 'filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition';
             });
             if (filter === 'ALL') document.getElementById('filter-all').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition';
-            if (filter === 'UNSHARED') document.getElementById('filter-unshared').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-amber-700 shadow-sm transition';
+            if (filter === 'DRAFT') document.getElementById('filter-draft').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-amber-700 shadow-sm transition';
+            if (filter === 'SHIPPING') document.getElementById('filter-shipping').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-amber-700 shadow-sm transition';
             if (filter === 'LISTED') document.getElementById('filter-listed').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition';
             if (filter === 'SOLD') document.getElementById('filter-sold').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-emerald-700 shadow-sm transition';
             if (filter === 'TRASH') document.getElementById('filter-trash').className = 'filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-rose-700 shadow-sm transition';
@@ -1872,10 +1909,10 @@ public static class DashboardHtml
                 } else {
                     trashActions.classList.add('hidden');
                     activeActions.classList.remove('hidden');
-                    const canMerge = selectedItems.length >= 2 && selectedItems.every(i => i.status === 'LISTED' || i.status === 'DRAFT');
+                    const canMerge = selectedItems.length >= 2 && selectedItems.every(i => isMergeEligibleStatus(i.status));
                     if (mergeBtn) {
                         mergeBtn.disabled = !canMerge;
-                        mergeBtn.title = canMerge ? '選択した商品をまとめる' : '売却済商品を除く2件以上を選択するとまとめられます';
+                        mergeBtn.title = canMerge ? '選択した商品をまとめる' : '下書き・出品中から2件以上を選択するとまとめられます';
                     }
                 }
                 bar.classList.remove('hidden');
@@ -1976,9 +2013,9 @@ public static class DashboardHtml
                 preview.classList.add('hidden');
                 return;
             }
-            const beforeStatus = sample.status === 'SOLD' ? '売却済' : (sample.status === 'DRAFT' ? '下書き' : '出品中');
+            const beforeStatus = statusLabelOf(sample.status);
             const targetStatus = enableStatus ? document.getElementById('batch-status-value').value : sample.status;
-            const afterStatus = targetStatus === 'SOLD' ? '売却済' : (targetStatus === 'DRAFT' ? '下書き' : '出品中');
+            const afterStatus = statusLabelOf(targetStatus);
 
             const oldPrice = sample.price || 0;
             let newPrice = oldPrice;
@@ -2074,7 +2111,8 @@ public static class DashboardHtml
                     // まとめ内包済み(MERGED)子商品は個別カードとしては非表示（親まとめ商品内に集約表示）
                     if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
                     if (currentFilter === 'LISTED' && item.status !== 'LISTED') return false;
-                    if (currentFilter === 'UNSHARED' && item.status !== 'DRAFT') return false;
+                    if (currentFilter === 'DRAFT' && item.status !== 'DRAFT' && item.status !== 'DRAFT_DONE') return false;
+                    if (currentFilter === 'SHIPPING' && item.status !== 'SHIPPING') return false;
                     if (currentFilter === 'SOLD' && item.status !== 'SOLD') return false;
                 }
 
@@ -2098,10 +2136,14 @@ public static class DashboardHtml
                 const getItemSortPriority = (item) => {
                     const isB = checkIsBundle(item);
                     if (isB && item.status === 'LISTED') return 1;
-                    if (isB && item.status === 'DRAFT') return 2;
+                    if (isB && item.status === 'SHIPPING') return 2;
                     if (!isB && item.status === 'LISTED') return 3;
-                    if (!isB && item.status === 'DRAFT') return 4;
-                    return 5;
+                    if (!isB && item.status === 'SHIPPING') return 4;
+                    if (isB && item.status === 'DRAFT_DONE') return 5;
+                    if (isB && item.status === 'DRAFT') return 6;
+                    if (!isB && item.status === 'DRAFT_DONE') return 7;
+                    if (!isB && item.status === 'DRAFT') return 8;
+                    return 9;
                 };
                 items.sort((a, b) => {
                     const pa = getItemSortPriority(a);
@@ -2124,8 +2166,9 @@ public static class DashboardHtml
             grid.innerHTML = items.map((item, itemIdx) => {
                 const photos = item.photos || [];
                 const mainPhoto = photos.length > 0 ? (photos[0].md5Hash ? '/api/photos/' + photos[0].md5Hash : photos[0].photoUrl) : '';
-                const displayPrice = item.status === 'SOLD' && item.soldPrice > 0 ? item.soldPrice : (item.price || 0);
+                const displayPrice = isSoldFamilyStatus(item.status) && item.soldPrice > 0 ? item.soldPrice : (item.price || 0);
                 const isSold = item.status === 'SOLD';
+                const isSoldFam = isSoldFamilyStatus(item.status);
                 const isDraft = item.status === 'DRAFT';
                 const isBundle = checkIsBundle(item);
                 const isMergedChild = item.status === 'MERGED';
@@ -2135,7 +2178,7 @@ public static class DashboardHtml
                 const titleLen = (item.title || '').length;
                 const isChecked = selectedItemIds.has(item.id);
 
-                const itemWarnings = (!trashed && !isSold && !isMergedChild)
+                const itemWarnings = (!trashed && !isSoldFam && !isMergedChild)
                     ? evaluateListingWarningsObj({
                         title: item.title || '',
                         description: item.description || '',
@@ -2161,7 +2204,7 @@ public static class DashboardHtml
                             ${!trashed && !item.isShared ? `<span class='bg-slate-200 text-slate-700 text-[9px] px-1.5 py-0.2 rounded-full font-bold'>未同期</span>` : ''}
                             ${isBundle ? `<span class='bg-purple-100 text-purple-800 text-[10px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-1'><i class='fa-solid fa-gift'></i> まとめ (${item.mergedChildCount || 2}点)</span>` : ''}
                             ${isMergedChild ? `<span class='bg-purple-50 text-purple-600 text-[10px] px-1.5 py-0.2 rounded-full font-bold'>まとめ内包済</span>` : ''}
-                            ${(!trashed && !isSold && !isMergedChild && itemWarningsCriticalCount > 0) ? `<span class='bg-orange-100 text-orange-800 text-[9px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-0.5' title='${escapeHtml(itemWarningsTitle)}'><i class='fa-solid fa-triangle-exclamation'></i> 要確認(${itemWarningsCriticalCount})</span>` : ''}
+                            ${(!trashed && !isSoldFam && !isMergedChild && itemWarningsCriticalCount > 0) ? `<span class='bg-orange-100 text-orange-800 text-[9px] px-1.5 py-0.2 rounded-full font-bold flex items-center gap-0.5' title='${escapeHtml(itemWarningsTitle)}'><i class='fa-solid fa-triangle-exclamation'></i> 要確認(${itemWarningsCriticalCount})</span>` : ''}
                         </div>
                     </div>
 
@@ -2171,8 +2214,8 @@ public static class DashboardHtml
                         <div class='absolute top-1.5 left-1.5 flex gap-1 flex-wrap'>
                             ${trashed
                                 ? `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm bg-rose-700 text-white'>ゴミ箱</span>`
-                                : `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${isSold ? 'bg-rose-600 text-white' : (isDraft ? 'bg-amber-500 text-white' : (isMergedChild ? 'bg-purple-600 text-white' : 'bg-emerald-600 text-white'))}'>
-                                    ${isSold ? '売却済' : (isDraft ? '未出品' : (isMergedChild ? 'まとめ済' : '出品中'))}
+                                : `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${statusBadgeClassOf(item.status)}'>
+                                    ${isSold ? '売却済' : (isMergedChild ? 'まとめ' : statusLabelOf(item.status))}
                                    </span>`
                             }
                         </div>
@@ -2207,7 +2250,7 @@ public static class DashboardHtml
 
                         <div class='border-t border-slate-100 pt-1.5 flex items-center justify-between gap-1'>
                             <div>
-                                <span class='text-base font-black ${isSold ? 'text-rose-600' : 'text-indigo-600'}'>¥${displayPrice.toLocaleString()}</span>
+                                <span class='text-base font-black ${isSoldFam ? 'text-rose-600' : 'text-indigo-600'}'>¥${displayPrice.toLocaleString()}</span>
                                 ${profitText ? `<span class='text-[10px] font-bold text-emerald-600 block'>${profitText}</span>` : ''}
                             </div>
                             <div class='flex gap-1'>
@@ -3087,8 +3130,8 @@ public static class DashboardHtml
                 return;
             }
             const selectedCheck = allItems.filter(i => selectedItemIds.has(i.id));
-            if (selectedCheck.some(i => i.status === 'SOLD' || isItemTrashed(i))) {
-                alert('売却済みまたはゴミ箱内の商品はまとめ買いに含められません。');
+            if (selectedCheck.some(i => !isMergeEligibleStatus(i.status) || isItemTrashed(i))) {
+                alert('売却済み・発送準備中またはゴミ箱内の商品はまとめ買いに含められません。');
                 return;
             }
 
@@ -3228,13 +3271,19 @@ public static class DashboardHtml
 
         function setModalStatus(prefix, status) {
             document.getElementById(prefix + '-status').value = status;
-            ['DRAFT', 'LISTED', 'SOLD'].forEach(st => {
+            ['DRAFT', 'DRAFT_DONE', 'LISTED', 'SHIPPING', 'SOLD'].forEach(st => {
                 const btn = document.getElementById(prefix + '-status-chip-' + st);
                 if (!btn) return;
                 if (st === status) {
                     const activeColor = st === 'SOLD'
                         ? 'bg-rose-600 text-white border-rose-600 shadow-sm'
-                        : (st === 'DRAFT' ? 'bg-amber-500 text-white border-amber-500 shadow-sm' : 'bg-emerald-600 text-white border-emerald-600 shadow-sm');
+                        : (st === 'SHIPPING'
+                            ? 'bg-amber-600 text-white border-amber-600 shadow-sm'
+                            : (st === 'DRAFT_DONE'
+                                ? 'bg-teal-600 text-white border-teal-600 shadow-sm'
+                                : (st === 'DRAFT'
+                                    ? 'bg-slate-500 text-white border-slate-500 shadow-sm'
+                                    : 'bg-emerald-600 text-white border-emerald-600 shadow-sm')));
                     btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold border transition ' + activeColor;
                 } else {
                     btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-300 bg-white text-slate-600 hover:bg-slate-100 transition';
@@ -3242,7 +3291,7 @@ public static class DashboardHtml
             });
             const soldGroup = document.getElementById(prefix + '-sold-price-group');
             if (soldGroup) {
-                soldGroup.className = (status === 'SOLD') ? 'block' : 'hidden';
+                soldGroup.className = isSoldFamilyStatus(status) ? 'block' : 'hidden';
             }
             calcModalProfit(prefix);
         }
@@ -3343,8 +3392,8 @@ public static class DashboardHtml
             const status = document.getElementById(prefix + '-status').value;
             const listPrice = parseNonNegInt(document.getElementById(prefix + '-price').value, 0);
             const soldInputVal = document.getElementById(prefix + '-sold-price') ? document.getElementById(prefix + '-sold-price').value : '';
-            const soldPrice = (status === 'SOLD' && soldInputVal !== '') ? parseNonNegInt(soldInputVal, listPrice) : 0;
-            const basePrice = (status === 'SOLD' && soldPrice > 0) ? soldPrice : listPrice;
+            const soldPrice = (isSoldFamilyStatus(status) && soldInputVal !== '') ? parseNonNegInt(soldInputVal, listPrice) : 0;
+            const basePrice = (isSoldFamilyStatus(status) && soldPrice > 0) ? soldPrice : listPrice;
 
             const useCustom = document.getElementById(prefix + '-use-custom').checked;
             const shipping = useCustom
@@ -3375,7 +3424,7 @@ public static class DashboardHtml
         }
 
         function evaluateListingWarningsObj({ title, description, photoCount, price, profit, status }) {
-            if (status === 'SOLD') return [];
+            if (isSoldFamilyStatus(status) || status === 'MERGED') return [];
             const warnings = [];
             const t = (title || '').trim();
             if (!t) warnings.push({ critical: true, text: '商品名が未入力です' });
@@ -3559,7 +3608,7 @@ public static class DashboardHtml
             const price = parseNonNegInt(document.getElementById('edit-price').value, 0);
             const status = document.getElementById('edit-status').value;
             const soldRaw = document.getElementById('edit-sold-price').value;
-            const soldPrice = status === 'SOLD' ? parseNonNegInt(soldRaw, price) : 0;
+            const soldPrice = isSoldFamilyStatus(status) ? parseNonNegInt(soldRaw, price) : 0;
             const description = document.getElementById('edit-description').value.trim();
             const useCustomSettings = document.getElementById('edit-use-custom').checked;
             const shippingCost = useCustomSettings
@@ -3802,7 +3851,7 @@ public static class DashboardHtml
             const price = parseNonNegInt(document.getElementById('add-price').value, 0);
             const status = document.getElementById('add-status').value;
             const soldRaw = document.getElementById('add-sold-price').value;
-            const soldPrice = status === 'SOLD' ? parseNonNegInt(soldRaw, price) : 0;
+            const soldPrice = isSoldFamilyStatus(status) ? parseNonNegInt(soldRaw, price) : 0;
             const description = document.getElementById('add-description').value.trim();
             const useCustomSettings = document.getElementById('add-use-custom').checked;
             const shippingCost = useCustomSettings
@@ -3856,7 +3905,7 @@ public static class DashboardHtml
                                 }
                             }
                         }
-                        const stLabel = status === 'DRAFT' ? '下書き' : (status === 'SOLD' ? '売却済' : '出品中');
+                        const stLabel = statusLabelOf(status);
                         const photoMsg = uploaded > 0 ? ' (写真' + uploaded + '枚)' : '';
                         closeAddModal();
                         showToast('新規商品（' + stLabel + '）を追加しました' + photoMsg + '！');
@@ -3986,25 +4035,23 @@ public static class DashboardHtml
 
             exportItems.forEach(item => {
                 const photos = item.photos || [];
-                const statusText = item.status === 'SOLD'
-                    ? '売却済'
-                    : (item.status === 'MERGED'
-                        ? ('まとめ内包済' + (item.mergedParentId ? ' (親#' + item.mergedParentId + ')' : ''))
-                        : (item.status === 'DRAFT' ? '下書き' : '出品中'));
+                const statusText = item.status === 'MERGED'
+                    ? ('まとめ内包済' + (item.mergedParentId ? ' (親#' + item.mergedParentId + ')' : ''))
+                    : statusLabelOf(item.status);
 
                 const price = item.price || 0;
                 const soldPrice = item.soldPrice || 0;
                 const feePercent = item.feeRatePercent != null ? item.feeRatePercent : 5;
                 const shipping = item.shippingCost != null ? item.shippingCost : 210;
                 const expense = item.expenseCost != null ? item.expenseCost : 55;
-                const basePrice = (item.status === 'SOLD' && soldPrice > 0) ? soldPrice : price;
+                const basePrice = (isSoldFamilyStatus(item.status) && soldPrice > 0) ? soldPrice : price;
                 const fee = Math.floor((basePrice * feePercent) / 100);
                 const profit = item.profit != null ? item.profit : Math.max(0, basePrice - fee - shipping - expense);
                 const syncStatusText = item.isShared ? 'PC同期済' : '未送信';
 
                 const createdStr = formatCsvDate(item.createdAt);
                 const updatedStr = formatCsvDate(item.updatedAt);
-                const soldStr = item.status === 'SOLD' ? formatCsvDate(item.soldAt) : '';
+                const soldStr = isSoldFamilyStatus(item.status) ? formatCsvDate(item.soldAt) : '';
                 const hashesStr = photos.map(p => p.md5Hash || '').filter(h => h).join(';');
                 const mergedStr = item.mergedChildTitles || '';
 

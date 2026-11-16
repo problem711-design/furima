@@ -10,6 +10,9 @@ import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.isSoldFamilyStatus
+import com.example.myapplication.data.local.mergedChildStatusLabelOf
+import com.example.myapplication.data.local.statusLabelOf
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -31,15 +34,16 @@ object CsvExporter {
 
         val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.JAPAN)
 
+        val statusByIdForCsv = itemsWithPhotos.associate { it.item.id to it.item.status }
         for (itemWithPhotos in itemsWithPhotos) {
             val item = itemWithPhotos.item
             val photos = itemWithPhotos.photos
 
             val statusText = when (item.status) {
-                "SOLD" -> "売却済"
-                "MERGED" -> "まとめ売却済"
-                "DRAFT" -> "下書き"
-                else -> "出品中"
+                "MERGED" -> mergedChildStatusLabelOf(
+                    item.mergedParentId?.let { statusByIdForCsv[it] } ?: "LISTED"
+                )
+                else -> statusLabelOf(item.status)
             }
 
             val syncedCount = photos.count { it.isPcSynced || it.syncStatus == "SYNCED" || it.isOriginalDeleted }
@@ -53,7 +57,7 @@ object CsvExporter {
             val feePercent = item.getEffectiveFeeRatePercent(defaultSettings)
             val shipping = item.getEffectiveShippingCost(defaultSettings)
             val expense = item.getEffectiveExpenseCost(defaultSettings)
-            val basePrice = if (item.status == "SOLD" && item.soldPrice > 0) item.soldPrice else item.price
+            val basePrice = if (isSoldFamilyStatus(item.status) && item.soldPrice > 0) item.soldPrice else item.price
             val fee = (basePrice * feePercent) / 100
             val profit = item.getCalculatedProfit(defaultSettings)
 

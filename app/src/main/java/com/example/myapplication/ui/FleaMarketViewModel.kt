@@ -15,6 +15,7 @@ import com.example.myapplication.data.BatchEditSpec
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemEntity
+import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.data.local.ItemWithPhotos
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.data.local.SalesSummary
@@ -201,7 +202,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             val matchesStatus = when (status) {
                 "LISTED" -> item.status == "LISTED"
                 "SOLD" -> item.status == "SOLD"
-                "DRAFT" -> item.status == "DRAFT"
+                "SHIPPING" -> item.status == "SHIPPING"
+                "DRAFT" -> item.status == "DRAFT" || item.status == "DRAFT_DONE"
                 else -> true
             }
 
@@ -212,13 +214,13 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 SortOption.DATE_ASC -> a.item.createdAt.compareTo(b.item.createdAt)
                 SortOption.SOLD_DATE_DESC -> (b.item.soldAt ?: 0L).compareTo(a.item.soldAt ?: 0L)
                 SortOption.PRICE_DESC -> {
-                    val pB = if (b.item.status == "SOLD" && b.item.soldPrice > 0) b.item.soldPrice else b.item.price
-                    val pA = if (a.item.status == "SOLD" && a.item.soldPrice > 0) a.item.soldPrice else a.item.price
+                    val pB = if (isSoldFamilyStatus(b.item.status) && b.item.soldPrice > 0) b.item.soldPrice else b.item.price
+                    val pA = if (isSoldFamilyStatus(a.item.status) && a.item.soldPrice > 0) a.item.soldPrice else a.item.price
                     pB.compareTo(pA)
                 }
                 SortOption.PRICE_ASC -> {
-                    val pB = if (b.item.status == "SOLD" && b.item.soldPrice > 0) b.item.soldPrice else b.item.price
-                    val pA = if (a.item.status == "SOLD" && a.item.soldPrice > 0) a.item.soldPrice else a.item.price
+                    val pB = if (isSoldFamilyStatus(b.item.status) && b.item.soldPrice > 0) b.item.soldPrice else b.item.price
+                    val pA = if (isSoldFamilyStatus(a.item.status) && a.item.soldPrice > 0) a.item.soldPrice else a.item.price
                     pA.compareTo(pB)
                 }
                 SortOption.PROFIT_DESC -> {
@@ -291,7 +293,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
         for (itemWithPhotos in items) {
             val item = itemWithPhotos.item
-            if (item.status == "SOLD") {
+            if (isSoldFamilyStatus(item.status)) {
                 val targetTime = item.soldAt ?: item.createdAt
                 if (targetTime >= startOfPeriod) {
                     soldCount++

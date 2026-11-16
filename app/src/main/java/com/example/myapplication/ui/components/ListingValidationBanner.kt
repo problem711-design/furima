@@ -1,6 +1,7 @@
 package com.example.myapplication.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import com.example.myapplication.data.local.isSoldFamilyStatus
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -40,7 +41,7 @@ fun evaluateListingWarnings(
     estimatedProfit: Int,
     status: String
 ): List<ListingWarning> {
-    if (status == "SOLD") return emptyList()
+    if (isSoldFamilyStatus(status) || status == "MERGED") return emptyList()
     val warnings = mutableListOf<ListingWarning>()
     val trimmedTitle = title.trim()
     if (trimmedTitle.isEmpty()) {

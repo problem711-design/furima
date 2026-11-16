@@ -40,6 +40,7 @@ import com.example.myapplication.data.BatchEditSpec
 import com.example.myapplication.data.BatchPriceMode
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.statusLabelOf
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -130,8 +131,11 @@ fun BatchEditDialog(
                         }
                         if (enableStatus) {
                             Spacer(modifier = Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("LISTED" to "出品中", "DRAFT" to "下書き", "SOLD" to "売却済").forEach { (code, label) ->
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf("LISTED" to "出品中", "DRAFT" to "下書き中", "DRAFT_DONE" to "下書き済み", "SHIPPING" to "発送準備中", "SOLD" to "売却済").forEach { (code, label) ->
                                     FilterChip(
                                         selected = selectedStatus == code,
                                         onClick = { selectedStatus = code },
@@ -282,16 +286,8 @@ fun BatchEditDialog(
                         BatchPriceMode.DELTA_YEN -> (sampleItem.price + effectiveSpec.priceValue).coerceAtLeast(0)
                         BatchPriceMode.DELTA_PERCENT -> (sampleItem.price + (sampleItem.price * effectiveSpec.priceValue) / 100).coerceAtLeast(0)
                     }
-                    val beforeStatus = when (sampleItem.status) {
-                        "SOLD" -> "売却済"
-                        "DRAFT" -> "下書き"
-                        else -> "出品中"
-                    }
-                    val afterStatus = when (effectiveSpec.newStatus ?: sampleItem.status) {
-                        "SOLD" -> "売却済"
-                        "DRAFT" -> "下書き"
-                        else -> "出品中"
-                    }
+                    val beforeStatus = statusLabelOf(sampleItem.status)
+                    val afterStatus = statusLabelOf(effectiveSpec.newStatus ?: sampleItem.status)
                     Card(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
                         shape = RoundedCornerShape(10.dp)

@@ -1330,6 +1330,35 @@ class FurimaServerNative
         }
     }
 
+    // フェーズ 6-4: 売却系ステータス {SOLD, SHIPPING} の共通判定。
+    // 売却価格・売却日時の保持、利益計算、売上集計はすべてこの所属判定に揃える。
+    private static bool IsSoldFamily(string status)
+    {
+        return status == "SOLD" || status == "SHIPPING";
+    }
+
+    // フェーズ 6-4: ステータス表示名の統一表。不明なコードは出品中へ倒さずコードそのものを返す。
+    // MERGED は親ステータスから決まるため、ここでは扱わない (GetMergedChildStatusLabel を使う)。
+    private static string GetStatusLabel(string status)
+    {
+        if (status == "DRAFT") return "下書き中";
+        if (status == "DRAFT_DONE") return "下書き済み";
+        if (status == "LISTED") return "出品中";
+        if (status == "SHIPPING") return "発送準備中";
+        if (status == "SOLD") return "売却済み";
+        return status ?? "";
+    }
+
+    // フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める。
+    private static string GetMergedChildStatusLabel(string parentStatus)
+    {
+        if (parentStatus == "DRAFT") return "まとめ下書き中";
+        if (parentStatus == "DRAFT_DONE") return "まとめ下書き済み";
+        if (parentStatus == "SHIPPING") return "まとめ発送準備中";
+        if (parentStatus == "SOLD") return "まとめ売却済";
+        return "まとめ出品中";
+    }
+
     // レビュー 24-1: トンネル (cloudflared) 経由のリクエストには転送ヘッダが付く。
     // ループバック免除と管理画面の配信を「直接のローカルアクセス」だけに限定するための判定。
     private static bool HasForwardedHeaders(HttpListenerRequest req)
@@ -2156,7 +2185,7 @@ class FurimaServerNative
                             object resolvedDeletedAtObj = isTrashed ? (object)incomingDeletedAt : null;
                             string statusLabel = isTrashed
                                 ? "ゴミ箱"
-                                : (item.Value<string>("statusLabel") ?? (itemStatus == "SOLD" ? "売却済み" : (itemStatus == "DRAFT" ? "未出品" : "出品中")));
+                                : (item.Value<string>("statusLabel") ?? GetStatusLabel(itemStatus));
 
                             string itemDirPath = ResolveOrCreateItemFolder(assignedId, title);
 
@@ -2217,7 +2246,7 @@ class FurimaServerNative
                             long phoneSoldAt = ParseLongSafe(item["soldAt"], 0);
                             long existingSoldAt = existingItem != null && existingItem.ContainsKey("soldAt") ? ParseLongSafe(existingItem["soldAt"], 0) : 0;
                             object resolvedSoldAt = null;
-                            if (itemStatus == "SOLD")
+                            if (IsSoldFamily(itemStatus))
                             {
                                 long sAt = phoneSoldAt > 0 ? phoneSoldAt : existingSoldAt;
                                 if (sAt > 0) resolvedSoldAt = sAt;
@@ -2511,7 +2540,7 @@ class FurimaServerNative
                 string status = json.Value<string>("status") ?? "LISTED";
                 string description = json.Value<string>("description") ?? "";
 
-                string statusLabel = status == "SOLD" ? "売却済み" : (status == "DRAFT" ? "未出品" : "出品中");
+                string statusLabel = GetStatusLabel(status);
 
                 lock (lockObj)
                 {
@@ -2533,7 +2562,7 @@ class FurimaServerNative
                     if (json["expenseCost"] != null && json["expenseCost"].Type != JTokenType.Null) expense = Math.Max(0, ParseIntSafe(json["expenseCost"], expense));
                     if (json["useCustomSettings"] != null && json["useCustomSettings"].Type != JTokenType.Null) useCustom = ParseBoolSafe(json["useCustomSettings"], useCustom);
 
-                    int calcPrice = (status == "SOLD" && soldPrice > 0) ? soldPrice : price;
+                    int calcPrice = (IsSoldFamily(status) && soldPrice > 0) ? soldPrice : price;
                     int profit = Math.Max(0, calcPrice - (calcPrice * feeRate / 100) - shipping - expense);
 
                     long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -2541,7 +2570,8 @@ class FurimaServerNative
 
                     item["title"] = title;
                     item["price"] = price;
-                    item["soldPrice"] = soldPrice;
+                    // レビュー §30.4-3: 売却系でない場合は売却価格を 0 に正規化する (他経路と統一)
+                    item["soldPrice"] = IsSoldFamily(status) ? soldPrice : 0;
                     item["status"] = status;
                     item["statusLabel"] = statusLabel;
                     item["description"] = description;
@@ -2555,9 +2585,25 @@ class FurimaServerNative
                         item["createdAt"] = nowMs;
                     }
                     item["updatedAt"] = nowMs;
-                    item["soldAt"] = status == "SOLD" ? (object)(existingSoldAt > 0 ? existingSoldAt : nowMs) : null;
+                    item["soldAt"] = IsSoldFamily(status) ? (object)(existingSoldAt > 0 ? existingSoldAt : nowMs) : null;
                     item["syncedToPhone"] = false;
                     EnsureItemSyncUuid(item);
+
+                    // フェーズ 6-4 / レビュー §30.4-1: まとめ親の状態変更に子の表示名を連動させる
+                    // (従来は一括更新にしか無く、単体編集では子の表示名が古いまま残っていた)
+                    int updChildCount = item.ContainsKey("mergedChildCount") ? ParseIntSafe(item["mergedChildCount"], 0) : 0;
+                    if (updChildCount > 0)
+                    {
+                        foreach (var child in itemsDb)
+                        {
+                            if (child != null && child.ContainsKey("mergedParentId") && ParseIntSafe(child["mergedParentId"], 0) == itemId)
+                            {
+                                child["statusLabel"] = GetMergedChildStatusLabel(status);
+                                child["updatedAt"] = nowMs;
+                                child["syncedToPhone"] = false;
+                            }
+                        }
+                    }
 
                     try
                     {
@@ -2745,7 +2791,15 @@ class FurimaServerNative
                     EnsureItemSyncUuid(item);
                     item["deletedAt"] = null;
                     item["isDeleted"] = false;
-                    item["statusLabel"] = st == "SOLD" ? "売却済み" : (st == "DRAFT" ? "未出品" : (st == "MERGED" ? "まとめ売却" : "出品中"));
+                    string restoredLabel = GetStatusLabel(st);
+                    if (st == "MERGED")
+                    {
+                        int pid = item.ContainsKey("mergedParentId") ? ParseIntSafe(item["mergedParentId"], 0) : 0;
+                        var parentItem = pid > 0 ? itemsDb.Find(i => i != null && ParseIntSafe(i["id"], 0) == pid) : null;
+                        string pst = parentItem != null && parentItem.ContainsKey("status") && parentItem["status"] != null ? parentItem["status"].ToString() : "LISTED";
+                        restoredLabel = GetMergedChildStatusLabel(pst);
+                    }
+                    item["statusLabel"] = restoredLabel;
                     item["updatedAt"] = now;
                     item["syncedToPhone"] = false;
 
@@ -2759,7 +2813,7 @@ class FurimaServerNative
                                 EnsureItemSyncUuid(child);
                                 child["deletedAt"] = null;
                                 child["isDeleted"] = false;
-                                child["statusLabel"] = "まとめ売却";
+                                child["statusLabel"] = GetMergedChildStatusLabel(st);
                                 child["updatedAt"] = now;
                                 child["syncedToPhone"] = false;
                             }
@@ -2951,7 +3005,7 @@ class FurimaServerNative
                     EnsureItemSyncUuid(item);
                     item["deletedAt"] = null;
                     item["isDeleted"] = false;
-                    item["statusLabel"] = st == "SOLD" ? "売却済み" : (st == "DRAFT" ? "未出品" : (st == "MERGED" ? "まとめ売却" : "出品中"));
+                    item["statusLabel"] = GetStatusLabel(st);
                     item["updatedAt"] = now;
                     item["syncedToPhone"] = false;
                     affected++;
@@ -2966,7 +3020,7 @@ class FurimaServerNative
                                 EnsureItemSyncUuid(child);
                                 child["deletedAt"] = null;
                                 child["isDeleted"] = false;
-                                child["statusLabel"] = st == "SOLD" ? "まとめ売却済" : "まとめ出品中";
+                                child["statusLabel"] = GetMergedChildStatusLabel(st);
                                 child["updatedAt"] = now;
                                 child["syncedToPhone"] = false;
                             }
@@ -3114,13 +3168,13 @@ class FurimaServerNative
                     }
 
                     string nextStatus = newStatus != null ? newStatus : curStatus;
-                    string nextStatusLabel = nextStatus == "SOLD" ? "売却済み" : (nextStatus == "DRAFT" ? "未出品" : "出品中");
+                    string nextStatusLabel = GetStatusLabel(nextStatus);
 
                     long existingSoldAt = item.ContainsKey("soldAt") && item["soldAt"] != null ? ParseLongSafe(item["soldAt"], 0) : 0;
                     int existingSoldPrice = item.ContainsKey("soldPrice") && item["soldPrice"] != null ? Math.Max(0, ParseIntSafe(item["soldPrice"], 0)) : 0;
 
                     int nextSoldPrice = 0;
-                    if (nextStatus == "SOLD")
+                    if (IsSoldFamily(nextStatus))
                     {
                         if (priceMode != "NONE") nextSoldPrice = nextPrice;
                         else if (existingSoldPrice > 0) nextSoldPrice = existingSoldPrice;
@@ -3140,7 +3194,7 @@ class FurimaServerNative
                         ? useCustomSettings
                         : (item.ContainsKey("useCustomSettings") && ParseBoolSafe(item["useCustomSettings"], false));
 
-                    int baseForProfit = (nextStatus == "SOLD" && nextSoldPrice > 0) ? nextSoldPrice : nextPrice;
+                    int baseForProfit = (IsSoldFamily(nextStatus) && nextSoldPrice > 0) ? nextSoldPrice : nextPrice;
                     int fee = (baseForProfit * nextFeeRate) / 100;
                     int profit = Math.Max(0, baseForProfit - fee - nextShipping - nextExpense);
 
@@ -3148,7 +3202,7 @@ class FurimaServerNative
                     item["statusLabel"] = nextStatusLabel;
                     item["price"] = nextPrice;
                     item["soldPrice"] = nextSoldPrice;
-                    item["soldAt"] = nextStatus == "SOLD" ? (object)(existingSoldAt > 0 ? existingSoldAt : nowMs) : null;
+                    item["soldAt"] = IsSoldFamily(nextStatus) ? (object)(existingSoldAt > 0 ? existingSoldAt : nowMs) : null;
                     item["useCustomSettings"] = nextUseCustom;
                     item["shippingCost"] = nextShipping;
                     item["feeRatePercent"] = nextFeeRate;
@@ -3161,7 +3215,7 @@ class FurimaServerNative
                     int mChildCount = item.ContainsKey("mergedChildCount") ? ParseIntSafe(item["mergedChildCount"], 0) : 0;
                     if (mChildCount > 0 && newStatus != null)
                     {
-                        string childLabel = nextStatus == "SOLD" ? "まとめ売却済" : "まとめ出品中";
+                        string childLabel = GetMergedChildStatusLabel(nextStatus);
                         foreach (var child in itemsDb)
                         {
                             if (child != null && child.ContainsKey("mergedParentId") && ParseIntSafe(child["mergedParentId"], 0) == itemId)
@@ -3306,9 +3360,9 @@ class FurimaServerNative
                     ? Math.Max(0, ParseIntSafe(json["expenseCost"], defaults.defaultExpenseCost))
                     : defaults.defaultExpenseCost;
 
-                int calcPrice = (status == "SOLD" && soldPrice > 0) ? soldPrice : price;
+                int calcPrice = (IsSoldFamily(status) && soldPrice > 0) ? soldPrice : price;
                 int profit = Math.Max(0, calcPrice - (calcPrice * feeRatePercent / 100) - shippingCost - expenseCost);
-                string statusLabel = status == "SOLD" ? "売却済み" : (status == "DRAFT" ? "未出品" : "出品中");
+                string statusLabel = GetStatusLabel(status);
                 long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
                 int newId = 1;
@@ -3345,7 +3399,7 @@ class FurimaServerNative
                         { "status", status },
                         { "statusLabel", statusLabel },
                         { "price", price },
-                        { "soldPrice", status == "SOLD" ? soldPrice : 0 },
+                        { "soldPrice", IsSoldFamily(status) ? soldPrice : 0 },
                         { "profit", profit },
                         { "shippingCost", shippingCost },
                         { "feeRatePercent", feeRatePercent },
@@ -3356,7 +3410,7 @@ class FurimaServerNative
                         { "syncedToPhone", false },
                         { "createdAt", now },
                         { "updatedAt", now },
-                        { "soldAt", status == "SOLD" ? (object)now : null },
+                        { "soldAt", IsSoldFamily(status) ? (object)now : null },
                         { "photos", new List<Dictionary<string, object>>() }
                     };
 
@@ -3640,6 +3694,19 @@ class FurimaServerNative
                         return;
                     }
 
+                    // フェーズ 6-4 / レビュー §30.4-1: 子商品の前提をサーバー側でも検証する
+                    // (従来は画面側のチェックのみだった)。まとめに入れられるのは下書き系と出品中だけ。
+                    foreach (var child in childItems)
+                    {
+                        string cStatus = child.ContainsKey("status") && child["status"] != null ? child["status"].ToString() : "LISTED";
+                        if (IsItemTrashed(child) || (cStatus != "DRAFT" && cStatus != "DRAFT_DONE" && cStatus != "LISTED"))
+                        {
+                            res.StatusCode = 400;
+                            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "まとめ買いに含められない商品があります (ID: " + ParseIntSafe(child["id"], 0) + ")" } });
+                            return;
+                        }
+                    }
+
                     List<string> childTitlesList = new List<string>();
                     int originalTotal = 0;
                     int maxChildLevel = 0;
@@ -3667,7 +3734,7 @@ class FurimaServerNative
 
                         // 子商品のステータスを MERGED に更新（子商品ID・出品日時・写真はそのまま保持）
                         child["status"] = "MERGED";
-                        child["statusLabel"] = (asStatus == "SOLD") ? "まとめ売却済" : "まとめ出品中";
+                        child["statusLabel"] = GetMergedChildStatusLabel(asStatus);
                         child["mergedParentId"] = newParentId;
                         child["updatedAt"] = now;
                         child["syncedToPhone"] = false;
@@ -3691,9 +3758,9 @@ class FurimaServerNative
                         { "title", mergedTitle },
                         { "description", mergedDescription },
                         { "status", asStatus },
-                        { "statusLabel", asStatus == "SOLD" ? "売却済み" : "出品中" },
+                        { "statusLabel", GetStatusLabel(asStatus) },
                         { "price", totalSoldPrice },
-                        { "soldPrice", asStatus == "SOLD" ? totalSoldPrice : 0 },
+                        { "soldPrice", IsSoldFamily(asStatus) ? totalSoldPrice : 0 },
                         { "profit", profit },
                         { "shippingCost", newShippingCost },
                         { "feeRatePercent", newFeeRatePercent },
@@ -3706,7 +3773,7 @@ class FurimaServerNative
                         { "bundleLevel", maxChildLevel + 1 },
                         { "createdAt", now },
                         { "updatedAt", now },
-                        { "soldAt", asStatus == "SOLD" ? (object)now : null },
+                        { "soldAt", IsSoldFamily(asStatus) ? (object)now : null },
                         { "isShared", true },
                         { "isDeleted", false },
                         { "syncedToPhone", false },

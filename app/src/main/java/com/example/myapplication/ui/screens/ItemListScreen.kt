@@ -3,6 +3,8 @@ package com.example.myapplication.ui.screens
 import android.widget.Toast
 import androidx.compose.ui.draw.alpha
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -91,6 +93,8 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.example.myapplication.data.local.ItemWithPhotos
+import com.example.myapplication.data.local.isSoldFamilyStatus
+import com.example.myapplication.data.local.statusLabelOf
 import com.example.myapplication.data.server.PcSyncProgress
 import com.example.myapplication.data.server.SyncPhase
 import com.example.myapplication.ui.FleaMarketViewModel
@@ -163,11 +167,15 @@ fun ItemListScreen(
             onDismiss = { quickActionItem = null },
             onToggleStatus = {
                 val newStatus = when (itemWithPhotos.item.status) {
-                    "SOLD", "DRAFT" -> "LISTED"
+                    "SOLD", "DRAFT", "DRAFT_DONE" -> "LISTED"
                     else -> "SOLD"
                 }
                 viewModel.updateItemStatus(itemWithPhotos.item, newStatus)
-                Toast.makeText(context, if (newStatus == "SOLD") "売却済みに変更しました" else "出品中に変更しました", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "「${statusLabelOf(newStatus)}」に変更しました", Toast.LENGTH_SHORT).show()
+            },
+            onSelectStatus = { newStatus ->
+                viewModel.updateItemStatus(itemWithPhotos.item, newStatus)
+                Toast.makeText(context, "「${statusLabelOf(newStatus)}」に変更しました", Toast.LENGTH_SHORT).show()
             },
             onNavigateToEdit = {
                 // サムネ長押し→編集選択時にダイレクトに商品編集画面へ遷移
@@ -529,7 +537,7 @@ fun ItemListScreen(
                 }
             }
 
-            // ③ ステータスフィルターチップ
+            // ③ ステータスフィルターチップ (レビュー §30.4-6: 狭幅でも潰れないようチップ側を横スクロール化)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -537,44 +545,59 @@ fun ItemListScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                FilterChip(
-                    selected = (statusFilter == "ALL"),
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.setStatusFilter("ALL")
-                    },
-                    label = { Text("すべて (${filteredItems.size})", fontSize = 11.sp) },
-                    modifier = Modifier.height(28.dp)
-                )
-                FilterChip(
-                    selected = (statusFilter == "DRAFT"),
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.setStatusFilter("DRAFT")
-                    },
-                    label = { Text("下書き", fontSize = 11.sp) },
-                    modifier = Modifier.height(28.dp)
-                )
-                FilterChip(
-                    selected = (statusFilter == "LISTED"),
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.setStatusFilter("LISTED")
-                    },
-                    label = { Text("出品中", fontSize = 11.sp) },
-                    modifier = Modifier.height(28.dp)
-                )
-                FilterChip(
-                    selected = (statusFilter == "SOLD"),
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        viewModel.setStatusFilter("SOLD")
-                    },
-                    label = { Text("売却済", fontSize = 11.sp) },
-                    modifier = Modifier.height(28.dp)
-                )
-
-                Spacer(modifier = Modifier.weight(1f))
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = (statusFilter == "ALL"),
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.setStatusFilter("ALL")
+                        },
+                        label = { Text("すべて (${filteredItems.size})", fontSize = 11.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                    FilterChip(
+                        selected = (statusFilter == "DRAFT"),
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.setStatusFilter("DRAFT")
+                        },
+                        label = { Text("下書き", fontSize = 11.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                    FilterChip(
+                        selected = (statusFilter == "LISTED"),
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.setStatusFilter("LISTED")
+                        },
+                        label = { Text("出品中", fontSize = 11.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                    FilterChip(
+                        selected = (statusFilter == "SHIPPING"),
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.setStatusFilter("SHIPPING")
+                        },
+                        label = { Text("発送準備中", fontSize = 11.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                    FilterChip(
+                        selected = (statusFilter == "SOLD"),
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            viewModel.setStatusFilter("SOLD")
+                        },
+                        label = { Text("売却済", fontSize = 11.sp) },
+                        modifier = Modifier.height(28.dp)
+                    )
+                }
                 Text(
                     text = "${visibleItems.size} / ${filteredItems.size}件",
                     fontSize = 11.sp,
@@ -665,7 +688,7 @@ fun ItemListScreen(
                         val selectedItemsList = allActiveItems.filter { selectedItemIds.contains(it.item.id) }
                         val selectedSubItemCount = selectedItemsList.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
                         val canMerge = selectedItemsList.size >= 2 && selectedItemsList.all {
-                            it.item.status == "LISTED" || it.item.status == "DRAFT"
+                            it.item.status == "LISTED" || it.item.status == "DRAFT" || it.item.status == "DRAFT_DONE"
                         }
                         Surface(
                             shadowElevation = 8.dp,
@@ -693,7 +716,7 @@ fun ItemListScreen(
                                     )
                                     if (selectedItemsList.size >= 2 && !canMerge) {
                                         Text(
-                                            text = "※売却済を含むためまとめ不可",
+                                            text = "※売却済・発送準備中を含むためまとめ不可",
                                             fontSize = 10.sp,
                                             color = MaterialTheme.colorScheme.error
                                         )
@@ -768,7 +791,7 @@ fun CompactItemCard(
     val firstPhoto = photos.firstOrNull()
 
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
-    val basePrice = if (item.status == "SOLD" && item.soldPrice > 0) item.soldPrice else item.price
+    val basePrice = if (isSoldFamilyStatus(item.status) && item.soldPrice > 0) item.soldPrice else item.price
 
     val effectiveFee = if (item.useCustomSettings) item.feeRatePercent else defaultFeePercent
     val effectiveShipping = if (item.useCustomSettings) item.shippingCost else defaultShipping
@@ -846,8 +869,11 @@ fun CompactItemCard(
                                 when (item.status) {
                                     "SOLD" -> Color(0xFFC62828)
                                     "MERGED" -> Color(0xFF6A1B9A)
-                                    "DRAFT" -> Color.Gray
-                                    else -> MaterialTheme.colorScheme.primary
+                                    "DRAFT" -> Color(0xFF64748B)
+                                    "DRAFT_DONE" -> Color(0xFF0D9488)
+                                    "SHIPPING" -> Color(0xFFD97706)
+                                    "LISTED" -> Color(0xFF059669)
+                                    else -> Color(0xFF334155)
                                 }
                             )
                             .padding(horizontal = 6.dp, vertical = 2.dp)
@@ -856,8 +882,7 @@ fun CompactItemCard(
                             text = when (item.status) {
                                 "SOLD" -> "売却済"
                                 "MERGED" -> "まとめ済"
-                                "DRAFT" -> "下書き"
-                                else -> "出品中"
+                                else -> statusLabelOf(item.status)
                             },
                             color = Color.White,
                             fontSize = 10.sp,

@@ -85,4 +85,33 @@ class CsvExporterTest {
         assertTrue(csv.contains(",一部同期,"))
         assertTrue(csv.contains(",4800,10,480,450,100,3770,"))
     }
+
+    @Test
+    fun generateCsvContent_phase64_statusLabels() {
+        fun item(id: Int, status: String, soldPrice: Int = 0, soldAt: Long? = null) = ItemEntity(
+            id = id,
+            title = "状態テスト$id",
+            description = "",
+            status = status,
+            price = 2000,
+            soldPrice = soldPrice,
+            createdAt = 1700000000000L,
+            updatedAt = 1700001000000L,
+            soldAt = soldAt
+        )
+        val csv = CsvExporter.generateCsvContent(
+            listOf(
+                ItemWithPhotos(item(11, "DRAFT"), emptyList()),
+                ItemWithPhotos(item(12, "DRAFT_DONE"), emptyList()),
+                ItemWithPhotos(item(13, "SHIPPING", soldPrice = 1900, soldAt = 1700002000000L), emptyList()),
+                ItemWithPhotos(item(14, "SOME_FUTURE_CODE"), emptyList())
+            ),
+            DefaultSettings()
+        )
+        assertTrue(csv.contains(",下書き中,"))
+        assertTrue(csv.contains(",下書き済み,"))
+        assertTrue(csv.contains(",発送準備中,"))
+        // 不明なコードは出品中へ倒さず、コードそのものがステータス欄に出ること
+        assertTrue(csv.contains(",SOME_FUTURE_CODE,"))
+    }
 }
