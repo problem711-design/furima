@@ -5245,7 +5245,7 @@ class FurimaServerNative
                     }
                     using (var encParams = new EncoderParameters(1))
                     {
-                        encParams.Param[0] = new EncoderParameter(Encoder.Quality, 90L);
+                        encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 90L);
                         using (var outMs = new MemoryStream())
                         {
                             bmp.Save(outMs, jpegCodec, encParams);
