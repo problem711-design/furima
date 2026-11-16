@@ -190,3 +190,14 @@
    - ライブ更新によるインデックスずれ防止のため、選択状態の管理を配列インデックスから `md5Hash`（または `{md5Hash, childItemId}`）ベースへ切り替えるか、送信直前に一致検証を入れるか？
 7. **【Q7 / 5-4】タイムアウト・再承認ルール**:
    - `approval_pending` の自動失効時間を設けるか？ `approval_expired` から再度 `request-approval` を受け付けるか、新規ジョブ作り直しにするか？
+
+---
+
+## 4. 改訂版計画書（`§10 協議結果` 反映後）に対する最終チェック結果（2026-11-16）
+
+改訂版 `PLAN_CLAUDE_SEND_PHASE5.md` は初版レビューの指摘 11 件・協議事項 Q1〜Q7 をすべて適切に取り込んでいます。最終確認として残っていた以下の 4 点も計画書本文へ補完追記しました：
+
+1. **5-1-1 への `ParseDefaultSettingsConfig()` / `SaveDefaultSettings()` 明記**：`tools/FurimaServerNative.cs`（3058〜3124行目）と `tools/SyncStore.cs`（280〜307行目）がチェックリスト本文から漏れていたため追記。
+2. **5-4-1 サーバー側 EXIF 回転補正・リサイズの新規実装明記**：`FurimaServerNative.cs` には既存の EXIF 回転処理が存在しない（Android 側 `PhotoStorageManager.kt` のみ）ため、`System.Drawing.Image`（タグ `0x0112` → `RotateFlip`）＋ `MemoryStream` 完結方式での新規実装と、「2048px以下でも EXIF 回転タグ付きは正立化して返す」条件を明確化。
+3. **まとめ親商品の UI 側無効化（5-2-4 / 5-3-3）**：サーバー 400 拒否だけでなく、PC ギャラリー（`checkIsBundle(item)`）およびスマホ編集画面（`mergedChildCount > 0`）でも送信ボタンを無効化＋理由表示するガードを追加。
+4. **関数名修正（5-2-4）**：`updateViewerSelectionUi` → 現行実コードの `updateViewerSelectionBar`（`DashboardHtml.cs` 2166行目）へ修正。

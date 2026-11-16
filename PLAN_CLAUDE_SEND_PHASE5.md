@@ -121,8 +121,9 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ## 1. プロンプトテンプレートの共有基盤（Target: `v1.0.0 Build 8`）
 
 ### 実装タスクチェックリスト
-- [] **5-1-1: サーバー設定モデル拡張 (`tools/SyncStore.cs`)**
-- `DefaultSettingsConfig` に `public List<TextTemplateConfig> promptTemplates { get; set;}` を追加し、`CreateDefault()` で空リスト初期化。旧 `store.json`（フィールド無し）は Newtonsoft のデフォルトで null になり得るため、`GetDefaultSettings()` の正規化箇所で null→空リストに寄せる（既存 `titleTemplates` の扱いに合わせる）。
+- [] **5-1-1: サーバー設定モデル・パーサー拡張 (`tools/SyncStore.cs`、`tools/FurimaServerNative.cs`)**
+- `tools/SyncStore.cs`：`DefaultSettingsConfig` に `public List<TextTemplateConfig> promptTemplates { get; set; }` を追加し、`CreateDefault()` で空リスト初期化。旧 `store.json`（フィールド無し）は Newtonsoft のデフォルトで null になり得るため、`GetDefaultSettings()` **および `SaveDefaultSettings()`（280〜307行目付近）** の両方で null→空リストへ正規化する（既存 `titleTemplates` / `descriptionTemplates` の扱いに合わせる）。
+- `tools/FurimaServerNative.cs`：**`ParseDefaultSettingsConfig()`（3058〜3124行目）へ `promptTemplates` の手書き抽出を追加する（レビュー指摘4-1・必須）**。`PUT /api/settings`（3134行目）と `POST /api/sync/items`（1981行目）の双方がここを通るため、漏らすと同期・保存のたびにサーバー側の `promptTemplates` が空に上書きされる。
 - [] **5-1-2: Android設定モデル・DTO・変換の拡張**
 - `data/local/DefaultSettings.kt`：`promptTemplates: List<TextTemplate> = emptyList()` を追加。
 - `data/server/SyncDtos.kt`：`SyncSettingsDto` に `@param:Json(name = "promptTemplates") val promptTemplates: List<SyncTextTemplateDto> = emptyList()` を追加。
@@ -158,7 +159,7 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - `GET /api/claude/jobs`（`status` 絞り込み可）／ `GET /api/claude/jobs/{jobId}` / `POST /api/claude/jobs/{jobId}/cancel`。
 - 応答に `jobToken` を含めない（発行は 5-4。詳細応答でも `approved` 状態かつ 5-4 実装後に限る）。
 - [] **5-2-4: PCギャラリーへの送信UI追加 (`tools/DashboardHtml.cs`)**
-- ギャラリーツールバー（`viewer-trash-selected-btn` の隣）へ、テンプレート選択 `<select id='viewer-claude-template'>`（`pcSettings.promptTemplates` から生成。0件時は無効化＋設定への案内文）と「Museに送る」ボタン（`viewer-claude-send-btn`）を追加。選択数 0 の時はボタン無効（ゴミ箱ボタンと同じ `updateViewerSelectionUi` 系の更新に相乗り）。
+- ギャラリーツールバー（`viewer-trash-selected-btn` の隣）へ、テンプレート選択 `<select id='viewer-claude-template'>`（`pcSettings.promptTemplates` から生成。0件時は無効化＋設定への案内文）と「Museに送る」ボタン（`viewer-claude-send-btn`）を追加。選択数 0 の時はボタン無効（ゴミ箱ボタンと同じ `updateViewerSelectionBar`（2166行目）の更新に相乗り）。なおまとめ親商品（`checkIsBundle(item)` が true）を開いている間も `viewer-claude-send-btn` を無効化し、「まとめ商品は個別の子商品から送信してください」の案内を表示して400エラーを未然に防ぐ。
 - `sendViewerPhotosToClaude()`：`selectedViewerPhotoIndices` から対象写真の `md5` / `fileName` を集め（写真オブジェクトの保持形式は既存ギャラリー実装に合わせる）、**送信直前に現在の商品写真とMD5で照合し（ライブ更新によるインデックスずれ対策・Q6）、対象のファイル名一覧を示す確認ダイアログを出してから**、`POST /api/claude/jobs`（`origin: "pc"`）を呼ぶ。照合で一致しない写真があれば送信を中止して知らせる。成功時は選択を解除し、ジョブ一覧モーダルを開くかトースト相当の表示で知らせる（既存UIの通知手段に合わせる）。
 - チェックボックスの `title` 文言（2338行目付近 `選択して写真ゴミ箱へ移動`）を汎用文言（例：`写真を選択（ゴミ箱移動・Muse送信）`）へ変更する（レビュー指摘7-3）。ツールバー（`#viewer-action-bar`）はボタン追加で幅が逼迫するため、折り返し可能な2段構成にする（レビュー指摘7-4）。選択状態そのもののMD5キー化は将来課題として記録する。
 - ジョブ一覧モーダル（`claude-jobs-modal`、写真ゴミ箱モーダルの型を流用）：状態バッジ、商品名、枚数、テンプレート名、作成日時、取消ボタンを表示。`pollServerRevisions()` で `claudeRevision` の変化を検知したら一覧を再取得する。
@@ -179,7 +180,7 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - 一括削除の取り消しピル対応は行わず、実行前確認ダイアログのみとする（単品削除の取り消し挙動とは異なることを仕様として明記）。
 - [] **5-3-3: スマホ発「Museに送る」**
 - `data/server/PcServerClient.kt` に `createClaudeJob(...)` を追加（保存済みサーバーURL＋Bearerトークンで `POST /api/claude/jobs`、`origin: "phone"`、**`itemUuid`（`syncUuid`）を必須で送る**）。
-- **送信前ガード（Q2・レビュー指摘2）**：`itemId == 0`（新規作成中）または `hasUnsavedChanges == true` の場合は送信をブロックし、「保存してからMuseに送ってください」と案内する。対象写真は `md5Hash` が空でなく `isPcSynced` のものだけとし、未同期・新規URI写真が混ざる場合は対象外として件数と理由を表示する。
+- **送信前ガード（Q2・Q5・レビュー指摘2）**：`itemId == 0`（新規作成中）または `hasUnsavedChanges == true` の場合は送信をブロックし、「保存してからMuseに送ってください」と案内する。またまとめ親商品（`mergedChildCount > 0` 等）を開いている場合も「まとめ商品は個別の子商品から送信してください」と案内して送信を無効化する。対象写真は `md5Hash` が空でなく `isPcSynced` のものだけとし、未同期・新規URI写真が混ざる場合は対象外として件数と理由を表示する。
 - テンプレート選択ダイアログ（新規 `ui/components/ClaudeSendDialog.kt`）：`promptTemplates` をプルダウン表示し、選択して送信。PC未接続時は送信不可とし、既存の同期ステータス表示の流儀で理由を示す。
 - `ui/FleaMarketViewModel.kt` に送信ラッパーと結果状態（成功／失敗の表示）を追加。
 - [] **5-3-4: バージョン統一更新 (`Build 10`) ＆ 検証**
@@ -200,10 +201,10 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - **CORS許可ヘッダ追加（レビュー指摘8-1・必須）**：`Access-Control-Allow-Headers`（1358行目付近）へ `X-Claude-Job-Token`, `X-Source-Md5`, `X-File-Name` を追加する。
 - **`jobToken` の位置づけの正確な定義（レビュー指摘8-2）**：既存Bearerは他のAPIも通過するため、`jobToken` は権限分離ではなく「スマホ承認が完了しない限りジョブ実行APIが通らないセーフティロック（誤操作・無断実行防止ゲート）」として定義する。
 - **タイムアウトと再承認（Q7・レビュー指摘8-4）**：`approval_pending` は10分で失効し、ジョブは `queued` へ戻る（終端にしない）。`jobToken` の期限切れ判定は、写真取得・結果返却・完了・詳細取得の**全ジョブトークン対象API**で行い、切れていれば `approval_expired` とした上で再び `request-approval` を受け付ける（ジョブの作り直しは不要）。失効判定は各APIアクセス時に遅延評価する。
-- **配達用コピー仕様（画像形式・サイズ方針／確定事項9）**：`GET /api/claude/jobs/{jobId}/photos/{md5}` は原本をそのまま返さず、次の配達用コピーを生成して返す。原本ファイルは一切変更しない。生成物は `syncDir` の外（サーバーの一時領域）に置き、フォルダ監視の対象にしない。
-  - 形式がJPEG/PNGで長辺2048px以下、かつサイズ上限（目安5MB）以内なら、再エンコードせずそのまま返す（劣化ゼロ）。
-  - 長辺が2048pxを超える、またはサイズ上限を超える場合は、PC側で長辺2048pxへ縮小しJPEG品質90で再エンコードして返す（フル解像度写真と通常写真の差は、生成側の出力サイズでは実質出ない想定）。
-  - EXIFの向きは既存の回転補正の流儀で正立させてから返す。
+- **配達用コピー仕様（画像形式・サイズ方針／確定事項9）**：`GET /api/claude/jobs/{jobId}/photos/{md5}` は原本をそのまま返さず、次の配達用コピーを生成して返す。原本ファイルは一切変更しない。変換・リサイズは `MemoryStream` 上で完結してHTTP応答へ直接返す（または `syncDir` 外の一時領域を使い、`FileSystemWatcher` の対象にしない）。
+  - 形式がJPEG/PNGで長辺2048px以下・サイズ上限（目安5MB）以内、**かつEXIF Orientation（タグ `0x0112`）が正立（1）または未設定** の場合のみ、再エンコードせずそのまま返す（劣化ゼロ）。
+  - 長辺が2048pxを超える／サイズ上限を超える／**EXIF Orientation で回転・反転指定が付いている**場合は、PC側で正立化＋必要に応じ長辺2048pxへ縮小し、Orientation タグを除外した上でJPEG品質90で再エンコードして返す（フル解像度写真と通常写真の差は、生成側の出力サイズでは実質出ない想定）。
+  - **実装上の注意（再確認追記）**：`FurimaServerNative.cs` には現在 `System.Drawing` の `using` のみがあり、EXIF回転補正・リサイズの既存関数はサーバー側には無い（Android側 `PhotoStorageManager.kt` のみに存在）。そのため `System.Drawing.Image` の `PropertyItems`（`0x0112`）解析→ `RotateFlip` ＋高品質リサイズ（`InterpolationMode.HighQualityBicubic`）をサーバー側に新規実装する。
   - **HEIFは対象外**（運用方針として使用しない）。HEIF等の未対応形式が対象に含まれる場合は、その写真だけエラーとしてジョブに記録し、他の写真は継続する。
 - [] **5-4-2: ハートビートへの `claudeRevision` 相乗り（Android）**
 - `data/server/SyncDtos.kt` の `HeartbeatInfo` と `data/server/PcServerClient.kt` の `HeartbeatInfo` 構築箇所へ `claudeRevision: Long = 0L` を追加（旧サーバー応答にフィールドが無くても 0 で安全）。
@@ -300,3 +301,4 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - **指摘10（肥大化・冪等性・サイズ）**：終端ジョブの30日自動整理、結果返却の冪等性、サイズ上限を反映（5-2-1 / 5-5-1）。
 - **指摘11（用語）**：命名規約を冒頭に明記。
 - **画像形式・サイズ方針（ユーザー追加確定）**：HEIFは使用しない。基本はアプリ内カメラの2048px運用とし、フル解像度写真はPC側の配達用コピーで2048pxへ統一する（確定事項9 / 5-4-1）。
+- **最終チェック追記（2026-11-16・実装着手前補完）**：5-1-1 へ `FurimaServerNative.cs` の `ParseDefaultSettingsConfig()` / `SyncStore.SaveDefaultSettings()` を明記、5-2-4 の関数名を `updateViewerSelectionBar` へ修正しPC・スマホ双方のUIにまとめ親商品の送信無効化ガードを追加、5-4-1 のEXIF回転補正・リサイズはサーバー側に既存実装が無いため `System.Drawing` ＋ `MemoryStream` で新規実装し EXIF 回転タグ付き画像は2048px以下でも正立化対象とするよう明確化。
