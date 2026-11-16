@@ -9,17 +9,20 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `e0d831b`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `6127767`）
 
 - **最後にレビューを完了したリモートコミット**:
-  - `1344670`（`v1.2 Build 6` フェーズ `6-4` 本体 ＋ 追補 `25-1`・`25-2` 実装）
-  - `e0d831b`（import 補完ビルド修正 ＋ APK／`tools/furima-server.exe` 配布バイナリ更新）
+  - `187a74c`（`PLAN` §27 ステップ 3 詳細化）
+  - `cffe97f`（`v1.3 Build 7` フェーズ `6-5` 加工ラベル実装 ＋ `§31.3` 一括復元ラベル揃え）
+  - `6127767`（`v1.3 Build 7` APK／`tools/furima-server.exe`／`tools/furima-sync.exe` 配布バイナリ更新）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
-  - 実装レビュー: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)・是正バッチ (`v1.1 Build 5`, `1a3e48a`)・ステップ2 `6-4` ＆ 追補 `25-1`/`25-2` (`v1.2 Build 6`, `e0d831b`)**
-- **現在のステータス（ステップ2 `6-4` 合格完了・ステップ3 `6-5`〜`6-7` 着手可）**:
-  - `25-1`・`25-2` の追補修正および `6-4`（`DRAFT_DONE` / `SHIPPING` 拡張、売却系 `{SOLD, SHIPPING}`、表示統一表、9段階ソート、配色パレット、まとめ親検証＆子ラベル連動、`soldPrice`/`soldAt` 正規化、整理 `SOLD` 保護、3箇所バージョン・バイナリ同期、C# 5 互換／JS 構文）すべてを実コードで確認し、**重大・中高指摘 0件で合格**とした（詳細: 本台帳 §13 / `REVIEW` §31）。
-  - **次はステップ3（`6-5`〜`6-7` / `v1.3 Build 7〜9`）へ進んでよい**（計画 §16・§4.2 のとおり、`6-5` 完了時および `6-7` 完了時に必須ポイント3の中間レビューを挟むこと）。
+  - 実装レビュー（合格済）: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)・是正バッチ (`v1.1 Build 5`, `1a3e48a`)・ステップ2 `6-4` ＆ 追補 `25-1`/`25-2` (`v1.2 Build 6`, `e0d831b`)**
+  - 実装レビュー（**却下・協議中**）: **ステップ3 `6-5`（`v1.3 Build 7`, `187a74c`〜`6127767` / `REVIEW` §32）**
+- **現在のステータス（`6-5` 中間レビュー却下・指摘 `32-1`〜`32-7` の協議中）**:
+  - `§31.3` 一括復元ラベル揃え・認証境界・3箇所バージョン統一＋バイナリ同梱・C# 5 互換／JS 構文／Kotlin コンパイルは合格を確認。
+  - 一方、`6-5` 本体に **致命的・高・中リスク指摘 7 件（`32-1`〜`32-7`）**（`resultMd5` 未参照、開時即時消滅、既読共有不発、`ItemEditScreen` 再コンポーズ漏れ、時計ズレ、MD5/UUID 大小文字不統一、まとめ親追従欠落・掃除欠落等）を検出し**却下**した（詳細: 本台帳 §14 / `REVIEW` §32）。
+  - **実装担当と `32-1`〜`32-7` の修正方針を協議し双方合意するまで `6-6`（Build 8）および実コード修正へは進まない**。
 
 ---
 
@@ -38,7 +41,8 @@
 | **先行UI** | **ダッシュボード小規模 UI 調整**（ヘッダー折り返し・接続ピル・右カラム独立スクロール） | **`v1.1 (Build 4)`** (`1104`) | — | **完了 (`§5.3`)** | JS構文 `node --check` 通過 (`2d04a38`) | **指摘なし** | `2d04a38` (`PLAN` §23) |
 | **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | 完了 (`f96661f`) | **完了 (`§10`・`25-1`/`25-2` は Build 6 解消)** | ローカルAPK/PCビルド済 (`1a3e48a`) | **全件解消済 (`Build 6` `e0d831b`)** | `53052d4`, `64525e2`, `1a3e48a`, `1344670` |
 | **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING` ＋ `25-1`/`25-2`） | **`v1.2 (Build 6)`** (`1206`) | 完了 (`§30`・条件付き同意) | **完了 (`§13` / `§31`・合格)** | ローカルAPK/PCビルド＋JS静的確認済 (`e0d831b`) | **合格（軽微観察のみ）** | `1344670`, `e0d831b`, `REVIEW` §31 |
-| **Step 3** | **`6-5`〜`6-7`**（加工ラベル・ジョブ一覧・右カラム再編） | `v1.3 (Build 7〜9)` | 未（詳細化可） | 未（`6-5`・`6-7` 完了時レビュー必須） | 未 | — | `PLAN` §16, §23 |
+| **Step 3** | **`6-5`**（加工ラベル＋`§31.3` 一括復元揃え） | **`v1.3 (Build 7)`** (`1307`) | 詳細化後実装 (`187a74c`) | **完了（`§14` / `§32`・却下／要修正）** | ローカルビルド報告＋JS/C#5/Kotlin静的確認済 (`6127767`) | **要修正 `32-1`〜`32-7`（協議中）** | `187a74c`, `cffe97f`, `6127767`, `REVIEW` §32 |
+| **Step 3** | **`6-6`〜`6-7`**（ジョブ一覧改善・右カラム再編） | `v1.3 (Build 8〜9)` | 詳細化済 (`187a74c`, `PLAN` §27.2〜3) | 未（`6-5` 合意是正後・`6-7` 完了時必須） | 未 | — | `PLAN` §16, §27.2〜27.3 |
 
 ---
 
@@ -63,6 +67,13 @@
 | **`25-1`** | `FleaMarketRepository.kt` (`removePhotoFromItem`) | **中〜高・削除復活** | 詳細画面プレビューからの単体写真削除 `removePhotoFromItem` に `recordPendingPhotoDeletion` が抜けており、`isDirty` 中の加算マージで削除写真が復活するリスク | 反映済 (`PLAN` §25.5, §26.4) | **解消・確認済 (`1344670` / `REVIEW` §31.2)** |
 | **`25-2`** | `PcServerClient.kt` (`mergeServerPhotosAdditively`) | **高・画像欠損表示** | `isDirty` 中に `_ai` 写真を加算マージした後 `continue` するため `repairMissingOrCorruptThumbnailsForItem` が呼ばれず、`displayFile == null`（画像なし表示）のままになる問題 | 反映済 (`PLAN` §25.5, §26.4) | **解消・確認済 (`1344670` / `REVIEW` §31.2)** |
 | **`30-1`〜`30-6`** | `6-4` 全般（`Android` / `FurimaServerNative.cs` / `DashboardHtml.cs` / `SyncStore.cs`） | **事前確定条件・網羅チェック** | ①`HandleMergeItems` 子前提検証＋`HandleUpdateItem` 子`statusLabel`連動＋`PcServerClient`親参照化、②「まとめ売却済」統一、③`updateItemStatus`/`HandleUpdateItem` の `soldPrice` 正規化、④`SyncStore.GetCleanupCandidates` 二重ループとも `SOLD` のみ維持、⑤`#stat-sold-count` (`SOLD+SHIPPING`) と `#count-sold` (`SOLD` のみ) 分離、⑥狭幅チップ折返し・`ItemQuickActionDialog` 5状態選択・見落とし全数チェックリスト反映 | 反映済 (`PLAN` §26) | **全件反映・段階2合格確認済 (`e0d831b` / `REVIEW` §31.2)** |
+| **`32-1`** | `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **致命的・対象相違** | 「加工済み（`done`）」判定が `job.photos` 必須＋`r.sourceMd5` 参照のため `_ai` 生成写真（`resultMd5`）に一切付かず元写真側に付く／元写真削除時に消える | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
+| **`32-2`** | `DashboardHtml.cs` / `ItemDetailScreen.kt` / `ItemEditScreen.kt` | **致命的・視認不能** | 開時即時 `markClaudeLabelSeen`（＋ラベル非表示の `ItemDetailScreen` での既読化）により、開いた画面の写真グリッドで「加工済み」を一度も見られない | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
+| **`32-3`** | `ClaudeJobStore.cs` / `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **重大・共有不発** | `claudeRevision` 非更新と両端末の `claudeRevision` 変化限定ポーリングが衝突し、起動中端末間の既読共有が機能しない | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
+| **`32-4`** | `ItemEditScreen.kt` (`L217-218, 833`) | **高・描画追従漏れ** | `collectAsState()` した `claudeJobsForLabels`/`claudeLabelSeenAt` を読まず `StateFlow.value` を参照しており、編集中に状態変化しても `LazyRow` が再コンポーズされない | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
+| **`32-5`** | `FleaMarketViewModel.kt` / `DashboardHtml.cs` / `FurimaServerNative.cs` | **高・時計ズレ** | クライアント時計（`System.currentTimeMillis`/`Date.now`）で楽観既読時刻を書き `seen` API がサーバー確定時刻を返さないため、時計遅れ端末でローカル既読が効かない | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
+| **`32-6`** | `FurimaServerNative.cs` (`L5945`) / `ClaudeJobStore.cs` | **中・大小文字不一致** | `HandlePostClaudeJobError` の `sourceMd5` が `.ToLower()` されず大文字報告時にJS/Kotlin側「エラー」ラベルが消える＋`_labelSeenAt` が大小文字区別 | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
+| **`32-7`** | `DashboardHtml.cs` / `ClaudeJobStore.cs` / `PLAN` / `PcServerClient.kt` | **中・追従/掃除/文言** | まとめ親カードへの子ジョブ追従欠落（`REVIEW_PROGRESS` §4.1）、再加工成功後も旧エラー残留、`_labelSeenAt` 掃除欠落、`PLAN §27.1.3`「右上」表記ズレ、コメント位置ズレ | 未（協議中） | **却下・修正案提示済 (`REVIEW` §32.2)** |
 
 ---
 
@@ -76,12 +87,12 @@
 5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 6. **交互レビュー・ループ運用**: 実装担当から修正案コミットが来たら仕様妥当性をレビューして本ファイルへ追記＋コミットし、双方合意後に実装再開。サブフェーズ等のレビュー終了単位で必ず本ファイルを更新・コミットすること。
 
-### 4.1 次の最優先レビュー対象: ステップ3 `6-5` 完了時（必須ポイント3）および `6-7` 完了時
-1. **`6-5`（`v1.3 Build 7` 加工ラベル追加＆寿命管理）**:
-   - サムネイル属性ラベルの寿命管理（再加工・差し替え・削除・まとめ結合時の追従）、既存一括保存処理や `ClaudeJobStore` / `SyncStore` との整合を確認する。
-2. **`6-6`（`v1.3 Build 8`）→ `6-7`（`v1.3 Build 9` 右カラム再編・ミューズカラム新設）**:
+### 4.1 次の最優先レビュー対象: ステップ3 `6-5` 差し戻し協議・再レビューおよび `6-7` 完了時
+1. **【最優先】`6-5` 指摘 `32-1`〜`32-7` の協議合意＆再修正レビュー**:
+   - `32-1`（`resultMd5` 対象化）・`32-2`（開時セッション内スナップショット表示＋`ItemDetailScreen` 既読抑止または表示）・`32-3`/`32-5`（`labelSeenRevision` による UI 既読専用同期＋サーバー確定時刻返却）・`32-4`（`ItemEditScreen` `State` 購読）・`32-6`（`HandlePostClaudeJobError` MD5 小文字正規化等）・`32-7`（まとめ親追従・再加工エラー解消方針・`_labelSeenAt` 掃除・`PLAN §27.1.3` 整合）の合意と実装検証。
+   - なお `FurimaServerNative.HandleBatchRestoreItems`（`§31.3`）は `cffe97f` にて解消確認済み。
+2. **`6-6`（`v1.3 Build 8`）→ `6-7`（`v1.3 Build 9` 右カラム再編・ミューズカラム新設）** ※`6-5` 合格後に着手:
    - `DashboardHtml.cs` の右カラム再編に伴う既存 DOM ID・イベント・`#stat-connection-status`・`node --check`・3箇所バージョン統一・C# 5 互換を検証する。
-   - （補足軽微確認: 将来 `FurimaServerNative.HandleBatchRestoreItems` `L3008` を触る機会があれば `st == "MERGED"` 単体指定時の親参照 `GetMergedChildStatusLabel` も `HandleRestoreItem` と揃えるか確認可）。
 
 ### 4.2 今後のサブフェーズ事前／実装レビュー重点ポイント
 - **`6-4` (`v1.2 Build 6` 単独ステップ) ※詳細化後・実装後ともにレビュー必須**:
@@ -303,4 +314,18 @@
   - **バージョン・バイナリ・C# 5**: 3箇所 `v1.2 (Build 6)` / `1206` 一致、APK / `tools/furima-server.exe` 更新確認、`tools/*.cs` に C# 5 非互換構文なし。
 - **軽微観察のみ**: `HandleBatchRestoreItems`（`L3008`）の単体項目が `MERGED` の場合の親参照補完（通常導線では非表示で実害なし）＋時間帯内 Muse 初回 wake 観察継続。
 
+---
 
+## 14. `v1.3 Build 7`（`187a74c` / `cffe97f` / `6127767`）フェーズ `6-5` 中間レビュー結果（2026-11-17）
+
+必須ポイント3の中間レビューとして `187a74c`（`PLAN` §27）・`cffe97f`（`6-5` 本体＋`§31.3`）・`6127767`（APK/PCバイナリ更新）の 16 変更ファイルと周辺コードを精査した（詳細と修正案は `REVIEW_CLAUDE_SEND_PHASE6.md` §32 を参照）。
+
+### 14.1 総合判定: 【却下（要修正）— `32-1`〜`32-7` 協議合意まで `6-6` 進行不可】
+- **合格確認項目**:
+  - `§31.3`（`HandleBatchRestoreItems` `L3012-3023` の `MERGED` 親参照揃え）、`POST /api/claude/labels/seen` の認証境界（非免除）、バージョン 3 箇所（`v1.3 Build 7` / `1307`）＋配布バイナリ（`6127767`）、C# 5 互換・JS `node --check`（0 error）・Kotlin コンパイル通過。
+- **却下理由（要協議・要修正 `32-1`〜`32-7`）**:
+  1. **`32-1`（致命的）**: `claudePhotoLabel` / `claudePhotoLabelKey` が `job.photos` 前提＋`r.sourceMd5` のみを参照しており、AI 生成 `_ai` 写真（`resultMd5`）に「加工済み」が一切付かず、未加工の元写真に付く（元写真削除でカード表示も消失）。
+  2. **`32-2`（致命的）**: `openPhotoViewer` / `ItemDetailScreen`（ラベル描画なし） / `ItemEditScreen` の各オープン直後にローカル既読時刻を即時上書きするため、開いた画面上の写真グリッドで「加工済み」ラベルを一度も視認できない。
+  3. **`32-3`（重大）**: `claudeRevision` 非更新と両端末の `claudeRevision` 差分限定ポーリングが衝突し、起動中クライアント間の既読共有（`PLAN §27.1.2`）が動作しない。
+  4. **`32-4`・`32-5`（高）**: `ItemEditScreen.kt` が `collectAsState()` した 2 変数を未使用のまま `StateFlow.value` 直読みしており編集中に再描画されない点、およびクライアント時計による楽観更新と `seen` API 時刻未返却による時計ズレ不発リスク。
+  5. **`32-6`・`32-7`（中）**: `HandlePostClaudeJobError` (`L5945`) の `sourceMd5` 未小文字化によるエラーラベル消失リスク・`_labelSeenAt` 大小文字区別・まとめ親カードでの子ジョブ未追従・再加工時エラー残留・`_labelSeenAt` 掃除欠落・`PLAN §27.1.3` 表記ズレ等。

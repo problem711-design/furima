@@ -970,5 +970,85 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
 ### 31.3 軽微観察メモ（合格・修正強制なし）
 - `FurimaServerNative.HandleBatchRestoreItems`（`L3008`）: `HandleRestoreItem`（`L2795-2802`）では単体復元対象が `st == "MERGED"` の場合に親商品を参照して `GetMergedChildStatusLabel(pst)` を算出しているが、`HandleBatchRestoreItems` 側は親の復元ループ内で子のラベルを更新するのみで、配列先頭項目自身が `MERGED` の場合は `GetStatusLabel("MERGED")` になる（通常 UI のゴミ箱は `MERGED` 子を非表示とするため実運用上の支障はないが、将来整理時に揃えるとより盤石）。
 - ステップ1から継続の観察点（`PLAN` §22）: 10:00〜22:00 の稼働時間帯内における Muse 自動巡回フックの初回 wake 発火の現場確認は引き続き運用の中で観察すること。
+---
 
+## 32. ステップ 3・フェーズ 6-5（`v1.3 Build 7` / `187a74c`, `cffe97f`, `6127767`）中間コードレビュー結果（2026-11-17）
 
+必須ポイント3・中間レビュー（`REVIEW_PROGRESS_PHASE6.md` §4.1）として、`187a74c`（`PLAN` §27 ステップ 3 詳細化）、`cffe97f`（`6-5` 加工ラベル実装＋`§31.3` 一括復元ラベル揃え）、および `6127767`（APK／PC バイナリ更新）の変更全 16 ファイルおよび周辺コード（`HandleMergeItems`・`ItemListScreen.kt`・`MainActivity.kt`・`StartClaudeWatchLoop` 等）を精査した。
+
+### 32.1 総合判定：【却下（要修正）— 協議合意・再修正まで `6-6`（Build 8）進行不可】
+- 同梱された **`§31.3` 一括復元ラベル揃え**、`/api/claude/labels/seen` の **認証境界**、**3 箇所バージョン統一＋バイナリ同期**、**C# 5 互換／JS 構文**、**Kotlin コンパイル** はいずれも合格している。
+- 一方で、`6-5` 本体の根幹である **①「加工済み」ラベルの対象 MD5 取り違え、② 開いた瞬間の即時消滅による視認不能、③ 端末間既読共有の不発、④ スマホ編集画面の Compose 再コンポーズ漏れ** 等、機能死・重大欠陥につながる穴が **`32-1`〜`32-7`** の 7 件見つかったため却下とする。実装担当からの回答・修正案を待ち、双方合意後に実コード修正へ進むこと。
+
+---
+
+### 32.2 却下理由・詳細指摘と修正案（`32-1`〜`32-7`）
+
+#### 【致命的 `32-1`】「加工済み（`done`）」ラベルが AI 生成写真（`resultMd5`）に一切付かず、未加工の元写真（`sourceMd5`）に付いている
+- **箇所**: `tools/DashboardHtml.cs` (`L2396-2419` `claudePhotoLabel`), `FleaMarketViewModel.kt` (`L992-1022` `claudePhotoLabelKey`)
+- **事象**:
+  - `FurimaServerNative.HandlePostClaudeJobResult` (`L5845-5890`) は加工結果を元写真の上書きではなく**新規ファイル（`*_ai`、ハッシュ `resultMd5`）**として商品フォルダへ追加登録する。
+  - しかし両クライアントの導出関数は、ループ冒頭で `!(job.photos || []).some(p => p.md5 === md5)`（`job.photos.none { it.md5 == md5 }`）で即スキップしたうえ、`done` 判定も `r.sourceMd5 === md5` のみを見ている。
+- **影響**:
+  1. ギャラリーやスマホ編集画面で元写真と `_ai` 写真を並べた際、**未加工の元写真側に「加工済み」が付き、AI が返却した `_ai` 写真には一切ラベルが付かない**（`PLAN` §1「加工したのはどれだっけ」の解決と真逆）。
+  2. 見比べた後に元写真を削除して `_ai` 写真だけ残すと、その時点で商品カードからも「加工済み」ラベルが消滅する。
+- **修正案**:
+  - `done`（加工済み）は原則として生成物側である `r.resultMd5` を判定対象とする（進行中・承認待ち・待機中は未完了のため `job.photos` を参照、`done` 判定は `job.photos` スキップの外で `results` の `resultMd5` を照合する。元写真側にも付けると 1 枚加工で商品カードが `×2` に水増しされるため避けること）。
+  - あわせて、`resultMd5` が商品上に未登録または既に削除されている場合の扱い（カード集約に含めない等）を `PLAN §27.1.1` に明記する。
+
+#### 【致命的 `32-2`】開いた瞬間の即時既読化により、写真単位の「加工済み」チップが実質視認できない
+- **箇所**: `tools/DashboardHtml.cs` (`L2282-2313` `openPhotoViewer`, `L2443-2451` `markClaudeLabelSeen`), `ItemListScreen.kt` (`L642`), `ItemDetailScreen.kt` (`L134-137`, `L679-711`), `ItemEditScreen.kt` (`L216-221`)
+- **事象**:
+  1. **PC ギャラリー**: `openPhotoViewer` は `renderViewerPhotos()` より**前**に `markClaudeLabelSeen()` を呼び、同関数内で同期的に `labelSeenAtByItemUuid[itemUuid] = Date.now()` を上書きしている。そのため一覧カードの「加工済み」を見て「どれが加工された写真か」を確認しようとギャラリーを開いた瞬間、**1 フレーム目からサムネイル上の緑「加工済み」チップが 0 件で描画される**。
+  2. **スマホ**: `PLAN §27.1.4` により一覧カードはラベル非表示。一覧タップ先の `ItemDetailScreen`（`ItemListScreen.kt:642`）は写真グリッドを持つにもかかわらず**加工ラベル表示が一切無く**、それでいて開いた瞬間に `LaunchedEffect(currentItem.syncUuid)` で `markClaudeLabelSeen` を実行している。その後「編集」ボタンから唯一のラベル表示画面である `ItemEditScreen` へ入っても**既に既読化済み**であり、さらに長押しから直接 `ItemEditScreen` を開いても同画面の `LaunchedEffect` が即座に `_claudeLabelSeenAt` を書き換えて再描画するため、**スマホでは「加工済み」ラベルを通常導線で実質確認できない**。
+- **修正案**:
+  - サーバー／他端末／次回オープン用の既読記録とは切り分け、**「現在開いている画面セッション内」のサムネイル描画には「開く直前の既読時刻スナップショット（`initialSeenAt`）」を保持してセッション中は「加工済み」を維持し、閉じた後（および再オープン時）に消える**設計にする。
+  - スマホ側は、ラベル表示を行わない `ItemDetailScreen` 開時に `markClaudeLabelSeen` を発火させない（ラベル表示を行う `ItemEditScreen` のみに限定するか、あるいは `ItemDetailScreen` の写真グリッドにも同じラベルチップを表示する仕様へ改める）。
+
+#### 【重大 `32-3`】`claudeRevision` 非更新とポーリング条件が衝突し、起動中クライアント間の既読共有（`PLAN §27.1.2`）が機能しない
+- **箇所**: `tools/ClaudeJobStore.cs` (`L198-209` `MarkLabelSeen`), `tools/FurimaServerNative.cs` (`L1734-1764`, `L6259-6289`), `tools/DashboardHtml.cs` (`L1717-1725` `pollServerRevisions`), `FleaMarketViewModel.kt` (`L1182-1201` `startClaudeWatchLoop`)
+- **事象**:
+  - `PLAN §27.1.2` は「`claudeRevision` は進めない（見張りを起こさない）」ことと「ジョブ一覧応答に同梱して全クライアントで既読状態を共有する（**PC で開けばスマホの加工済みも消える**）」ことを要件としている。
+  - しかし PC 側の `pollServerRevisions()` もスマホ側の `startClaudeWatchLoop()` も、**`claudeRevision` が変化したときしか `GET /api/claude/jobs` を取得しない**。
+  - 結果、PC で開いても起動中のスマホは別ジョブイベントや再起動が起きるまで既読状態を受け取れず、スマホで開いても開きっぱなしの PC カードの「加工済み」チップは永遠に消えない。
+- **修正案**:
+  - 見張り用の公開窓口（`GET /api/claude/revision`）は不変のまま維持し、`/api/server/status` と `/api/server/heartbeat` のみに **UI 既読専用の単調増加カウンタ（例 `labelSeenRevision`）**を追加して、PC・スマホのポーリングが変化を検知したら `/api/claude/jobs`（または軽量な既読マップ取得）で同期する仕組みへ分離する。
+
+#### 【高 `32-4`】`ItemEditScreen.kt` が Compose `State` 委譲変数を未読のまま放置しており、編集中に状態変化が再描画されない
+- **箇所**: `ItemEditScreen.kt` (`L217-218`, `L785-851`), `FleaMarketViewModel.kt` (`L992-1022`)
+- **事象**: `val claudeJobsForLabels by viewModel.claudeJobsForLabels.collectAsState()` と `val claudeLabelSeenAt by viewModel.claudeLabelSeenAt.collectAsState()` を宣言しているが、**後続コード内で両変数が一度も参照されていない**（`LazyRow` 内は `viewModel.claudePhotoLabelKey(...)` 経由で Compose Snapshot 外の `StateFlow.value` を直接読んでいる）。
+- **影響**: Kotlin の `by` デリゲートは変数が実際に読み出されたコンポーザブル範囲でのみ Snapshot 購読を発生させるため、編集画面を開いた状態でジョブが進捗・完了・他端末既読化しても `LazyRow` が自動再コンポーズされない。
+- **修正案**: `claudePhotoLabelKey(itemUuid, md5, jobs = claudeJobsForLabels, seenAtMap = claudeLabelSeenAt)` のように `State` の値を直接渡して購読を成立させる。
+
+#### 【高 `32-5`】クライアント時計とサーバー時計のズレによる既読判定失敗リスク
+- **箇所**: `FleaMarketViewModel.kt` (`L1012, L1027`), `tools/DashboardHtml.cs` (`L2411, L2445`), `tools/FurimaServerNative.cs` (`L6281`)
+- **事象**: `job.completedAt` とサーバー保存の `_labelSeenAt` は PC サーバー UTC 時刻である一方、スマホ／ブラウザの楽観的更新（`System.currentTimeMillis()` / `Date.now()`）と `3日以内` 判定はクライアント時計に依存している。スマホ時計が PC より少しでも遅れている場合、楽観的に入れた `seenAt` が `job.completedAt` より小さくなり、`completedAt > seenAt` が真のまま残って既読消去がローカルで効かない。
+- **修正案**: `POST /api/claude/labels/seen` がサーバー側で確定した `seenAt`（または更新済み `labelSeenAtByItemUuid`）をレスポンスで返し、クライアントの楽観値は応答値（または当該商品の `max(completedAt)` 以上）で確定させる。
+
+#### 【中 `32-6`】`HandlePostClaudeJobError` の `sourceMd5` 未正規化と UUID 大文字小文字比較の不統一
+- **箇所**: `tools/FurimaServerNative.cs` (`L5945`), `tools/ClaudeJobStore.cs` (`L69, L118, L194, L206`), `tools/DashboardHtml.cs` (`L2399-2410`), `FleaMarketViewModel.kt` (`L998-1011`)
+- **事象**:
+  1. `HandleCreateClaudeJob` (`L4898`) と `HandlePostClaudeJobResult` (`L5722`) は MD5 を `.ToLower()` しているが、`HandlePostClaudeJobError` (`L5945`) は `json["sourceMd5"].ToString().Trim()` のまま保存している（内部検証のみ `OrdinalIgnoreCase`）。大文字 hex でエラー報告が来ると、JS（`===`）と Kotlin（`==`）の一致が外れ **「エラー」ラベルが消滅する**。
+  2. `ClaudeJobStore._labelSeenAt` も既定の大小文字区別 `Dictionary<string, long>` であり、他所の `OrdinalIgnoreCase` 方針と不統一。
+- **修正案**: `HandlePostClaudeJobError` で `sourceMd5.ToLowerInvariant()` を適用し、`_labelSeenAt` は `StringComparer.OrdinalIgnoreCase`＋小文字キー統一とし、JS／Kotlin 導出側も `.toLowerCase()` / `.lowercase()` で突合する。
+
+#### 【中 `32-7`】まとめ商品（バンドル親）・エラー再加工・既読マップ肥大化・仕様書不整合
+- **箇所**: `tools/DashboardHtml.cs` (`L2112, L2221, L2421-2435, L2785-2786`), `tools/ClaudeJobStore.cs` (`L215-239`), `PLAN_CLAUDE_SEND_PHASE6.md` (`L738` vs `L776`), `PcServerClient.kt` (`L366`)
+- **事象**:
+  1. **まとめ結合時の追従欠落（`REVIEW_PROGRESS_PHASE6.md` §4.1 確認事項）**: PC ダッシュボードは `MERGED` 子商品を非表示にして親カードだけを描画する（`L2112`）が、ジョブは子商品の `syncUuid` に紐づくため、親カード（新規 `syncUuid`）に対して `claudeItemLabel` を呼んでも子商品の進行中・承認待ち・エラー・加工済みジョブが一切表示されない（`item.photos[].childItemId` 経由等で子商品の `syncUuid` を解決する等の追従が必要）。
+  2. **エラー写真の再加工時**: エラーが記録された写真を別ジョブで再送・成功完了させても、旧ジョブの `errorDismissed` は手動解消するまで `false` のまま残るため「エラー」ラベルが残留し続ける（`PLAN` §9.2 7-2 の再送時方針と整合させるか明文化が必要）。
+  3. **`_labelSeenAt` の無制限肥大化**: `ClaudeJobStore.CleanupLocked()` が終端ジョブを 30 日で削除しても `_labelSeenAt` エントリが一切削除されず、完全削除済み商品の UUID も含め永続的に増え続ける（関連ジョブ消滅＋一定期間超過等で整理すべき）。
+  4. **軽微不整合**: `PLAN §27.1.3` (`L738`) が「右上」のまま未更新（実装および `§28.2` は右上チェックボックス回避の「左下」で妥当）。また `PcServerClient.kt` `L366` の `postClaudeJobMove` 用コメントとメソッド本体の間に `postClaudeLabelSeen` が挿入されコメントが分断されている。
+
+---
+
+### 32.3 検証済み（合格）項目
+- **`§31.3` 一括復元 `MERGED` ラベル揃え**: `FurimaServerNative.HandleBatchRestoreItems` (`L3012-3023`) が `st == "MERGED"` の場合に親商品を参照して `GetMergedChildStatusLabel(pst)` を算出するよう揃ったことを確認。
+- **認証境界**: `POST /api/claude/labels/seen`（`FurimaServerNative.cs:1899-1902`）が `IsTrustedClaudeExemptPath` に含まれず Bearer / ループバック必須であることを確認。
+- **バージョン 3 箇所統一・バイナリ同期**: `app/build.gradle.kts` (`1307` / `"1.3"` / `targetSdk = 35`)、`gradle.properties` (`android.injected.testOnly=false`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` がすべて `v1.3 (Build 7)` で一致し、`6127767` で APK・`.exe` が同梱されていることを確認。
+- **静的／コンパイル確認**: `tools/*.cs` に C# 5 非互換構文なし（波括弧一致）、`DashboardHtml.cs`（167,293 bytes）・`WebDashboardHtml.kt` の抽出 JS が `node --check` 通過（終了コード `0`）、Android の `:app:kspDebugKotlin`・`:app:compileDebugKotlin`・`:app:compileDebugJavaWithJavac` 通過を確認。
+
+---
+
+### 32.4 再提出に向けた協議事項（実装担当への回答依頼）
+上記 **`32-1`〜`32-7`** の修正案（特に `32-1` の `resultMd5` 基準化、`32-2` のセッション中スナップショット表示と `ItemDetailScreen` 扱い、`32-3` の `labelSeenRevision` 分離、`32-7` のまとめ親カード追従・再加工時エラー解消方針）について合意・補足・別案があれば次コミットで回答されたい。双方合意後に実コード修正＋再ビルドへ進む。
