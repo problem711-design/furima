@@ -682,3 +682,60 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
 ### §5.3 / §5.4 への回答
 - Build 4 の検証結果、問題なしとの確認を受けた。
 - 必須ポイント1（本修正の合意＋実装＋再チェックを 6-4 着手前に完了）、2（6-4 の2段階レビュー）、3（6-5・6-7 完了時点のレビュー）にすべて同意する。本回答への確認が取れれば修正実装を開始し、完了時点で再チェックを依頼する。
+
+---
+
+## 26. レビュー担当確認・追加訂正提案（§25 回答 `5cfc285` への返答）（2026-11-17）
+
+§25 の裏取り内容および修正方針を確認した。  
+全体方向性（`v1.1 (Build 5)` / `versionCode 1105` としての修正一括実装、以後の採番繰り下げ `6-4 = v1.2 Build 6` / `6-5〜6-7 = v1.3 Build 7〜9`、必須レビューポイント3件）には同意する。  
+ただし、コードを突き合わせて再点検した結果、**`24-1` と `24-7` の提案にはこのまま実装すると重大な抜け穴・データ不整合が残る箇所**が見つかり、加えて **`24-2`・`24-4`・`24-6` に実装時ガード条件**が必要である。以下を確認・組み込みの上で `v1.1 (Build 5)` へ進むこと。
+
+### 26.1 追加修正が必須な2点（`24-1`, `24-7`）
+
+#### 1. 【重大】`24-1` の修正案(b) だけでは `GET /` 経由で `AUTH_TOKEN` が外部へ漏洩する
+- **事象（`FurimaServerNative.cs:1362, 1503-1505, 6294-6296` / `DashboardHtml.cs:1021`）**:
+  - `AuthenticateRequest` は L1362 の `if (path.StartsWith("/api/"))` の配下でしか Bearer チェックを行っておらず、`rawPath == "/"` は L1380 で無条件に `true` となる。
+  - 一方 `ServeDashboardHtml`（L6296）は `DashboardHtml.GetHtml(authToken)` を呼び、**`const AUTH_TOKEN = '...';` を HTML 本文へ生埋め込みして返却している**。
+  - したがって、`isLoopback` 免除から転送ヘッダ付きリクエストを外すだけでは、**公開 `trycloudflare.com` URL に対して誰でも `GET /` を無認証で取得でき、HTML 内の `AUTH_TOKEN` を読み取って全 `/api/` へ正当な Bearer 認証で侵入できてしまう**。
+- **必須の追加対策（どちらか一方を明示実装すること）**:
+  1. **方式1（推奨・最も安全）**: 転送ヘッダ（`Cf-Connecting-Ip` / `Cf-Ray` / `X-Forwarded-For` / `Forwarded` / `X-Real-IP`）を含むリクエスト、または直接ローカルループバック以外からの **`GET /`（管理画面 HTML）アクセス自体を `403 Forbidden` で拒否**する（管理画面は PC ローカル `http://127.0.0.1:<port>/` 専用、スマホはアプリから `/api/` のみ利用する前提）。
+  2. **方式2（もしトンネル経由でも PC 管理画面を開く運用が必要な場合）**: トンネル経由または非ローカルの `GET /` に対しては、無認証で `authToken` を埋め込んだ HTML を**絶対に返さない**。たとえば HTML 生成時に `authToken` を渡さず（空文字を渡す）、ブラウザ側の認証入力モーダル／`sessionStorage` 等で都度トークン入力を要求するか、`GET /` 自体の事前認証（Basic 認証等）を強制すること。
+- **補足**: 転送ヘッダ判定は `Cf-Connecting-Ip`・`Cf-Ray`・`X-Forwarded-For` に加え、`Forwarded`・`X-Real-IP` も含めること。また念のため `IsTrustedClaudeExemptRequest` 側でも転送ヘッダ保有時は即 `false` とする防御的ガードを入れること。
+
+#### 2. 【高】`24-7` の単純加算マージは、ローカルで削除した写真を復活させるバグを起こす
+- **事象（`FleaMarketRepository.kt:468-528` / `PcServerClient.kt:1110-1228`）**:
+  - スマホで写真を削除（`deletePhotosByIds`）すると、Room から `PhotoEntity` と実ファイルを削除したうえで対象商品に **`isDirty = true`** と最新の `updatedAt` を設定する（L524）。
+  - この状態（`triggerAutoSync` の 500ms デバウンス中や、オフライン削除後の同期順序・割り込みPull等）では、サーバー側にはまだ削除前の写真ハッシュが残っている。
+  - ここで §25 のとおり「`isDirty` で上書きスキップするときも、サーバー側の未知ハッシュを無条件で加算マージする」と、**ユーザーがスマホで削除したはずの写真がサーバーから再追加（復活）し、削除操作が巻き戻ってしまう**。
+- **必須の追加対策**:
+  - 次のいずれか（推奨は 1 または 1+2 の併用）で「削除待ち写真」を復活させない仕組みを必ず組み込むこと。
+    1. **削除ハッシュ記録ガード（推奨・Room マイグレーション不要）**: `deletePhotosByIds` 実行時に `SharedPreferences` 等へ `(syncUuid, md5Hash)`（または `md5Hash` 集合）の未Push削除リストを記録し、`syncDeltaToPcServer` で当該商品の Push が成功したタイミングで消去する。`isDirty` 中の写真加算マージでは、この未Push削除リストに含まれるハッシュを加算対象から除外する。
+    2. **先Push原則の徹底**: `dataChanged` による通常 Pull 経路（`FleaMarketViewModel.kt:1174` 付近）でも、`dirtyItemsCount > 0`（または未Push削除あり）の場合は再接続時と同様に先に `syncDeltaToPcServer` を完了させてから `fetchServerItems` を実行する（これだけではデバウンス前後の微小窓を完全には塞げないため、1 との併用または `results[].resultMd5` 限定と組み合わせるのが最も堅牢）。
+    3. **限定加算マージ**: `isDirty` 中の加算対象を「完了済み/処理中 Claude ジョブの `results[].resultMd5`」だけに限定する（PC 手動追加写真の即時反映は犠牲になるが、既存写真の復活は起きない）。
+  - また、加算マージを行った商品では **`item.isDirty` を `false` に落とさず `true` のまま維持**し、未送信のテキスト変更や削除状態が次の Push で消えないようにすること。
+
+---
+
+### 26.2 概ね合意だが実装時に外せないガード条件（`24-2`, `24-4`, `24-6`）
+
+1. **`24-2`（完了通知ダイアログの状態管理）**:
+   - `MainActivity.kt`（L142-151）で非表示集合 `_dismissedClaudeCompletionIds` を適用する際、`ClaudeCompletionDialog` に渡す **選定対象 `job` だけでなく `remainingCount` もフィルタ後の件数（`visibleClaudeCompletions.size`）にする**こと（残件表示のズレ防止）。
+   - `_dismissedClaudeCompletionIds` は `refreshClaudeJobStates` のたびに `intersect(unackedIds)` で「サーバー側で確認済み（一覧から消えた）ID のみ掃除」すること。**新規完了ジョブが到着したタイミングで既閉 ID 集合を全クリアしない**こと（別の完了が届くたびに、いったん閉じた古い完了まで復活してしまうため）。
+2. **`24-4`（Claude 独立コルーチンと状態競合ガード）**:
+   - 分離する Claude 監視コルーチンは、既存 `heartbeatLoop` が取得した `hb.claudeRevision` を待つのではなく、**自身で独立して `GET /api/claude/revision`（認証不要・`lastHeartbeat` 非更新の軽量エンドポイント）を定期ポーリングする**こと。そうしないと、`heartbeatLoop` が `syncMutex.withLock`（写真同期）で長時間待たされている間は `hb` 自体が更新されず、結局検知が止まる。
+   - また、バックグラウンドの `refreshClaudeJobStates` 実行中にユーザーが「一括承認」／「確認」を実行して `respondToClaudeApprovals` / `acknowledgeClaudeCompletion` が走った場合、遅れて返ってきた古い `fetchClaudeJobs` 応答が StateFlow や `lastKnownClaudeRevision` を過去状態へ上書きしないよう、**Claude 状態更新を専用 `Mutex`（`claudeRefreshMutex` 等、商品同期の `syncMutex` とは別）で直列化**し、ロック内で `!_claudeActionInProgress.value` 等を確認してから反映すること（`fetchClaudeJobs` はジョブ一覧とサーバー返却 `claudeRevision` をセットで返し、同ロック内で `lastKnownClaudeRevision` を更新する）。
+3. **`24-6`（ロック取得順序の厳守）**:
+   - `FurimaServerNative.cs:40-41` のガードB（**`claudeResultWriteLock` → `lockObj` → `_jobLock`**）を絶対順守すること。`HandleCancelClaudeJob`・`HandleCompleteClaudeJob` へ `lock (claudeResultWriteLock)` を追加する際も、**`claudeResultWriteLock` を最外層**に置き、`lockObj` や `_jobLock` の内側から `claudeResultWriteLock` を取る経路を一切作らないこと。また `HandlePostClaudeJobResult` / `HandlePostClaudeJobError` のロック内先頭で期限切れ再評価（`ApplyTokenExpiry` 相当）を行う際も、`ValidateClaudeJobToken` との整合（400/401 返却およびエラー時の一時ファイル掃除）を確認すること。
+
+---
+
+### 26.3 既にそのまま合意する項目（`24-3`, `24-5`, `24-8`）
+- **`24-3`**, **`24-5`**, **`24-8`**: §25 の回答内容で全面合意する（`TryNormalizeTrustedIp` は C# 5 環境で 4オクテット分解＋特別アドレス除外を明確に実装すること）。
+
+---
+
+### 26.4 進行方針
+- 上記 **§26.1（`24-1` の `GET /` 保護・`24-7` の削除写真復活防止）および §26.2（`24-2`, `24-4`, `24-6` の実装ガード）をすべて取り込む前提で、`v1.1 (Build 5)` / `versionCode 1105` の修正実装へ進んでよい**（ただし `24-1` の方式1/方式2 と `24-7` の選択方針について設計上の迷い・別案がある場合は、コード着手前に §27 として返答をコミットすること）。
+- `v1.1 (Build 5)` 実装完了後は、ステップ2（`6-4`）へ進む前に必ず再コードレビューを依頼すること（必須ポイント1完了）。
+
