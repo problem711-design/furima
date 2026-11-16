@@ -9,20 +9,20 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `21e7be1`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `4726e97`）
 
 - **最後に確認を完了したリモートコミット**:
   - `187a74c`（`PLAN` §27 ステップ 3 詳細化）
   - `cffe97f` / `6127767`（`v1.3 Build 7` フェーズ `6-5` 初版実装・バイナリ同梱）
-  - `21e7be1`（実装担当回答 `REVIEW` §33 / 本台帳 §15 / `PLAN` §27.1.1・§27.1.3 改定 / Build 8〜10 繰り下げ）
+  - `21e7be1`（実装担当回答 `REVIEW` §33 / `PLAN` §27.1.1・§27.1.3 改定）
+  - `4726e97`（実装担当回答 `REVIEW` §35 / `PLAN` §27 全体改定＋§27.4 実装条件追加 / 台帳 §17）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
   - 実装レビュー（合格済）: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半/後半案2 (`v1.1 Build 2〜3`, `d627d56`)・先行UI調整 (`v1.1 Build 4`, `2d04a38`)・是正バッチ (`v1.1 Build 5`, `1a3e48a`)・ステップ2 `6-4` ＆ 追補 `25-1`/`25-2` (`v1.2 Build 6`, `e0d831b`)**
-  - 実装レビュー（却下→是正協議中）: **ステップ3 `6-5`（`v1.3 Build 7`, `187a74c`〜`6127767` / `REVIEW` §32〜§34）**
-- **現在のステータス（§33 回答へ大枠合意・補記 `34-1`〜`34-5` 確認待ち → 合意後 `v1.3 Build 8` 着工）**:
-  - 実装担当は `32-1`〜`32-7` すべてに合意し（`REVIEW` §33）、是正を **`v1.3 Build 8`（1308）**（`6-6` = Build 9、`6-7` = Build 10 へ繰り下げ）で実施する方針を回答した。
-  - レビュー担当として §33 の大枠方針に合意しつつ、実装直前に踏む設計上の穴・並行競合を防ぐため **最終補記 `34-1`〜`34-5`**（まとめ親の多段子 UUID 一括既読化、スマホ `詳細→編集` スナップショット引継ぎ、エラー supersede の厳密比較＋`errorDismissed` 連動確認、`labelSeenRevision` 先祖返り防止・`syncMutex` 外監視・掃除保存、`PLAN` §27 採番/文言整合）を追記した（`REVIEW` §34 / 本台帳 §16）。
-  - **`34-1`〜`34-5` への実装担当合意が得られ次第、双方合意完了として `v1.3 Build 8` 実装へ進む**。
+  - 実装レビュー（Build 7 却下 → **是正設計 双方合意完了**）: **ステップ3 `6-5`（`REVIEW` §32〜§36）**
+- **現在のステータス（`6-5` 是正方針 双方合意完了 → `v1.3 Build 8` 実装着工可）**:
+  - `32-1`〜`32-7` および最終補記 `34-1`〜`34-5` のすべてで双方合意が完了し、`PLAN` §27・§27.4 へ反映された（`4726e97` / `REVIEW` §35〜§36 / 本台帳 §17〜§18）。
+  - **実装担当は `v1.3 Build 8（1308）` の実コード是正＋ビルドへ着工可**。Build 8 完了後の再レビュー通過をもって `6-6`（Build 9）→ `6-7`（Build 10）へ進む（実装時の重点確認点 3 件を `REVIEW` §36.2 へ記録済）。
 
 ---
 
@@ -41,7 +41,7 @@
 | **先行UI** | **ダッシュボード小規模 UI 調整**（ヘッダー折り返し・接続ピル・右カラム独立スクロール） | **`v1.1 (Build 4)`** (`1104`) | — | **完了 (`§5.3`)** | JS構文 `node --check` 通過 (`2d04a38`) | **指摘なし** | `2d04a38` (`PLAN` §23) |
 | **是正バッチ** | **§5 指摘 `24-1`〜`24-8` 是正** | **`v1.1 (Build 5)`** (`1105`) | 完了 (`f96661f`) | **完了 (`§10`・`25-1`/`25-2` は Build 6 解消)** | ローカルAPK/PCビルド済 (`1a3e48a`) | **全件解消済 (`Build 6` `e0d831b`)** | `53052d4`, `64525e2`, `1a3e48a`, `1344670` |
 | **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING` ＋ `25-1`/`25-2`） | **`v1.2 (Build 6)`** (`1206`) | 完了 (`§30`・条件付き同意) | **完了 (`§13` / `§31`・合格)** | ローカルAPK/PCビルド＋JS静的確認済 (`e0d831b`) | **合格（軽微観察のみ）** | `1344670`, `e0d831b`, `REVIEW` §31 |
-| **Step 3** | **`6-5`**（加工ラベル＋`§31.3` 一括復元揃え） | **`v1.3 (Build 7 → Build 8是正)`** (`1307`→`1308`) | 改定・協議中 (`187a74c`→`21e7be1`) | **Build 7 却下 (`§32`)・回答 §33 受領・補記 §34 確認中** | Build 7 静的確認済 (`6127767`) | **`32-1`〜`32-7` 合意済／補記 `34-1`〜`34-5` 確認中（合意後 Build 8 是正）** | `187a74c`〜`21e7be1`, `REVIEW` §32〜§34 |
+| **Step 3** | **`6-5`**（加工ラベル＋`§31.3` 一括復元揃え） | **`v1.3 (Build 7 → Build 8是正)`** (`1307`→`1308`) | **完了・双方合意済 (`4726e97`)** | **Build 7 却下 (`§32`) → 是正合意済 (`§36`・Build 8 実装待ち)** | Build 7 静的確認済 (`6127767`) | **`32-1`〜`32-7`＋`34-1`〜`34-5` 全面合意（Build 8 実装着工可）** | `187a74c`〜`4726e97`, `REVIEW` §32〜§36 |
 | **Step 3** | **`6-6`〜`6-7`**（ジョブ一覧改善・右カラム再編） | `v1.3 (Build 9〜10)` | 詳細化済 (`187a74c`, `PLAN` §27.2〜3※要Build採番更新) | 未（`6-5` Build 8 合格後・`6-7` 完了時必須） | 未 | — | `PLAN` §16, §27.2〜27.3 |
 
 ---
@@ -68,13 +68,13 @@
 | **`25-2`** | `PcServerClient.kt` (`mergeServerPhotosAdditively`) | **高・画像欠損表示** | `isDirty` 中に `_ai` 写真を加算マージした後 `continue` するため `repairMissingOrCorruptThumbnailsForItem` が呼ばれず、`displayFile == null`（画像なし表示）のままになる問題 | 反映済 (`PLAN` §25.5, §26.4) | **解消・確認済 (`1344670` / `REVIEW` §31.2)** |
 | **`30-1`〜`30-6`** | `6-4` 全般（`Android` / `FurimaServerNative.cs` / `DashboardHtml.cs` / `SyncStore.cs`） | **事前確定条件・網羅チェック** | ①`HandleMergeItems` 子前提検証＋`HandleUpdateItem` 子`statusLabel`連動＋`PcServerClient`親参照化、②「まとめ売却済」統一、③`updateItemStatus`/`HandleUpdateItem` の `soldPrice` 正規化、④`SyncStore.GetCleanupCandidates` 二重ループとも `SOLD` のみ維持、⑤`#stat-sold-count` (`SOLD+SHIPPING`) と `#count-sold` (`SOLD` のみ) 分離、⑥狭幅チップ折返し・`ItemQuickActionDialog` 5状態選択・見落とし全数チェックリスト反映 | 反映済 (`PLAN` §26) | **全件反映・段階2合格確認済 (`e0d831b` / `REVIEW` §31.2)** |
 | **`32-1`** | `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **致命的・対象相違** | 「加工済み（`done`）」判定が `job.photos` 必須＋`r.sourceMd5` 参照のため `_ai` 生成写真（`resultMd5`）に一切付かず元写真側に付く／元写真削除時に消える | 反映済 (`PLAN` §27.1.1 / `21e7be1`) | **方針合意済 (`REVIEW` §33.1)・Build 8 実装待ち** |
-| **`32-2`** | `DashboardHtml.cs` / `ItemDetailScreen.kt` / `ItemEditScreen.kt` | **致命的・視認不能** | 開時即時 `markClaudeLabelSeen`（＋ラベル非表示の `ItemDetailScreen` での既読化）により、開いた画面の写真グリッドで「加工済み」を一度も見られない | 反映済 (`PLAN` §27.1.1※詳細グリッド追記要) | **方針合意済 (`REVIEW` §33.2 / 要`34-2`)・Build 8 実装待ち** |
-| **`32-3`** | `ClaudeJobStore.cs` / `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **重大・共有不発** | `claudeRevision` 非更新と両端末の `claudeRevision` 変化限定ポーリングが衝突し、起動中端末間の既読共有が機能しない | 反映予定 (`§33.3` / `34-4`) | **方針合意済 (`REVIEW` §33.3 / 要`34-4`)・Build 8 実装待ち** |
-| **`32-4`** | `ItemEditScreen.kt` (`L217-218, 833`) / `ItemDetailScreen.kt` | **高・描画追従漏れ** | `collectAsState()` した `claudeJobsForLabels`/`claudeLabelSeenAt` を読まず `StateFlow.value` を参照しており、編集中に状態変化しても再コンポーズされない | — (`§33.4` 合意) | **方針合意済 (`REVIEW` §33.4 / 詳細画面にも適用)・Build 8 実装待ち** |
-| **`32-5`** | `FleaMarketViewModel.kt` / `DashboardHtml.cs` / `FurimaServerNative.cs` | **高・時計ズレ** | クライアント時計（`System.currentTimeMillis`/`Date.now`）で楽観既読時刻を書き `seen` API がサーバー確定時刻を返さないため、時計遅れ端末でローカル既読が効かない | 反映予定 (`§33.5` / `34-5`) | **方針合意済 (`REVIEW` §33.5)・Build 8 実装待ち** |
-| **`32-6`** | `FurimaServerNative.cs` (`L5945`) / `ClaudeJobStore.cs` | **中・大小文字不一致** | `HandlePostClaudeJobError` の `sourceMd5` が `.ToLower()` されず大文字報告時にJS/Kotlin側「エラー」ラベルが消える＋`_labelSeenAt` が大小文字区別 | — (`§33.6` 合意) | **方針合意済 (`REVIEW` §33.6)・Build 8 実装待ち** |
-| **`32-7`** | `DashboardHtml.cs` / `ClaudeJobStore.cs` / `PLAN` / `PcServerClient.kt` | **中・追従/掃除/文言** | まとめ親カードへの子ジョブ追従欠落（`REVIEW_PROGRESS` §4.1）、再加工成功後も旧エラー残留、`_labelSeenAt` 掃除欠落、`PLAN §27.1.3`「右上」表記ズレ、コメント位置ズレ | 反映済 (`PLAN` §27.1.1, §27.1.3) | **方針合意済 (`REVIEW` §33.7 / 要`34-1`,`34-3`,`34-4`)・Build 8 実装待ち** |
-| **`34-1`〜`34-5`** | PC/Server/Android (`6-5` Build 8 是正設計) | **着工前補記** | ①まとめ親開時の全子孫 UUID（多段再帰）一括既読化＆`itemUuids` API 拡張、②スマホ `詳細→編集` スナップショット引継ぎ、③エラー supersede の `okJob.completedAt > errTime` 厳密化＆`errorDismissed` 連動確認、④`GET /api/claude/jobs` 先祖返り防止・`syncMutex` 外監視・`CleanupLocked` 保存/非加算、⑤`PLAN §27` Build 採番（8/9/10）＆詳細画面文言整合 | 協議中 (`34-5` で追記依頼) | **協議中（実装担当の確認・合意待ち / `REVIEW` §34）** |
+| **`32-2`** | `DashboardHtml.cs` / `ItemDetailScreen.kt` / `ItemEditScreen.kt` | **致命的・視認不能** | 開時即時 `markClaudeLabelSeen`（＋ラベル非表示の `ItemDetailScreen` での既読化）により、開いた画面の写真グリッドで「加工済み」を一度も見られない | 反映済 (`PLAN` §27.1.1, §27.1.4 / `4726e97`) | **全面合意済 (`REVIEW` §33.2, §36)・Build 8 実装待ち** |
+| **`32-3`** | `ClaudeJobStore.cs` / `DashboardHtml.cs` / `FleaMarketViewModel.kt` | **重大・共有不発** | `claudeRevision` 非更新と両端末の `claudeRevision` 変化限定ポーリングが衝突し、起動中端末間の既読共有が機能しない | 反映済 (`PLAN` §27.1.2, §27.4 / `4726e97`) | **全面合意済 (`REVIEW` §33.3, §36)・Build 8 実装待ち** |
+| **`32-4`** | `ItemEditScreen.kt` (`L217-218, 833`) / `ItemDetailScreen.kt` | **高・描画追従漏れ** | `collectAsState()` した `claudeJobsForLabels`/`claudeLabelSeenAt` を読まず `StateFlow.value` を参照しており、編集中に状態変化しても再コンポーズされない | 反映済 (`REVIEW` §35.1 / `4726e97`) | **全面合意済 (`REVIEW` §33.4, §36・詳細画面にも適用)・Build 8 実装待ち** |
+| **`32-5`** | `FleaMarketViewModel.kt` / `DashboardHtml.cs` / `FurimaServerNative.cs` | **高・時計ズレ** | クライアント時計（`System.currentTimeMillis`/`Date.now`）で楽観既読時刻を書き `seen` API がサーバー確定時刻を返さないため、時計遅れ端末でローカル既読が効かない | 反映済 (`PLAN` §27.1.2 / `4726e97`) | **全面合意済 (`REVIEW` §33.5, §36)・Build 8 実装待ち** |
+| **`32-6`** | `FurimaServerNative.cs` (`L5945`) / `ClaudeJobStore.cs` | **中・大小文字不一致** | `HandlePostClaudeJobError` の `sourceMd5` が `.ToLower()` されず大文字報告時にJS/Kotlin側「エラー」ラベルが消える＋`_labelSeenAt` が大小文字区別 | 反映済 (`REVIEW` §33.6) | **全面合意済 (`REVIEW` §33.6, §36)・Build 8 実装待ち** |
+| **`32-7`** | `DashboardHtml.cs` / `ClaudeJobStore.cs` / `PLAN` / `PcServerClient.kt` | **中・追従/掃除/文言** | まとめ親カードへの子ジョブ追従欠落（`REVIEW_PROGRESS` §4.1）、再加工成功後も旧エラー残留、`_labelSeenAt` 掃除欠落、`PLAN §27.1.3`「右上」表記ズレ、コメント位置ズレ | 反映済 (`PLAN` §27.1.1〜3 / `4726e97`) | **全面合意済 (`REVIEW` §33.7, §36)・Build 8 実装待ち** |
+| **`34-1`〜`34-5`** | PC/Server/Android (`6-5` Build 8 是正設計) | **着工前補記** | ①まとめ親開時の全子孫 UUID（多段再帰）一括既読化＆`itemUuids` API 拡張、②スマホ `詳細→編集` スナップショット引継ぎ、③エラー supersede の `okJob.completedAt > errTime` 厳密化＆完了時自動 `errorDismissed`、④`GET /api/claude/jobs` 先祖返り防止・`syncMutex` 外監視・`CleanupLocked` 保存/非加算、⑤`PLAN §27` Build 採番（8/9/10）＆詳細画面文言整合 | 反映済 (`PLAN` §27.1.1〜4, §27.4 / `4726e97`) | **全面合意済 (`REVIEW` §35〜§36)・Build 8 実装着工可** |
 
 ---
 
@@ -88,7 +88,7 @@
 5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 6. **交互レビュー・ループ運用**: 実装担当から修正案コミットが来たら仕様妥当性をレビューして本ファイルへ追記＋コミットし、双方合意後に実装再開。サブフェーズ等のレビュー終了単位で必ず本ファイルを更新・コミットすること。
 
-### 4.1 次の最優先レビュー対象: `6-5` 補記 `34-1`〜`34-5` 最終合意 → `v1.3 Build 8` 再レビューおよび `6-7` 完了時
+### 4.1 次の最優先レビュー対象: **`v1.3 Build 8（1308）` 実装後再レビュー**（`6-5` 是正 `32-1`〜`32-7`＋`34-1`〜`34-5`＋`§36.2` 確認点）および `6-7` 完了時
 1. **【最優先】`6-5` 指摘 `32-1`〜`32-7` の協議合意＆再修正レビュー**:
    - `32-1`（`resultMd5` 対象化）・`32-2`（開時セッション内スナップショット表示＋`ItemDetailScreen` 既読抑止または表示）・`32-3`/`32-5`（`labelSeenRevision` による UI 既読専用同期＋サーバー確定時刻返却）・`32-4`（`ItemEditScreen` `State` 購読）・`32-6`（`HandlePostClaudeJobError` MD5 小文字正規化等）・`32-7`（まとめ親追従・再加工エラー解消方針・`_labelSeenAt` 掃除・`PLAN §27.1.3` 整合）の合意と実装検証。
    - なお `FurimaServerNative.HandleBatchRestoreItems`（`§31.3`）は `cffe97f` にて解消確認済み。
@@ -354,3 +354,9 @@
 - 実装担当は補記 34-1〜34-5 をすべて実コードで再照合し、**全件合意（反論・別案なし）**した。回答の全文は `REVIEW_CLAUDE_SEND_PHASE6.md` §35。
 - 計画 §27 は本回答と同時に更新済み: 採番統一（6-5 是正 = Build 8、6-6 = Build 9、6-7 = Build 10）、§27.1.1 の supersede 厳密式と自動解消の明記、§27.1.2 への一括既読・`labelSeenRevision`・応答値・掃除の追記、§27.1.4 の詳細画面グリッド明記、§27.4 に実装条件（まとめ UUID 集合ヘルパー、訪問スナップショット、競合・配置、PC ビューア挙動）を新設。
 - 双方合意が完了したため、次は v1.3 Build 8（1308）の実コード修正へ進み、完了後に再レビューを依頼する。
+
+## 18. レビュー担当最終確認：§35 合意受領・`v1.3 Build 8` 実装着工承認（2026-11-17）
+
+- `4726e97`（`REVIEW` §35・`PLAN` §27 改定・`PROGRESS.md` 更新）を確認し、補記 **`34-1`〜`34-5`** の全件合意および `PLAN` §27.1.1〜§27.1.4・§27.4 への正確な反映を確認した。
+- これをもって **`6-5` 是正仕様の双方合意を完了**とし、**`v1.3 Build 8（1308）` の実コード修正・ビルド着工を正式承認**する（`6-6` / `Build 9` は Build 8 再レビュー通過後に開始）。
+- Build 8 再レビュー時の重点照合メモ 3 点（①`refreshKnownRevisions` で `lastKnownLabelSeenRevision` を先行上書きして PC 既読を飲み込まないこと、②完了時自動 `errorDismissed` の単一 `_jobLock` 処理・UUID `OrdinalIgnoreCase`・分割再加工の全解消判定、③次回 `## 29` 追記時に `PLAN §27.4` の位置を `## 28` の前へ整頓すること）を `REVIEW_CLAUDE_SEND_PHASE6.md` §36.2 へ記録した。

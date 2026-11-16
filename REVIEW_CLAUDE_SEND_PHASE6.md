@@ -1174,3 +1174,29 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
 
 ### 35.2 次ステップ
 - 双方合意が完了したため、**v1.3 Build 8（1308）** の実コード修正へ進む。完了後に再ビルドと再レビューを依頼する。6-6（Build 9）は再レビュー通過後に開始する。
+
+
+---
+
+## 36. レビュー担当エージェント最終確認（§35 合意受領・`v1.3 Build 8` 着工承認）（2026-11-17）
+
+### 36.1 判定：【双方合意完了・`v1.3 Build 8 (1308)` 実装着工を承認】
+`4726e97`（§35 回答・`PLAN_CLAUDE_SEND_PHASE6.md` §27 改定・台帳 §17・`PROGRESS.md` 更新）を確認した。
+補記 **`34-1`〜`34-5`** を含む全論点（まとめ配下の共通 UUID 集合ヘルパーと一括既読、スマホ `一覧→詳細→編集` の訪問スナップショット引き継ぎ、`okJob.completedAt > errTime` 厳密 supersede＋完了保存への `errorDismissed` 相乗り自動解消、`labelSeenRevision` 先祖返り防止・`syncMutex` 外監視・`CleanupLocked` 保存のみ、PC ビューアスナップショットと背面カード即時更新、採番 Build 8/9/10 統一）が仕様書へ正しく反映されており、設計上の矛盾・残存ブロッカーは解消したと判断する。
+
+**`v1.3 Build 8（1308）` の実コード実装およびビルドへ進んでよい。**（`6-6` / `Build 9` は Build 8 の再レビュー合格後に開始すること）
+
+---
+
+### 36.2 Build 8 実装および再レビュー時の重点確認チェックポイント（着工非阻止）
+
+実装時に以下 3 点の実装細部のみ踏み抜きがないよう留意されたい（Build 8 完了後の再レビュー時にコード上で照合する）。
+
+1. **`refreshKnownRevisions` による `labelSeenRevision` の飲み込み防止**（`FleaMarketViewModel.kt:947`）
+   - §27.4「再接続時の既知リビジョン同期でも取り込む」を実装する際、`refreshKnownRevisions` 内で `lastKnownLabelSeenRevision = hb.labelSeenRevision` を先行代入してしまうと、切断中に PC 側で進んだ既読変化を取り逃す（`startClaudeWatchLoop` は `claudeRevision` のみ監視しているため）。
+   - `refreshKnownRevisions` 内で `hb.labelSeenRevision` に差分があれば `refreshClaudeJobStates` を呼び出し、`lastKnownLabelSeenRevision` の更新自体は **`refreshClaudeJobStates` 取得成功後（または `markClaudeLabelSeen` のサーバー応答確定時）のみ** で行うこと。
+2. **完了時自動 `errorDismissed` の単一ロック・分割復旧・UUID 大文字小文字非区別**（`ClaudeJobStore.cs` / `FurimaServerNative.cs`）
+   - §35.1 のとおり完了保存に相乗りさせる際は、1 つの `_jobLock` 内（`CompleteJob` 用ヘルパー等）でまとめて更新・保存すること（複数回の `MutateJob` ループにしない）。
+   - 旧 `done_with_errors` ジョブの照合は `string.Equals(..., StringComparison.OrdinalIgnoreCase)` とし、前ジョブで `M1` 成功・今回ジョブで `M2` 成功といった**分割再加工による全エラー解消**も正しく `errorDismissed = true` になるよう、同一商品の全 `okJob` 集合に対して判定すること。
+3. **`PLAN` §27.4 の文書位置整理（記録時対応で可）**
+   - `4726e97` で追記された `### 27.4` が現在 `## 28.`（Build 7 実装記録、L769）の後ろ（L794）に配置されているため、Build 8 の実装記録（`## 29`）を追記するタイミングで `## 28.` の前（`§27.3` の直後）へ移動して文書順を整えること。
