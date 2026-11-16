@@ -118,7 +118,8 @@ data class CreateClaudeJobRequestDto(
     @param:Json(name = "itemUuid") val itemUuid: String,
     @param:Json(name = "photos") val photos: List<ClaudeJobPhotoDto>,
     @param:Json(name = "templateId") val templateId: String,
-    @param:Json(name = "origin") val origin: String = "phone"
+    @param:Json(name = "origin") val origin: String = "phone",
+    @param:Json(name = "queue") val queue: String = "patrol"
 )
 
 @JsonClass(generateAdapter = true)
@@ -130,10 +131,12 @@ data class ClaudeJobDto(
     @param:Json(name = "photos") val photos: List<ClaudeJobPhotoDto> = emptyList(),
     @param:Json(name = "templateName") val templateName: String = "",
     @param:Json(name = "origin") val origin: String = "",
+    @param:Json(name = "queue") val queue: String = "manual",
     @param:Json(name = "status") val status: String = "",
     @param:Json(name = "createdAt") val createdAt: Long = 0L,
     @param:Json(name = "approvalRequestedAt") val approvalRequestedAt: Long = 0L,
     @param:Json(name = "acknowledged") val acknowledged: Boolean = false,
+    @param:Json(name = "errorDismissed") val errorDismissed: Boolean = false,
     @param:Json(name = "results") val results: List<ClaudeJobResultDto> = emptyList(),
     @param:Json(name = "errors") val errors: List<ClaudeJobErrorDto> = emptyList()
 )

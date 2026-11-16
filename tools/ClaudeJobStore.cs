@@ -40,6 +40,7 @@ public class ClaudeJob
     public string templateName { get; set; }
     public string promptText { get; set; }
     public string origin { get; set; }
+    public string queue { get; set; }
     public string status { get; set; }
     public long createdAt { get; set; }
     public long approvalRequestedAt { get; set; }
@@ -50,12 +51,22 @@ public class ClaudeJob
     public long completedAt { get; set; }
     public bool acknowledged { get; set; }
     public long acknowledgedAt { get; set; }
+    public bool errorDismissed { get; set; }
+}
+
+// claude_jobs.json の保存形式 (フェーズ 6-1a でルート配列からオブジェクトへ移行)。
+// claudeRevision をジョブと一緒に永続化し、サーバー再起動後も単調増加を引き継ぐ。
+public class ClaudeJobsFile
+{
+    public long claudeRevision { get; set; }
+    public List<ClaudeJob> jobs { get; set; }
 }
 
 public static class ClaudeJobStore
 {
     private static readonly object _jobLock = new object();
     private static List<ClaudeJob> _jobList = null;
+    private static long _claudeRevision = 0;
 
     // 終端ジョブの保持期間 (30日)。写真ゴミ箱の保持期間と同水準。
     private const long RetentionMs = 30L * 24L * 60L * 60L * 1000L;
@@ -71,12 +82,37 @@ public static class ClaudeJobStore
         if (_jobList != null) return _jobList;
         _jobList = new List<ClaudeJob>();
         string path = GetJobsJsonPath();
-        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _jobList;
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        {
+            if (_claudeRevision <= 0) _claudeRevision = 1;
+            return _jobList;
+        }
 
         try
         {
             string json = File.ReadAllText(path, Encoding.UTF8);
-            var jobs = JsonConvert.DeserializeObject<List<ClaudeJob>>(json);
+            string trimmed = json != null ? json.TrimStart() : "";
+            bool migrated = false;
+            bool changed = false;
+            List<ClaudeJob> jobs = null;
+            if (trimmed.StartsWith("["))
+            {
+                // 旧形式 (ルートが配列): jobs として読み込み、リビジョンは移行時点の Unix 秒で
+                // 初期化する (見張りが保持しうる旧カウンタより確実に大きくなる)。
+                jobs = JsonConvert.DeserializeObject<List<ClaudeJob>>(json);
+                _claudeRevision = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                migrated = true;
+            }
+            else if (trimmed.StartsWith("{"))
+            {
+                var file = JsonConvert.DeserializeObject<ClaudeJobsFile>(json);
+                if (file != null)
+                {
+                    jobs = file.jobs;
+                    _claudeRevision = file.claudeRevision > 0 ? file.claudeRevision : 1;
+                }
+            }
+            if (_claudeRevision <= 0) _claudeRevision = 1;
             if (jobs != null)
             {
                 foreach (var job in jobs)
@@ -85,13 +121,34 @@ public static class ClaudeJobStore
                     if (job.photos == null) job.photos = new List<ClaudeJobPhoto>();
                     if (job.results == null) job.results = new List<ClaudeJobResult>();
                     if (job.errors == null) job.errors = new List<ClaudeJobError>();
+                    if (job.queue != "patrol" && job.queue != "manual" && job.queue != "waiting")
+                    {
+                        job.queue = "manual";
+                        changed = true;
+                    }
+                    if (job.status == "approval_expired")
+                    {
+                        job.status = "queued";
+                        job.queue = "waiting";
+                        changed = true;
+                    }
                     _jobList.Add(job);
                 }
+            }
+            if (migrated)
+            {
+                Console.WriteLine("[情報] claude_jobs.json を新形式へ移行しました (claudeRevision 初期値: " + _claudeRevision + ")");
+                SaveJobsLocked();
+            }
+            else if (changed)
+            {
+                SaveJobsLocked();
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine("[警告] claude_jobs.json の読み込みに失敗しました: " + ex.Message);
+            if (_claudeRevision <= 0) _claudeRevision = 1;
         }
         return _jobList;
     }
@@ -107,7 +164,12 @@ public static class ClaudeJobStore
             {
                 Directory.CreateDirectory(dir);
             }
-            File.WriteAllText(path, JsonConvert.SerializeObject(_jobList, Formatting.Indented), Encoding.UTF8);
+            var file = new ClaudeJobsFile
+            {
+                claudeRevision = _claudeRevision > 0 ? _claudeRevision : 1,
+                jobs = _jobList
+            };
+            File.WriteAllText(path, JsonConvert.SerializeObject(file, Formatting.Indented), Encoding.UTF8);
         }
         catch (Exception ex)
         {
@@ -116,7 +178,9 @@ public static class ClaudeJobStore
     }
 
     // 終端状態かつ保持期間を過ぎたジョブを削除する。
-    // done / done_with_errors はユーザーが確認済み (acknowledged) のものだけを対象にする。
+    // done はユーザーが確認済み (acknowledged) のものだけを対象にする。
+    // done_with_errors は acknowledged に加えて errorDismissed も必須とする
+    // (スマホで完了通知を閉じただけで、PC で未対応のエラー履歴が消えないようにするため)。
     private static void CleanupLocked()
     {
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -126,7 +190,8 @@ public static class ClaudeJobStore
         {
             bool terminal =
                 (job.status == "cancelled" || job.status == "denied") ||
-                ((job.status == "done" || job.status == "done_with_errors") && job.acknowledged);
+                (job.status == "done" && job.acknowledged) ||
+                (job.status == "done_with_errors" && job.acknowledged && job.errorDismissed);
             long refTime = job.completedAt > 0 ? job.completedAt : job.createdAt;
             if (terminal && refTime > 0 && (now - refTime) > RetentionMs)
             {
@@ -142,6 +207,29 @@ public static class ClaudeJobStore
         }
     }
 
+    // 永続化された claudeRevision を返す (サーバー再起動後も単調増加を引き継ぐ)。
+    public static long GetRevision()
+    {
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            return _claudeRevision > 0 ? _claudeRevision : 1;
+        }
+    }
+
+    // claudeRevision を加算して保存し、新しい値を返す。
+    public static long IncrementRevision()
+    {
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            if (_claudeRevision <= 0) _claudeRevision = 1;
+            _claudeRevision++;
+            SaveJobsLocked();
+            return _claudeRevision;
+        }
+    }
+
     public static ClaudeJob CreateJob(ClaudeJob job)
     {
         if (job == null) return null;
@@ -149,10 +237,26 @@ public static class ClaudeJobStore
         {
             var list = LoadJobsLocked();
             CleanupLocked();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             job.jobId = Guid.NewGuid().ToString();
-            job.createdAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            job.status = "queued";
-            job.approvalRequestedAt = 0;
+            job.createdAt = now;
+            if (job.queue != "patrol" && job.queue != "manual" && job.queue != "waiting")
+            {
+                job.queue = "manual";
+            }
+            // 送信時承認リクエスト (フェーズ 6-1a): 巡回・手動は作成と同時に承認待ちにする。
+            // 単一ロック内で初期状態とリビジョン加算までを確定させ、保存は1回だけにする
+            // (中間状態の露出と複数回保存を避けるため)。
+            if (job.queue == "waiting")
+            {
+                job.status = "queued";
+                job.approvalRequestedAt = 0;
+            }
+            else
+            {
+                job.status = "approval_pending";
+                job.approvalRequestedAt = now;
+            }
             job.jobToken = null;
             job.jobTokenExpiresAt = 0;
             if (job.photos == null) job.photos = new List<ClaudeJobPhoto>();
@@ -161,7 +265,10 @@ public static class ClaudeJobStore
             job.completedAt = 0;
             job.acknowledged = false;
             job.acknowledgedAt = 0;
+            job.errorDismissed = false;
             list.Add(job);
+            if (_claudeRevision <= 0) _claudeRevision = 1;
+            _claudeRevision++;
             SaveJobsLocked();
             return CloneJob(job);
         }
@@ -185,6 +292,7 @@ public static class ClaudeJobStore
             templateName = job.templateName,
             promptText = job.promptText,
             origin = job.origin,
+            queue = job.queue,
             status = job.status,
             createdAt = job.createdAt,
             approvalRequestedAt = job.approvalRequestedAt,
@@ -194,7 +302,8 @@ public static class ClaudeJobStore
             errors = new List<ClaudeJobError>(),
             completedAt = job.completedAt,
             acknowledged = job.acknowledged,
-            acknowledgedAt = job.acknowledgedAt
+            acknowledgedAt = job.acknowledgedAt,
+            errorDismissed = job.errorDismissed
         };
         if (job.photos != null)
         {

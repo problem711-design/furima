@@ -380,6 +380,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         itemUuid: String,
         photos: List<Pair<String, String>>,
         templateId: String,
+        queue: String = "patrol",
         onError: (String) -> Unit = {},
         onSuccess: () -> Unit
     ) {
@@ -388,7 +389,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 onError("PCサーバー未接続です")
                 return@launch
             }
-            val result = pcServerClient.createClaudeJob(itemId, itemUuid, photos, templateId)
+            val result = pcServerClient.createClaudeJob(itemId, itemUuid, photos, templateId, queue)
             if (result.success) {
                 onSuccess()
             } else {

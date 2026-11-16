@@ -34,7 +34,8 @@ class FurimaServerNative
     private static ServerLogWriter logWriter = null;
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
-    private static long claudeRevision = 1;
+    // claudeRevision の実体は ClaudeJobStore 側で永続化する (フェーズ 6-1a)。
+    // サーバー再起動後も単調増加を引き継ぐため、メモリ保持にはしない。
     // Build 13 (13-2): 結果・エラーの登録を直列化するロック。
     // ガードB: 必ず最外層にのみ置く (claudeResultWriteLock → lockObj → _jobLock の順)。
     // lockObj や _jobLock を保持した内側からこのロックを取得する経路は作らないこと。
@@ -180,12 +181,12 @@ class FurimaServerNative
 
     private static long BumpClaudeRevision()
     {
-        return Interlocked.Increment(ref claudeRevision);
+        return ClaudeJobStore.IncrementRevision();
     }
 
     private static long GetClaudeRevision()
     {
-        return Interlocked.Read(ref claudeRevision);
+        return ClaudeJobStore.GetRevision();
     }
 
     private static string EnsureItemSyncUuid(Dictionary<string, object> item)
@@ -1701,6 +1702,18 @@ class FurimaServerNative
                 string ackJobId = rawPath.Substring("/api/claude/jobs/".Length);
                 ackJobId = ackJobId.Substring(0, ackJobId.Length - "/ack".Length).Trim();
                 HandleAckClaudeJob(res, ackJobId);
+            }
+            else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/move") && req.HttpMethod == "POST")
+            {
+                string moveJobId = rawPath.Substring("/api/claude/jobs/".Length);
+                moveJobId = moveJobId.Substring(0, moveJobId.Length - "/move".Length).Trim();
+                HandleMoveClaudeJob(req, res, moveJobId);
+            }
+            else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/dismiss-error") && req.HttpMethod == "POST")
+            {
+                string deJobId = rawPath.Substring("/api/claude/jobs/".Length);
+                deJobId = deJobId.Substring(0, deJobId.Length - "/dismiss-error".Length).Trim();
+                HandleDismissClaudeJobError(res, deJobId);
             }
             else if (rawPath.StartsWith("/api/claude/jobs/") && req.HttpMethod == "GET")
             {
@@ -4534,6 +4547,7 @@ class FurimaServerNative
             { "templateName", job.templateName ?? "" },
             { "promptText", job.promptText ?? "" },
             { "origin", job.origin ?? "" },
+            { "queue", string.IsNullOrEmpty(job.queue) ? "manual" : job.queue },
             { "status", job.status ?? "" },
             { "createdAt", job.createdAt },
             { "approvalRequestedAt", job.approvalRequestedAt },
@@ -4541,7 +4555,8 @@ class FurimaServerNative
             { "errors", jobErrors },
             { "completedAt", job.completedAt },
             { "acknowledged", job.acknowledged },
-            { "acknowledgedAt", job.acknowledgedAt }
+            { "acknowledgedAt", job.acknowledgedAt },
+            { "errorDismissed", job.errorDismissed }
         };
     }
 
@@ -4567,6 +4582,8 @@ class FurimaServerNative
             string templateId = (json.Value<string>("templateId") ?? "").Trim();
             string origin = (json.Value<string>("origin") ?? "").Trim();
             if (origin != "pc" && origin != "phone") origin = "pc";
+            string queue = (json.Value<string>("queue") ?? "").Trim();
+            if (queue != "patrol" && queue != "manual" && queue != "waiting") queue = "patrol";
 
             var reqPhotos = new List<ClaudeJobPhoto>();
             JArray photosArr = json["photos"] as JArray;
@@ -4693,7 +4710,8 @@ class FurimaServerNative
                                     templateId = tpl.id,
                                     templateName = tpl.name ?? "",
                                     promptText = tpl.content ?? "",
-                                    origin = origin
+                                    origin = origin,
+                                    queue = queue
                                 };
                                 created = ClaudeJobStore.CreateJob(job);
                             }
@@ -4709,7 +4727,8 @@ class FurimaServerNative
                 return;
             }
 
-            BumpClaudeRevision();
+            // リビジョン加算は CreateJob が単一ロック内で行う (フェーズ 6-1a)。
+            // ここで二重に加算しないこと。
             SendJson(res, new Dictionary<string, object>
             {
                 { "status", "ok" },
@@ -4820,6 +4839,7 @@ class FurimaServerNative
             if (j.status == "approval_pending")
             {
                 j.status = "queued";
+                j.queue = "waiting";
                 j.approvalRequestedAt = 0;
                 changed = true;
                 return true;
@@ -4830,7 +4850,10 @@ class FurimaServerNative
         return changed;
     }
 
-    // ジョブトークンの期限切れを遅延評価する (Q7)。全トークン対象APIから呼ぶ。
+    // ジョブトークンの期限切れを遅延評価する (Q7)。全トークン対象APIと一覧・詳細の読み取りから呼ぶ。
+    // フェーズ 6-1a: 遷移先は記録の有無で分ける (計画書 §10 の 7-3)。
+    // 未着手 (results / errors がともに空) なら待機へ戻し、1件でも記録がある場合は
+    // 未処理の写真へ失効エラーを記録して終端させる (同一ジョブの再実行は行わない)。
     private static bool ApplyTokenExpiry(ClaudeJob job)
     {
         if (job == null) return false;
@@ -4842,7 +4865,46 @@ class FurimaServerNative
         {
             if (j.status == "approved" || j.status == "processing")
             {
-                j.status = "approval_expired";
+                bool untouched = (j.results == null || j.results.Count == 0) && (j.errors == null || j.errors.Count == 0);
+                if (untouched)
+                {
+                    j.status = "queued";
+                    j.queue = "waiting";
+                }
+                else
+                {
+                    if (j.results == null) j.results = new List<ClaudeJobResult>();
+                    if (j.errors == null) j.errors = new List<ClaudeJobError>();
+                    var settled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var r in j.results) { if (r != null && !string.IsNullOrEmpty(r.sourceMd5)) settled.Add(r.sourceMd5); }
+                    foreach (var e in j.errors) { if (e != null && !string.IsNullOrEmpty(e.sourceMd5)) settled.Add(e.sourceMd5); }
+                    if (j.photos != null)
+                    {
+                        foreach (var p in j.photos)
+                        {
+                            if (p == null || string.IsNullOrEmpty(p.md5)) continue;
+                            if (!settled.Contains(p.md5))
+                            {
+                                j.errors.Add(new ClaudeJobError { sourceMd5 = p.md5, message = "トークンの有効期限が切れたため、未処理のまま終了しました" });
+                            }
+                        }
+                    }
+                    bool allResults = j.photos != null && j.photos.Count > 0;
+                    if (allResults)
+                    {
+                        foreach (var p in j.photos)
+                        {
+                            bool hasResult = false;
+                            foreach (var r in j.results)
+                            {
+                                if (r != null && string.Equals(r.sourceMd5, p.md5, StringComparison.OrdinalIgnoreCase)) { hasResult = true; break; }
+                            }
+                            if (!hasResult) { allResults = false; break; }
+                        }
+                    }
+                    j.status = allResults ? "done" : "done_with_errors";
+                    j.completedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                }
                 j.jobToken = null;
                 j.jobTokenExpiresAt = 0;
                 changed = true;
@@ -4866,11 +4928,15 @@ class FurimaServerNative
                 return;
             }
             ApplyApprovalPendingExpiry(job);
+            ApplyTokenExpiry(job);
             job = ClaudeJobStore.GetJob(jobId);
-            if (job.status != "queued" && job.status != "approval_expired")
+            if (job.status != "queued" || job.queue == "waiting")
             {
                 res.StatusCode = 400;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "承認リクエストできる状態ではありません (status: " + job.status + ")" } });
+                string msg = job.queue == "waiting"
+                    ? "待機中のジョブは、ジョブ一覧から巡回／手動へ移して承認リクエストしてください"
+                    : "承認リクエストできる状態ではありません (status: " + job.status + ")";
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", msg } });
                 return;
             }
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -5531,7 +5597,7 @@ class FurimaServerNative
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "sourceMd5 が必要です" } });
                 return;
             }
-            if (string.IsNullOrEmpty(message)) message = "Claude側でエラーが報告されました";
+            if (string.IsNullOrEmpty(message)) message = "Muse側でエラーが報告されました";
             if (message.Length > 500) message = message.Substring(0, 500);
 
             lock (claudeResultWriteLock)
@@ -5711,6 +5777,134 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("HandleAckClaudeJob エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    // ジョブの所属リスト (queue) を移す (フェーズ 6-1a)。
+    // 巡回・手動への移動は「送信」操作として承認リクエストを発火し、
+    // 待機への移動はリクエストの取り下げになる。同じ所属への移動は冪等 (no-op)。
+    private static void HandleMoveClaudeJob(HttpListenerRequest req, HttpListenerResponse res, string jobId)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            string target = "";
+            if (!string.IsNullOrEmpty(jsonStr))
+            {
+                JObject json = JObject.Parse(jsonStr);
+                target = (json.Value<string>("queue") ?? "").Trim();
+            }
+            if (target != "patrol" && target != "manual" && target != "waiting")
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "移動先の指定が不正です" } });
+                return;
+            }
+            var job = ClaudeJobStore.GetJob(jobId);
+            if (job == null)
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                return;
+            }
+            ApplyApprovalPendingExpiry(job);
+            ApplyTokenExpiry(job);
+            job = ClaudeJobStore.GetJob(jobId);
+            string currentQueue = string.IsNullOrEmpty(job.queue) ? "manual" : job.queue;
+            if (currentQueue == target)
+            {
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "status", "ok" },
+                    { "job", ToPublicClaudeJob(job) },
+                    { "claudeRevision", GetClaudeRevision() }
+                });
+                return;
+            }
+            if (job.status != "queued" && job.status != "approval_pending")
+            {
+                res.StatusCode = 409;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "現在の状態では移動できません (status: " + job.status + ")" } });
+                return;
+            }
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            ClaudeJobStore.MutateJob(jobId, j =>
+            {
+                j.queue = target;
+                if (target == "waiting")
+                {
+                    j.status = "queued";
+                    j.approvalRequestedAt = 0;
+                }
+                else if (j.status == "queued")
+                {
+                    j.status = "approval_pending";
+                    j.approvalRequestedAt = now;
+                }
+                return true;
+            });
+            BumpClaudeRevision();
+            job = ClaudeJobStore.GetJob(jobId);
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "job", ToPublicClaudeJob(job) },
+                { "claudeRevision", GetClaudeRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleMoveClaudeJob エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    // エラー警告の解消 (フェーズ 6-1a)。通知の確認 (ack) とは別のフラグで管理する。
+    // 冪等仕様は HandleAckClaudeJob と同型 (変化したときだけ保存とリビジョン更新)。
+    private static void HandleDismissClaudeJobError(HttpListenerResponse res, string jobId)
+    {
+        try
+        {
+            var job = ClaudeJobStore.GetJob(jobId);
+            if (job == null)
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                return;
+            }
+            if (job.status != "done_with_errors")
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "エラー警告を解消できる状態ではありません (status: " + job.status + ")" } });
+                return;
+            }
+            if (!job.errorDismissed)
+            {
+                ClaudeJobStore.MutateJob(jobId, j =>
+                {
+                    j.errorDismissed = true;
+                    return true;
+                });
+                BumpClaudeRevision();
+                job = ClaudeJobStore.GetJob(jobId);
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "job", ToPublicClaudeJob(job) },
+                { "claudeRevision", GetClaudeRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleDismissClaudeJobError エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }

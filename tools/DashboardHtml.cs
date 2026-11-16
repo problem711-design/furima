@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 13)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 14)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -399,6 +399,11 @@ public static class DashboardHtml
                 <div class='flex flex-wrap items-center gap-2'>
                     <span id='viewer-claude-bundle-note' class='hidden text-[11px] text-amber-700 font-bold'>まとめ商品は個別の子商品から送信してください</span>
                     <select id='viewer-claude-template' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 max-w-[180px]' title='画像加工プロンプトテンプレート'></select>
+                    <select id='viewer-claude-queue' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700' title='送り先（巡回: 承認後に自動処理 / 手動: チャットで呼んで即実行 / 待機: あとで送る）'>
+                        <option value='patrol'>巡回（自動）</option>
+                        <option value='manual'>手動（すぐ）</option>
+                        <option value='waiting'>待機（あとで）</option>
+                    </select>
                     <button type='button' id='viewer-claude-send-btn' onclick='sendViewerPhotosToClaude()' disabled class='bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1.5'>
                         <i class='fa-solid fa-wand-magic-sparkles'></i> Museに送る (<span id='viewer-claude-selected-count'>0</span>枚)
                     </button>
@@ -527,7 +532,7 @@ public static class DashboardHtml
                     <i class='fa-solid fa-wand-magic-sparkles text-violet-200 text-lg'></i>
                     <div>
                         <h3 class='font-bold text-sm tracking-tight'>Muse 送信ジョブ</h3>
-                        <p class='text-[11px] text-violet-200'>「Museに送る」で作成した画像加工ジョブの一覧です。実行はClaude側の承認フロー（スマホ承認）後に始まります</p>
+                        <p class='text-[11px] text-violet-200'>「Museに送る」で作成した画像加工ジョブの一覧です。巡回・手動は送信時にスマホへ承認リクエストが届き、巡回は承認後に自動で処理されます。手動はチャットで呼び出して実行します。待機はあとから巡回・手動へ移せます</p>
                     </div>
                 </div>
                 <button type='button' onclick='closeClaudeJobsModal()' class='text-violet-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
@@ -2290,9 +2295,11 @@ public static class DashboardHtml
 
         let claudeJobsCache = [];
 
-        function claudeJobStatusInfo(status) {
+        function claudeJobStatusInfo(status, queue) {
             switch (status) {
-                case 'queued': return { label: '待機中', cls: 'bg-slate-200 text-slate-700' };
+                case 'queued': return queue === 'waiting'
+                    ? { label: '待機中', cls: 'bg-slate-200 text-slate-700' }
+                    : { label: '未依頼', cls: 'bg-slate-200 text-slate-700' };
                 case 'approval_pending': return { label: '承認待ち', cls: 'bg-amber-200 text-amber-800' };
                 case 'approved': return { label: '承認済み', cls: 'bg-sky-200 text-sky-800' };
                 case 'processing': return { label: '処理中', cls: 'bg-indigo-200 text-indigo-800' };
@@ -2317,7 +2324,7 @@ public static class DashboardHtml
 
         function refreshClaudeJobsCount() {
             fetchClaudeJobs().then(() => {
-                const active = claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status)).length;
+                const active = claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status) && !(j.status === 'queued' && j.queue === 'waiting')).length;
                 const el = document.getElementById('viewer-claude-jobs-count');
                 if (el) el.innerText = active;
             });
@@ -2348,9 +2355,19 @@ public static class DashboardHtml
                 return;
             }
             container.innerHTML = claudeJobsCache.map(job => {
-                const info = claudeJobStatusInfo(job.status);
+                const info = claudeJobStatusInfo(job.status, job.queue);
                 const created = job.createdAt ? new Date(job.createdAt).toLocaleString('ja-JP') : '';
-                const canCancel = job.status === 'queued';
+                const queueBadge = job.queue === 'patrol'
+                    ? `<span class='text-[10px] font-bold px-1.5 py-0.5 rounded bg-teal-100 text-teal-800'>巡回</span>`
+                    : (job.queue === 'manual'
+                        ? `<span class='text-[10px] font-bold px-1.5 py-0.5 rounded bg-orange-100 text-orange-800'>手動</span>`
+                        : '');
+                const moveBtns = (job.status === 'queued' && job.queue === 'waiting')
+                    ? `<button type='button' onclick='moveClaudeJob(""${job.jobId}"", ""patrol"")' class='px-2 py-1 bg-teal-600 hover:bg-teal-500 text-white rounded text-[11px] font-bold transition shrink-0'>巡回へ</button><button type='button' onclick='moveClaudeJob(""${job.jobId}"", ""manual"")' class='px-2 py-1 bg-orange-500 hover:bg-orange-400 text-white rounded text-[11px] font-bold transition shrink-0'>手動へ</button>`
+                    : (((job.status === 'queued' && job.queue !== 'waiting') || job.status === 'approval_pending')
+                        ? `<button type='button' onclick='moveClaudeJob(""${job.jobId}"", ""waiting"")' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-bold transition shrink-0'>待機へ</button>`
+                        : '');
+                const canCancel = job.status === 'queued' || job.status === 'approval_pending';
                 const isDone = job.status === 'done' || job.status === 'done_with_errors';
                 const unacked = isDone && !job.acknowledged;
                 const ackMark = isDone
@@ -2366,15 +2383,34 @@ public static class DashboardHtml
                     <div class='min-w-0 flex-1'>
                         <div class='flex items-center gap-2 flex-wrap'>
                             <span class='text-[10px] font-bold px-1.5 py-0.5 rounded ${info.cls}'>${info.label}</span>
+                            ${queueBadge}
                             <span class='font-bold text-slate-800 truncate'>${escapeHtml(job.itemTitle || '(無題)')}</span>
                             ${ackMark}
                         </div>
                         <p class='text-[11px] text-slate-500 mt-0.5'>写真 ${job.photos ? job.photos.length : 0}枚 / テンプレート「${escapeHtml(job.templateName || '')}」 / ${escapeHtml(job.origin === 'phone' ? 'スマホから' : 'PCから')} / ${escapeHtml(created)}${countsText}</p>
                     </div>
+                    ${moveBtns}
                     ${canCancel ? `<button type='button' onclick='cancelClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[11px] font-bold transition shrink-0'>取消</button>` : ''}
                     ${unacked ? `<button type='button' onclick='ackClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-[11px] font-bold transition shrink-0'>確認</button>` : ''}
                 </div>`;
             }).join('');
+        }
+
+        async function moveClaudeJob(jobId, queue) {
+            try {
+                const res = await fetch('/api/claude/jobs/' + jobId + '/move', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ queue: queue })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '移動に失敗しました');
+                showToast(queue === 'waiting' ? '待機リストへ移しました' : '送信しました（スマホに承認リクエストが届きます）');
+                await refreshClaudeJobsList();
+                refreshClaudeJobsCount();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
         }
 
         async function ackClaudeJob(jobId) {
@@ -2430,14 +2466,17 @@ public static class DashboardHtml
             }
             const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
             const tplName = tpl ? tpl.name : '';
+            const queueSel = document.getElementById('viewer-claude-queue');
+            const queue = queueSel ? queueSel.value : 'patrol';
+            const queueLabel = queue === 'manual' ? '手動' : (queue === 'waiting' ? '待機' : '巡回');
             const listText = targets.map((t, i) => (i + 1) + '. ' + (t.fileName || t.md5)).join('\n');
-            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」でClaudeに送ります。\n\n対象ファイル:\n' + listText)) return;
+            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」でMuseに送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + '\n\n対象ファイル:\n' + listText)) return;
 
             try {
                 const res = await fetch('/api/claude/jobs', {
                     method: 'POST',
                     headers: getHeaders(),
-                    body: JSON.stringify({ itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, templateId: templateId, origin: 'pc' })
+                    body: JSON.stringify({ itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, templateId: templateId, origin: 'pc', queue: queue })
                 });
                 const data = await res.json();
                 if (!res.ok || data.status === 'error') {
@@ -2446,7 +2485,9 @@ public static class DashboardHtml
                 selectedViewerPhotoIndices.clear();
                 updateViewerSelectionBar(photos.length);
                 renderViewerPhotos();
-                showToast('Museジョブを作成しました（' + targets.length + '枚）');
+                showToast(queue === 'waiting'
+                    ? '待機リストへ送りました（' + targets.length + '枚）'
+                    : 'Museジョブを作成しました（' + targets.length + '枚・' + queueLabel + '）スマホの承認をお待ちください');
                 openClaudeJobsModal();
             } catch (e) {
                 showToast('エラー: ' + e.message);

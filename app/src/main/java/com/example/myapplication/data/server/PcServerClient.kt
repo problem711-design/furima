@@ -214,6 +214,7 @@ class PcServerClient(
         itemUuid: String,
         photos: List<Pair<String, String>>,
         templateId: String,
+        queue: String = "patrol",
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
     ): ClaudeJobCreateResult = withContext(Dispatchers.IO) {
@@ -233,7 +234,8 @@ class PcServerClient(
                 itemUuid = itemUuid,
                 photos = photos.map { ClaudeJobPhotoDto(md5 = it.first, fileName = it.second) },
                 templateId = templateId,
-                origin = "phone"
+                origin = "phone",
+                queue = queue
             )
             val body = createClaudeJobRequestAdapter.toJson(reqDto)
                 .toRequestBody("application/json; charset=utf-8".toMediaType())

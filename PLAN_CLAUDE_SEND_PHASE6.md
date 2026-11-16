@@ -259,61 +259,61 @@
 
 #### 11.1.1 ジョブストア（`tools/ClaudeJobStore.cs`）
 
-- [ ] `6-1a-1` `ClaudeJob` に2フィールド追加: `queue`（`patrol` / `manual` / `waiting`）、`errorDismissed`（bool）。`CloneJob` の複製リストにも両フィールドを追加する（Build 13 のディープコピー規約）。
-- [ ] `6-1a-2` 保存形式をルートオブジェクトへ移行する（§10 の 7-4）。新形式は `{ "claudeRevision": N, "jobs": [ ... ] }` とし、内部表現クラス（例: `ClaudeJobsFile`）を新設する。読み込み（`LoadJobsLocked`）は先頭の非空白文字で判別する:
+- [x] `6-1a-1` `ClaudeJob` に2フィールド追加: `queue`（`patrol` / `manual` / `waiting`）、`errorDismissed`（bool）。`CloneJob` の複製リストにも両フィールドを追加する（Build 13 のディープコピー規約）。
+- [x] `6-1a-2` 保存形式をルートオブジェクトへ移行する（§10 の 7-4）。新形式は `{ "claudeRevision": N, "jobs": [ ... ] }` とし、内部表現クラス（例: `ClaudeJobsFile`）を新設する。読み込み（`LoadJobsLocked`）は先頭の非空白文字で判別する:
   - `[` の場合（旧形式）: `List<ClaudeJob>` として読み込み、`claudeRevision` の初期値は移行時点の Unix 秒とする。読み込み直後に新形式で保存し直し、移行をその場で確定させる（コンソールに移行ログを1行出す）。
   - `{` の場合（新形式）: オブジェクトとして読み込み、`claudeRevision` が 0 以下の場合は 1 とする。
   - 読み込み時のジョブ正規化: `queue` が null・空・不正値なら `manual`。`status` が `approval_expired` なら `status = queued`、`queue = waiting` へ変換する（トークンは当該状態では常に消去済み）。
   - 形式を問わず、正規化で1件でも変更が発生した場合は読み込みの最後に `SaveJobsLocked()` を呼び、メモリとディスクの乖離を防ぐ（レビュー §10 の 10-5-1）。
-- [ ] `6-1a-3` リビジョンの永続化 API を新設する: `GetRevision()`（未読み込みなら読み込んで返す。0 のままなら 1）と `IncrementRevision()`（加算して保存し、新しい値を返す）。保存は `SaveJobsLocked` の新形式に相乗りする。
-- [ ] `6-1a-4` `CreateJob` の初期化に `errorDismissed = false` を追加し、`queue` が null・空なら `manual` に正規化する（作成ハンドラ側が本則の検証と既定値付けを行う。ここは安全網）。
-- [ ] `6-1a-5` `CleanupLocked` の削除条件を変更する（§10 への追加指示事項）: `done` は従来どおり `acknowledged` のみ。**`done_with_errors` は `acknowledged` かつ `errorDismissed` の両方**を必須とする。スマホで完了通知を閉じた（ack）だけでは、PC で未対応のエラー履歴が 30 日で消えないようにするため。`cancelled` / `denied` は従来どおり。
+- [x] `6-1a-3` リビジョンの永続化 API を新設する: `GetRevision()`（未読み込みなら読み込んで返す。0 のままなら 1）と `IncrementRevision()`（加算して保存し、新しい値を返す）。保存は `SaveJobsLocked` の新形式に相乗りする。
+- [x] `6-1a-4` `CreateJob` の初期化に `errorDismissed = false` を追加し、`queue` が null・空なら `manual` に正規化する（作成ハンドラ側が本則の検証と既定値付けを行う。ここは安全網）。
+- [x] `6-1a-5` `CleanupLocked` の削除条件を変更する（§10 への追加指示事項）: `done` は従来どおり `acknowledged` のみ。**`done_with_errors` は `acknowledged` かつ `errorDismissed` の両方**を必須とする。スマホで完了通知を閉じた（ack）だけでは、PC で未対応のエラー履歴が 30 日で消えないようにするため。`cancelled` / `denied` は従来どおり。
 
 #### 11.1.2 サーバー（`tools/FurimaServerNative.cs`）
 
-- [ ] `6-1a-6` リビジョンの実体をストアへ移す: 静的フィールド `claudeRevision` を廃し、`BumpClaudeRevision()` は `ClaudeJobStore.IncrementRevision()`、`GetClaudeRevision()` は `ClaudeJobStore.GetRevision()` へ委譲する。本体・ステータス・ハートビートを含む全応答箇所（約15箇所）は `GetClaudeRevision()` 経由のため無変更で済む。
-- [ ] `6-1a-7` `ToPublicClaudeJob` に `queue`（null なら `manual`）と `errorDismissed` を追加する。`jobToken` を含めない規約は不変。
-- [ ] `6-1a-8` 作成は原子的に行う（レビュー §10 の 10-2）: `ClaudeJobStore.CreateJob` を拡張し、単一の `_jobLock` 内で次をすべて確定させ、保存は1回だけにする。呼び出し元は作成ハンドラのみであることを確認済み。
+- [x] `6-1a-6` リビジョンの実体をストアへ移す: 静的フィールド `claudeRevision` を廃し、`BumpClaudeRevision()` は `ClaudeJobStore.IncrementRevision()`、`GetClaudeRevision()` は `ClaudeJobStore.GetRevision()` へ委譲する。本体・ステータス・ハートビートを含む全応答箇所（約15箇所）は `GetClaudeRevision()` 経由のため無変更で済む。
+- [x] `6-1a-7` `ToPublicClaudeJob` に `queue`（null なら `manual`）と `errorDismissed` を追加する。`jobToken` を含めない規約は不変。
+- [x] `6-1a-8` 作成は原子的に行う（レビュー §10 の 10-2）: `ClaudeJobStore.CreateJob` を拡張し、単一の `_jobLock` 内で次をすべて確定させ、保存は1回だけにする。呼び出し元は作成ハンドラのみであることを確認済み。
   - `queue` の確定（ハンドラが検証した値を受ける。検証規則は従来どおり: 不正値・未指定は `patrol`）。
   - 初期状態: `queue` が `patrol` / `manual` なら最初から `status = approval_pending`、`approvalRequestedAt = 現在時刻`（送信時承認リクエスト）。`waiting` のときだけ `status = queued`。
   - `claudeRevision` の加算も同じロック内でカウンタを直接進め、同じ保存に含める。
   - ハンドラ側は作成後の遷移（`MutateJob`）も個別の `BumpClaudeRevision()` も行わない。応答の `job` は `CreateJob` の戻り値（初期状態を含む）をそのまま使う。これにより「所属は巡回なのに一瞬だけ `queued` が見える」中間状態と、作成1回あたり3回の全量保存を解消する。
-- [ ] `6-1a-9` 承認リクエスト（`HandleRequestClaudeApproval`）の許可条件を変更する: `status = queued` かつ `queue != waiting` の場合のみ許可する（`approval_expired` は読み込み時正規化で消滅するため許可状態から外す）。`queue = waiting` の場合は 400 とし、ジョブ一覧からの移動を案内するメッセージを返す。本エンドポイントは移行期・手動経路の予備として存続させる。
-- [ ] `6-1a-10` `ApplyApprovalPendingExpiry` の遷移に `queue = waiting` の設定を追加する（状態は `queued` へ戻す従来処理と一体）。
-- [ ] `6-1a-11` `ApplyTokenExpiry` を §10 の 7-3 で差し替える:
+- [x] `6-1a-9` 承認リクエスト（`HandleRequestClaudeApproval`）の許可条件を変更する: `status = queued` かつ `queue != waiting` の場合のみ許可する（`approval_expired` は読み込み時正規化で消滅するため許可状態から外す）。`queue = waiting` の場合は 400 とし、ジョブ一覧からの移動を案内するメッセージを返す。本エンドポイントは移行期・手動経路の予備として存続させる。
+- [x] `6-1a-10` `ApplyApprovalPendingExpiry` の遷移に `queue = waiting` の設定を追加する（状態は `queued` へ戻す従来処理と一体）。
+- [x] `6-1a-11` `ApplyTokenExpiry` を §10 の 7-3 で差し替える:
   - 対象は従来どおり `approved` / `processing` かつトークン期限切れの場合。
   - `results`・`errors` がともに空（未着手）なら: `status = queued`、`queue = waiting`、トークン消去。
   - 1件でも記録がある場合: 結果もエラーも無い写真すべてに、メッセージ「トークンの有効期限が切れたため、未処理のまま終了しました」のエラーを追加記録し、全写真に結果がある場合は `done`、それ以外は `done_with_errors` として `completedAt` を設定して終端させる。トークンは消去する。
   - 呼び出し箇所は従来どおり（トークン系エンドポイント＋一覧・詳細の読み取り時）。読み取り時に終端遷移が materialize されることで、一覧表示が常に真実になる。
-- [ ] `6-1a-12` リスト間移動 API を新設する: `POST /api/claude/jobs/{jobId}/move`（Bearer 認証。本文 `{ "queue": "patrol" | "manual" | "waiting" }`）。ルーティングは既存の接尾辞マッチ方式で、詳細 GET より前に追加する。処理:
+- [x] `6-1a-12` リスト間移動 API を新設する: `POST /api/claude/jobs/{jobId}/move`（Bearer 認証。本文 `{ "queue": "patrol" | "manual" | "waiting" }`）。ルーティングは既存の接尾辞マッチ方式で、詳細 GET より前に追加する。処理:
   - 対象が無ければ 404。先に両失効評価を行い、状態を取り直す。
   - 移動を許可するのは `status = queued` または `status = approval_pending` の場合のみ。それ以外は 409（レビュー §10 の 10-1 で許可条件の矛盾を解消）。
   - 現在と同じ `queue` への移動は no-op とし、状態変更・保存・リビジョン更新を行わず、現在の公開ジョブで 200 を返す（冪等）。
   - 効果: 移動先が `waiting` なら `status = queued`、`approvalRequestedAt = 0`（`approval_pending` からの移動はリクエストの取り下げ）。移動先が `patrol` / `manual` で現在 `queued` なら `status = approval_pending`、`approvalRequestedAt = 現在時刻`（送信操作として承認を発火）。現在 `approval_pending` のまま `patrol` ⇔ `manual` を切り替える場合は状態とリクエスト時刻を維持し、`queue` のみ変更する。
   - 変更があった場合のみリビジョンを更新し、遷移後の公開ジョブを返す。
-- [ ] `6-1a-13` エラー警告の解消 API を新設する: `POST /api/claude/jobs/{jobId}/dismiss-error`（Bearer 認証）。`status = done_with_errors` の場合のみ `errorDismissed = true` を設定する（それ以外は 400）。冪等仕様は `HandleAckClaudeJob` と同型とする: 既に `errorDismissed = true` の場合は再保存・リビジョン更新をせず 200 を返し、`false → true` の場合のみ保存＋`BumpClaudeRevision()` する（6-5 のラベル・6-7 の件数が `claudeRevision` の変化で更新されるため必須。レビュー §10 の 10-3）。UI からの利用は 6-6 で行うが、フラグの意味（§10 の 7-2）と 30 日整理条件（`6-1a-5`）をこの時点で効かせるため、受け口だけ先に用意する。
-- [ ] `6-1a-14` 文字列修正: エラー記録の既定メッセージ「Claude側でエラーが報告されました」を「Muse側でエラーが報告されました」に直す（§3.7 のサーバー分）。
+- [x] `6-1a-13` エラー警告の解消 API を新設する: `POST /api/claude/jobs/{jobId}/dismiss-error`（Bearer 認証）。`status = done_with_errors` の場合のみ `errorDismissed = true` を設定する（それ以外は 400）。冪等仕様は `HandleAckClaudeJob` と同型とする: 既に `errorDismissed = true` の場合は再保存・リビジョン更新をせず 200 を返し、`false → true` の場合のみ保存＋`BumpClaudeRevision()` する（6-5 のラベル・6-7 の件数が `claudeRevision` の変化で更新されるため必須。レビュー §10 の 10-3）。UI からの利用は 6-6 で行うが、フラグの意味（§10 の 7-2）と 30 日整理条件（`6-1a-5`）をこの時点で効かせるため、受け口だけ先に用意する。
+- [x] `6-1a-14` 文字列修正: エラー記録の既定メッセージ「Claude側でエラーが報告されました」を「Muse側でエラーが報告されました」に直す（§3.7 のサーバー分）。
 
 #### 11.1.3 PC 管理画面（`tools/DashboardHtml.cs`）
 
-- [ ] `6-1a-15` ギャラリーのツールバーに送り先セレクト（`viewer-claude-queue`）をテンプレート選択の隣へ追加する。選択肢は「巡回（自動で処理）」「手動（すぐ実行）」「待機（あとで）」とし、既定は巡回。
-- [ ] `6-1a-16` `sendViewerPhotosToClaude` の変更: セレクトの値を読み、確認ダイアログの文面に送り先を含め、POST 本文に `queue` を追加する。完了トーストにも送り先を表示し、`waiting` の場合は承認リクエストが送られない旨を含める。あわせて確認ダイアログ文面に残存していた旧名称「…でClaudeに送ります」を「…でMuseに送ります」に直す（レビュー §10 の 10-4-2。§3.7 の対象に追加）。
-- [ ] `6-1a-17` ジョブ一覧モーダル: 説明文を実態に合わせて書き換える（「実行はClaude側の…」の旧文を廃し、送信時にスマホへ承認リクエストが届くこと・巡回と手動の違いを記す。§3.7 のモーダル分を含む）。表示の整理（レビュー §10 の 10-4）:
+- [x] `6-1a-15` ギャラリーのツールバーに送り先セレクト（`viewer-claude-queue`）をテンプレート選択の隣へ追加する。選択肢は「巡回（自動で処理）」「手動（すぐ実行）」「待機（あとで）」とし、既定は巡回。
+- [x] `6-1a-16` `sendViewerPhotosToClaude` の変更: セレクトの値を読み、確認ダイアログの文面に送り先を含め、POST 本文に `queue` を追加する。完了トーストにも送り先を表示し、`waiting` の場合は承認リクエストが送られない旨を含める。あわせて確認ダイアログ文面に残存していた旧名称「…でClaudeに送ります」を「…でMuseに送ります」に直す（レビュー §10 の 10-4-2。§3.7 の対象に追加）。
+- [x] `6-1a-17` ジョブ一覧モーダル: 説明文を実態に合わせて書き換える（「実行はClaude側の…」の旧文を廃し、送信時にスマホへ承認リクエストが届くこと・巡回と手動の違いを記す。§3.7 のモーダル分を含む）。表示の整理（レビュー §10 の 10-4）:
   - 状態ラベルは `status` と `queue` の組み合わせで決める（`claudeJobStatusInfo` を `queue` 対応に拡張する）: `queued` + `waiting` → 「待機中」、`queued` + `patrol` / `manual` → 「未依頼」、`approval_pending` → 「承認待ち」、`approved` → 「承認済み」、`processing` → 「処理中」、`done` → 「完了」、`done_with_errors` → 「一部エラー」、`denied` → 「拒否」、`cancelled` → 「取消済み」。
   - 所属バッジは `patrol` → 「巡回」、`manual` → 「手動」の場合のみ表示する（`waiting` は状態ラベル「待機中」と重複するため表示しない）。これにより「[待機中] [待機]」のような重複表記を避ける。
   - `refreshClaudeJobsCount` のアクティブ件数には、`queue = waiting` かつ `status = queued` のジョブを含めない（駐車中の件数でバッジが常時非ゼロになるのを防ぐ。待機件数の表示は 6-7 のミューズカラムが担う）。
-- [ ] `6-1a-18` 最小限の移動ボタンを追加する（§10 の 7-1）: `status = queued` かつ `queue = waiting` の行に「巡回へ」「手動へ」、`status = queued` かつ `queue != waiting` の行と `approval_pending` の行に「待機へ」。実装は既存の `ackClaudeJob` / `cancelClaudeJob` と同じ fetch 方式で `moveClaudeJob(jobId, queue)` を新設し、成功後に一覧と件数を再取得する。
+- [x] `6-1a-18` 最小限の移動ボタンを追加する（§10 の 7-1）: `status = queued` かつ `queue = waiting` の行に「巡回へ」「手動へ」、`status = queued` かつ `queue != waiting` の行と `approval_pending` の行に「待機へ」。実装は既存の `ackClaudeJob` / `cancelClaudeJob` と同じ fetch 方式で `moveClaudeJob(jobId, queue)` を新設し、成功後に一覧と件数を再取得する。
 
 #### 11.1.4 スマホ（Android）
 
-- [ ] `6-1a-19` DTO 拡張: `CreateClaudeJobRequestDto` に `queue`（既定 `patrol`）を追加。`ClaudeJobDto` に `queue`（既定 `manual`）と `errorDismissed`（既定 false）を追加する（将来フェーズの表示・判定に備え、この時点で受けられるようにする）。
-- [ ] `6-1a-20` `PcServerClient.createClaudeJob` と `FleaMarketViewModel.sendPhotosToClaude` に `queue` 引数を追加して伝播させる。
-- [ ] `6-1a-21` `ClaudeSendDialog` に送り先の3択（巡回／手動／待機、各1行説明付き）を追加し、確定時に `queue` を返すよう `onConfirm` を拡張する。呼び出し側（`ItemEditScreen`）も追随させる。
-- [ ] `6-1a-22` 既知の暫定挙動として明記: スマホ発の送信でも送信時に承認リクエストが発火するため、送信直後に承認ダイアログ（従来の単体表示）が出ることがある。これは欠陥ではなく、画面連動の抑止と一括承認は 6-2 で改善する（Build 13 の「いったん閉じる」で作業継続は可能）。
+- [x] `6-1a-19` DTO 拡張: `CreateClaudeJobRequestDto` に `queue`（既定 `patrol`）を追加。`ClaudeJobDto` に `queue`（既定 `manual`）と `errorDismissed`（既定 false）を追加する（将来フェーズの表示・判定に備え、この時点で受けられるようにする）。
+- [x] `6-1a-20` `PcServerClient.createClaudeJob` と `FleaMarketViewModel.sendPhotosToClaude` に `queue` 引数を追加して伝播させる。
+- [x] `6-1a-21` `ClaudeSendDialog` に送り先の3択（巡回／手動／待機、各1行説明付き）を追加し、確定時に `queue` を返すよう `onConfirm` を拡張する。呼び出し側（`ItemEditScreen`）も追随させる。
+- [x] `6-1a-22` 既知の暫定挙動として明記: スマホ発の送信でも送信時に承認リクエストが発火するため、送信直後に承認ダイアログ（従来の単体表示）が出ることがある。これは欠陥ではなく、画面連動の抑止と一括承認は 6-2 で改善する（Build 13 の「いったん閉じる」で作業継続は可能）。
 
 #### 11.1.5 バージョン・記録
 
-- [ ] `6-1a-23` バージョンを **Build 14** に3箇所同時統一し、`PROGRESS.md` に完了記録を残して選択的コミットする。
+- [x] `6-1a-23` バージョンを **Build 14** に3箇所同時統一し、`PROGRESS.md` に完了記録を残して選択的コミットする。
 
 #### 11.1.6 6-1a の確認項目（ビルド後にユーザーが実施）
 

@@ -366,7 +366,7 @@ fun ItemEditScreen(
             excludedCount = claudeExcludedCount,
             isConnected = isPcServerConnected,
             onDismiss = { showClaudeSendDialog = false },
-            onSend = { tpl ->
+            onSend = { tpl, queue ->
                 showClaudeSendDialog = false
                 isSendingToClaude = true
                 viewModel.sendPhotosToClaude(
@@ -374,13 +374,18 @@ fun ItemEditScreen(
                     itemUuid = loadedItem?.syncUuid ?: "",
                     photos = claudeEligiblePhotos,
                     templateId = tpl.id,
+                    queue = queue,
                     onError = { msg ->
                         isSendingToClaude = false
                         Toast.makeText(context, "送信エラー: $msg", Toast.LENGTH_LONG).show()
                     },
                     onSuccess = {
                         isSendingToClaude = false
-                        Toast.makeText(context, "Museジョブを作成しました", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            if (queue == "waiting") "待機リストへ送りました" else "Museジョブを作成しました（承認リクエストを送信しました）",
+                            Toast.LENGTH_LONG
+                        ).show()
                         exitPhotoSelectionMode()
                     }
                 )
