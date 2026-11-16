@@ -6,6 +6,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,7 +60,7 @@ fun ClaudeSendDialog(
         onDismissRequest = onDismiss,
         title = { Text("Museに送る") },
         text = {
-            Column {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(
                     "選択した写真 ${photoCount}枚を、画像加工ジョブとしてPCへ送ります。",
                     fontSize = 13.sp
@@ -129,6 +132,7 @@ fun ClaudeSendDialog(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { queue = value }
+                            .padding(vertical = 2.dp)
                     ) {
                         RadioButton(
                             selected = queue == value,

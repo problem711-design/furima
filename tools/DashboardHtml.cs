@@ -2260,6 +2260,7 @@ public static class DashboardHtml
             const claudeCountSpan = document.getElementById('viewer-claude-selected-count');
             const claudeBtn = document.getElementById('viewer-claude-send-btn');
             const claudeSel = document.getElementById('viewer-claude-template');
+            const claudeQueueSel = document.getElementById('viewer-claude-queue');
             const bundleNote = document.getElementById('viewer-claude-bundle-note');
             if (claudeCountSpan) claudeCountSpan.innerText = selSize;
             const viewerItem = allItems.find(i => i.id === currentViewerItemId);
@@ -2267,6 +2268,7 @@ public static class DashboardHtml
             const hasTpl = (pcSettings.promptTemplates || []).length > 0;
             if (claudeBtn) claudeBtn.disabled = (selSize === 0 || isBundle || !hasTpl);
             if (claudeSel) claudeSel.disabled = (!hasTpl || isBundle);
+            if (claudeQueueSel) claudeQueueSel.disabled = (!hasTpl || isBundle);
             if (bundleNote) bundleNote.classList.toggle('hidden', !isBundle);
         }
 
@@ -2322,11 +2324,14 @@ public static class DashboardHtml
             } catch (e) {}
         }
 
+        function countActiveClaudeJobs() {
+            return claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status) && !(j.status === 'queued' && j.queue === 'waiting')).length;
+        }
+
         function refreshClaudeJobsCount() {
             fetchClaudeJobs().then(() => {
-                const active = claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status) && !(j.status === 'queued' && j.queue === 'waiting')).length;
                 const el = document.getElementById('viewer-claude-jobs-count');
-                if (el) el.innerText = active;
+                if (el) el.innerText = countActiveClaudeJobs();
             });
         }
 
@@ -2342,9 +2347,8 @@ public static class DashboardHtml
         async function refreshClaudeJobsList() {
             await fetchClaudeJobs();
             renderClaudeJobsList();
-            const active = claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status)).length;
             const el = document.getElementById('viewer-claude-jobs-count');
-            if (el) el.innerText = active;
+            if (el) el.innerText = countActiveClaudeJobs();
         }
 
         function renderClaudeJobsList() {
