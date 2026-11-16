@@ -1330,6 +1330,17 @@ class FurimaServerNative
         }
     }
 
+    // レビュー 24-1: トンネル (cloudflared) 経由のリクエストには転送ヘッダが付く。
+    // ループバック免除と管理画面の配信を「直接のローカルアクセス」だけに限定するための判定。
+    private static bool HasForwardedHeaders(HttpListenerRequest req)
+    {
+        return !string.IsNullOrEmpty(req.Headers["Cf-Connecting-Ip"]) ||
+               !string.IsNullOrEmpty(req.Headers["Cf-Ray"]) ||
+               !string.IsNullOrEmpty(req.Headers["X-Forwarded-For"]) ||
+               !string.IsNullOrEmpty(req.Headers["Forwarded"]) ||
+               !string.IsNullOrEmpty(req.Headers["X-Real-IP"]);
+    }
+
     private static bool AuthenticateRequest(HttpListenerContext ctx)
     {
         HttpListenerRequest req = ctx.Request;
@@ -1339,11 +1350,25 @@ class FurimaServerNative
 
         IPAddress remoteIp = req.RemoteEndPoint.Address;
         bool isLoopback = IPAddress.IsLoopback(remoteIp);
-
-        // ループバックからのアクセスは許可
-        if (isLoopback) return true;
+        bool forwarded = HasForwardedHeaders(req);
 
         string path = req.Url.AbsolutePath;
+
+        // レビュー 24-1 (方式1): 管理画面 HTML は合鍵そのものを含むため PC ローカル専用とする。
+        // 転送ヘッダ付き (トンネル経由) またはループバック以外からの画面取得は拒否する。
+        if (path == "/")
+        {
+            if (forwarded || !isLoopback)
+            {
+                res.StatusCode = 403;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "管理画面は PC ローカルからのみ利用できます" } });
+                return false;
+            }
+            return true;
+        }
+
+        // ループバックからの直接アクセスは許可 (トンネル経由は転送ヘッダで除外する)
+        if (isLoopback && !forwarded) return true;
         // フェーズ 6-3: 変化カウンタの公開窓口のみ認証を免除する (GET + 完全一致パスのみ)。
         // 見張りスクリプトはこの数字だけを見て、認証情報を持たない。
         if (req.HttpMethod == "GET" && path == "/api/claude/revision")
@@ -1408,6 +1433,8 @@ class FurimaServerNative
     // IPv4-mapped IPv6 は IPv4 へ正規化してから比較する。
     private static bool IsTrustedClaudeExemptRequest(HttpListenerRequest req, string path)
     {
+        // レビュー 24-1 補足ガード: 転送ヘッダを持つリクエストは免除対象にしない (防御的措置)
+        if (HasForwardedHeaders(req)) return false;
         if (!IsTrustedClaudeExemptPath(req.HttpMethod, path)) return false;
         string configured = SyncStore.GetTrustedMuseIp();
         if (string.IsNullOrEmpty(configured)) return false;
@@ -1429,10 +1456,56 @@ class FurimaServerNative
         raw = raw.Trim();
         if (raw.Length == 0) return true;
         IPAddress ip;
-        if (!IPAddress.TryParse(raw, out ip)) return false;
-        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (raw.IndexOf('.') >= 0 && raw.IndexOf(':') < 0)
+        {
+            // レビュー 24-5: IPv4 は 4 オクテットの正規形のみ受理する。
+            // IPAddress.TryParse は "100" や "192.168.1" のような省略表記も受理してしまうため、先に分解して検証する。
+            string[] parts = raw.Split('.');
+            if (parts.Length != 4) return false;
+            for (int i = 0; i < parts.Length; i++)
+            {
+                string part = parts[i];
+                if (part.Length == 0 || part.Length > 3) return false;
+                if (part.Length > 1 && part[0] == '0') return false;
+                int value = 0;
+                for (int k = 0; k < part.Length; k++)
+                {
+                    char c = part[k];
+                    if (c < '0' || c > '9') return false;
+                    value = value * 10 + (c - '0');
+                }
+                if (value > 255) return false;
+            }
+            if (!IPAddress.TryParse(raw, out ip)) return false;
+            if (ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+        }
+        else if (raw.IndexOf(':') >= 0)
+        {
+            if (!IPAddress.TryParse(raw, out ip)) return false;
+            if (ip.IsIPv4MappedToIPv6)
+            {
+                // IPv4-mapped IPv6 は IPv4 のドット表記として検証し直す
+                return TryNormalizeTrustedIp(ip.MapToIPv4().ToString(), out normalized);
+            }
+            // IPv6 は正規形 (ToString の往復一致) のみ受理する
+            if (!string.Equals(ip.ToString(), raw, StringComparison.OrdinalIgnoreCase)) return false;
+        }
+        else
+        {
+            return false;
+        }
         if (IPAddress.IsLoopback(ip)) return false;
         if (ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any)) return false;
+        if (ip.Equals(IPAddress.Broadcast)) return false;
+        byte[] addrBytes = ip.GetAddressBytes();
+        if (ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            if (addrBytes[0] >= 224 && addrBytes[0] <= 239) return false;
+        }
+        else
+        {
+            if (addrBytes[0] == 0xFF) return false;
+        }
         normalized = ip.ToString();
         return true;
     }
@@ -1449,8 +1522,25 @@ class FurimaServerNative
             string raw = "";
             if (!string.IsNullOrEmpty(jsonStr))
             {
-                JObject json = JObject.Parse(jsonStr);
-                raw = json.Value<string>("trustedMuseIp") ?? "";
+                JObject json = null;
+                try
+                {
+                    json = JObject.Parse(jsonStr);
+                }
+                catch (Exception)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "リクエスト形式が不正です" } });
+                    return;
+                }
+                JToken ipToken = json["trustedMuseIp"];
+                if (ipToken != null && ipToken.Type != JTokenType.String && ipToken.Type != JTokenType.Null)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "許可アドレスは文字列で指定してください" } });
+                    return;
+                }
+                raw = (ipToken != null && ipToken.Type == JTokenType.String) ? (string)ipToken : "";
             }
             string normalized;
             if (!TryNormalizeTrustedIp(raw, out normalized))
@@ -1459,7 +1549,12 @@ class FurimaServerNative
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "許可アドレスの形式が不正です（単一のIPアドレスを指定してください）" } });
                 return;
             }
-            SyncStore.SetTrustedMuseIp(normalized);
+            if (!SyncStore.SetTrustedMuseIp(normalized))
+            {
+                res.StatusCode = 500;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "許可アドレスの保存に失敗しました" } });
+                return;
+            }
             SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "trustedMuseIp", normalized } });
         }
         catch (Exception ex)
@@ -5558,6 +5653,16 @@ class FurimaServerNative
                     SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
                     return;
                 }
+                // レビュー 24-6: ロック内でも期限切れを再評価し、最新状態でトークンを再検証する
+                ApplyTokenExpiry(fresh);
+                fresh = ClaudeJobStore.GetJob(jobId);
+                if (fresh == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                    return;
+                }
+                if (!ValidateClaudeJobToken(req, res, fresh)) return;
                 if (fresh.status != "approved" && fresh.status != "processing")
                 {
                     res.StatusCode = 400;
@@ -5666,6 +5771,26 @@ class FurimaServerNative
 
                 File.WriteAllBytes(resultPath, bytes);
 
+                // レビュー 24-6: 追記直前にも状態を再確認する (取消・失効で閉じたジョブへは書き込まない)。
+                // 商品への写真登録は追記の成功後に行い、失敗時は書き込んだファイルを掃除する。
+                bool resultAppended = false;
+                ClaudeJobStore.MutateJob(jobId, j =>
+                {
+                    if (j.status != "approved" && j.status != "processing") return false;
+                    if (j.results == null) j.results = new List<ClaudeJobResult>();
+                    j.results.Add(new ClaudeJobResult { sourceMd5 = sourceMd5, resultFileName = resultFileName, resultMd5 = resultMd5 });
+                    j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
+                    resultAppended = true;
+                    return true;
+                });
+                if (!resultAppended)
+                {
+                    try { File.Delete(resultPath); } catch (Exception) { }
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが既に終了しているため結果を登録できませんでした" } });
+                    return;
+                }
+
                 // フォルダ取込スキャン (フェーズ 4-4) と同一の登録処理で即時登録する。
                 // photoStatCache / hashToFilePathMap / item["photos"] がロック下で即時更新され、
                 // FileSystemWatcher 側の再取込・二重登録を抑制する。
@@ -5681,13 +5806,6 @@ class FurimaServerNative
                 });
                 CommitAutoImportedPhotosBatch(entries);
 
-                ClaudeJobStore.MutateJob(jobId, j =>
-                {
-                    if (j.results == null) j.results = new List<ClaudeJobResult>();
-                    j.results.Add(new ClaudeJobResult { sourceMd5 = sourceMd5, resultFileName = resultFileName, resultMd5 = resultMd5 });
-                    j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
-                    return true;
-                });
                 BumpClaudeRevision();
 
                 SendJson(res, new Dictionary<string, object>
@@ -5764,6 +5882,16 @@ class FurimaServerNative
                     SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
                     return;
                 }
+                // レビュー 24-6: ロック内でも期限切れを再評価し、最新状態でトークンを再検証する
+                ApplyTokenExpiry(fresh);
+                fresh = ClaudeJobStore.GetJob(jobId);
+                if (fresh == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                    return;
+                }
+                if (!ValidateClaudeJobToken(req, res, fresh)) return;
                 if (fresh.status != "approved" && fresh.status != "processing")
                 {
                     res.StatusCode = 400;
@@ -5806,14 +5934,24 @@ class FurimaServerNative
                     }
                 }
 
+                // レビュー 24-6: 追記直前にも状態を再確認する (結果側と同型)
+                bool errorAppended = false;
                 ClaudeJobStore.MutateJob(jobId, j =>
                 {
+                    if (j.status != "approved" && j.status != "processing") return false;
                     if (j.errors == null) j.errors = new List<ClaudeJobError>();
                     j.errors.Add(new ClaudeJobError { sourceMd5 = sourceMd5, message = message });
                     if (j.status == "approved") j.status = "processing";
                     j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
+                    errorAppended = true;
                     return true;
                 });
+                if (!errorAppended)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが既に終了しているためエラーを記録できませんでした" } });
+                    return;
+                }
                 BumpClaudeRevision();
 
                 SendJson(res, new Dictionary<string, object>
@@ -5840,58 +5978,11 @@ class FurimaServerNative
     {
         try
         {
-            var job = ClaudeJobStore.GetJob(jobId);
-            if (job == null)
+            // レビュー 24-6: 結果登録系と同じロックで直列化する (ロック順序はガードBどおり最外層)
+            lock (claudeResultWriteLock)
             {
-                res.StatusCode = 404;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
-                return;
+                HandleCompleteClaudeJobLocked(req, res, jobId);
             }
-            ApplyTokenExpiry(job);
-            job = ClaudeJobStore.GetJob(jobId);
-            if (!ValidateClaudeJobToken(req, res, job)) return;
-            if (job.status != "approved" && job.status != "processing")
-            {
-                res.StatusCode = 400;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "完了できる状態ではありません (status: " + job.status + ")" } });
-                return;
-            }
-
-            int missing = 0;
-            if (job.photos != null)
-            {
-                foreach (var ph in job.photos)
-                {
-                    bool hasResult = job.results != null && job.results.Exists(r => string.Equals(r.sourceMd5, ph.md5, StringComparison.OrdinalIgnoreCase));
-                    bool hasError = job.errors != null && job.errors.Exists(e => string.Equals(e.sourceMd5, ph.md5, StringComparison.OrdinalIgnoreCase));
-                    if (!hasResult && !hasError) missing++;
-                }
-            }
-            if (missing > 0)
-            {
-                res.StatusCode = 400;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "未処理の写真が " + missing + " 枚あります（結果またはエラーの記録が必要です）" } });
-                return;
-            }
-
-            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            string newStatus = (job.errors != null && job.errors.Count > 0) ? "done_with_errors" : "done";
-            ClaudeJobStore.MutateJob(jobId, j =>
-            {
-                j.status = newStatus;
-                j.completedAt = now;
-                j.jobToken = null;
-                j.jobTokenExpiresAt = 0;
-                return true;
-            });
-            BumpClaudeRevision();
-            job = ClaudeJobStore.GetJob(jobId);
-            SendJson(res, new Dictionary<string, object>
-            {
-                { "status", "ok" },
-                { "job", ToPublicClaudeJob(job) },
-                { "claudeRevision", GetClaudeRevision() }
-            });
         }
         catch (Exception ex)
         {
@@ -5899,6 +5990,62 @@ class FurimaServerNative
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }
+    }
+
+    private static void HandleCompleteClaudeJobLocked(HttpListenerRequest req, HttpListenerResponse res, string jobId)
+    {
+        var job = ClaudeJobStore.GetJob(jobId);
+        if (job == null)
+        {
+            res.StatusCode = 404;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+            return;
+        }
+        ApplyTokenExpiry(job);
+        job = ClaudeJobStore.GetJob(jobId);
+        if (!ValidateClaudeJobToken(req, res, job)) return;
+        if (job.status != "approved" && job.status != "processing")
+        {
+            res.StatusCode = 400;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "完了できる状態ではありません (status: " + job.status + ")" } });
+            return;
+        }
+
+        int missing = 0;
+        if (job.photos != null)
+        {
+            foreach (var ph in job.photos)
+            {
+                bool hasResult = job.results != null && job.results.Exists(r => string.Equals(r.sourceMd5, ph.md5, StringComparison.OrdinalIgnoreCase));
+                bool hasError = job.errors != null && job.errors.Exists(e => string.Equals(e.sourceMd5, ph.md5, StringComparison.OrdinalIgnoreCase));
+                if (!hasResult && !hasError) missing++;
+            }
+        }
+        if (missing > 0)
+        {
+            res.StatusCode = 400;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "未処理の写真が " + missing + " 枚あります（結果またはエラーの記録が必要です）" } });
+            return;
+        }
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string newStatus = (job.errors != null && job.errors.Count > 0) ? "done_with_errors" : "done";
+        ClaudeJobStore.MutateJob(jobId, j =>
+        {
+            j.status = newStatus;
+            j.completedAt = now;
+            j.jobToken = null;
+            j.jobTokenExpiresAt = 0;
+            return true;
+        });
+        BumpClaudeRevision();
+        job = ClaudeJobStore.GetJob(jobId);
+        SendJson(res, new Dictionary<string, object>
+        {
+            { "status", "ok" },
+            { "job", ToPublicClaudeJob(job) },
+            { "claudeRevision", GetClaudeRevision() }
+        });
     }
 
     private static void HandleAckClaudeJob(HttpListenerResponse res, string jobId)
@@ -6071,27 +6218,11 @@ class FurimaServerNative
     {
         try
         {
-            int result = ClaudeJobStore.CancelJob(jobId);
-            if (result == 0)
+            // レビュー 24-6: 結果登録系と同じロックで直列化する (ロック順序はガードBどおり最外層)
+            lock (claudeResultWriteLock)
             {
-                res.StatusCode = 404;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
-                return;
+                HandleCancelClaudeJobLocked(res, jobId);
             }
-            if (result == 2)
-            {
-                res.StatusCode = 400;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "このジョブは取り消せない状態です" } });
-                return;
-            }
-            BumpClaudeRevision();
-            var job = ClaudeJobStore.GetJob(jobId);
-            SendJson(res, new Dictionary<string, object>
-            {
-                { "status", "ok" },
-                { "job", ToPublicClaudeJob(job) },
-                { "claudeRevision", GetClaudeRevision() }
-            });
         }
         catch (Exception ex)
         {
@@ -6099,6 +6230,31 @@ class FurimaServerNative
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }
+    }
+
+    private static void HandleCancelClaudeJobLocked(HttpListenerResponse res, string jobId)
+    {
+        int result = ClaudeJobStore.CancelJob(jobId);
+        if (result == 0)
+        {
+            res.StatusCode = 404;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+            return;
+        }
+        if (result == 2)
+        {
+            res.StatusCode = 400;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "このジョブは取り消せない状態です" } });
+            return;
+        }
+        BumpClaudeRevision();
+        var job = ClaudeJobStore.GetJob(jobId);
+        SendJson(res, new Dictionary<string, object>
+        {
+            { "status", "ok" },
+            { "job", ToPublicClaudeJob(job) },
+            { "claudeRevision", GetClaudeRevision() }
+        });
     }
 
     private static string DetectImageMimeType(byte[] bytes)

@@ -346,7 +346,8 @@ public static class SyncStore
         }
     }
 
-    public static void SetTrustedMuseIp(string ip)
+    // レビュー 24-5: 保存の成否を呼び出し側へ返す (失敗を成功応答で握り潰さない)
+    public static bool SetTrustedMuseIp(string ip)
     {
         lock (_configLock)
         {
@@ -370,8 +371,10 @@ public static class SyncStore
                 catch (Exception ex)
                 {
                     Console.WriteLine("[警告] store.json の許可アドレス保存に失敗しました: " + ex.Message);
+                    return false;
                 }
             }
+            return true;
         }
     }
 

@@ -70,6 +70,75 @@ class FleaMarketRepository(private val context: Context) {
         }
     }
 
+    // レビュー 24-7: 未Pushの写真削除の記録。商品キーはローカル数値IDではなく syncUuid を使う。
+    // isDirty 中の加算マージ (PcServerClient) で、削除したはずの写真がサーバーから
+    // 復活しないよう、送信が成功するまで (syncUuid, md5Hash) を保持して除外に使う。
+    fun recordPendingPhotoDeletion(syncUuid: String, md5Hash: String) {
+        val uuid = syncUuid.trim()
+        val md5 = md5Hash.trim().lowercase()
+        if (uuid.isBlank() || md5.isBlank()) return
+        synchronized(syncTombstonePrefs) {
+            val key = "pending_deleted_photo_hashes_$uuid"
+            val current = (syncTombstonePrefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
+            current.add(md5)
+            syncTombstonePrefs.edit().putStringSet(key, current).apply()
+        }
+    }
+
+    fun getPendingPhotoDeletions(syncUuid: String): Set<String> {
+        val uuid = syncUuid.trim()
+        if (uuid.isBlank()) return emptySet()
+        synchronized(syncTombstonePrefs) {
+            return (syncTombstonePrefs.getStringSet("pending_deleted_photo_hashes_$uuid", emptySet()) ?: emptySet()).toSet()
+        }
+    }
+
+    fun getAllPendingPhotoDeletions(): Map<String, Set<String>> {
+        synchronized(syncTombstonePrefs) {
+            val result = mutableMapOf<String, Set<String>>()
+            for ((key, value) in syncTombstonePrefs.all) {
+                if (key.startsWith("pending_deleted_photo_hashes_") && value is Set<*>) {
+                    @Suppress("UNCHECKED_CAST")
+                    result[key.removePrefix("pending_deleted_photo_hashes_")] = (value as Set<String>).toSet()
+                }
+            }
+            return result
+        }
+    }
+
+    // 送信に含めた記録だけを消去する (送信中に新たに記録された分は残す)
+    fun removePendingPhotoDeletions(recorded: Map<String, Set<String>>) {
+        if (recorded.isEmpty()) return
+        synchronized(syncTombstonePrefs) {
+            val editor = syncTombstonePrefs.edit()
+            for ((uuid, hashes) in recorded) {
+                val key = "pending_deleted_photo_hashes_$uuid"
+                val current = (syncTombstonePrefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
+                current.removeAll(hashes)
+                if (current.isEmpty()) editor.remove(key) else editor.putStringSet(key, current)
+            }
+            editor.apply()
+        }
+    }
+
+    // 削除した写真と同一 MD5 の写真をその場で再追加した場合は、その記録を解除する
+    fun releasePendingPhotoDeletion(syncUuid: String, md5Hash: String) {
+        val uuid = syncUuid.trim()
+        val md5 = md5Hash.trim().lowercase()
+        if (uuid.isBlank() || md5.isBlank()) return
+        synchronized(syncTombstonePrefs) {
+            val key = "pending_deleted_photo_hashes_$uuid"
+            val current = (syncTombstonePrefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
+            if (current.remove(md5)) {
+                if (current.isEmpty()) {
+                    syncTombstonePrefs.edit().remove(key).apply()
+                } else {
+                    syncTombstonePrefs.edit().putStringSet(key, current).apply()
+                }
+            }
+        }
+    }
+
     fun updateDefaultSettings(newSettings: DefaultSettings, stampNow: Boolean = true) {
         defaultSettingsManager.updateSettings(newSettings, stampNow)
     }
@@ -241,6 +310,12 @@ class FleaMarketRepository(private val context: Context) {
                     (!old.thumbnailPath.isNullOrBlank() && !keptPaths.contains(old.thumbnailPath))
             }
             if (removedPhotos.isNotEmpty()) {
+                // レビュー 24-7: 編集保存で外れた写真も未Push削除として記録する (deletePhotosByIds と同経路の扱い)
+                for (removed in removedPhotos) {
+                    if (removed.md5Hash.isNotBlank()) {
+                        recordPendingPhotoDeletion(preservedUuid, removed.md5Hash)
+                    }
+                }
                 val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
                     listOfNotNull(
                         it.filePath.takeIf { p -> p.isNotBlank() },
@@ -272,6 +347,13 @@ class FleaMarketRepository(private val context: Context) {
 
         dao.deletePhotosByItemId(itemId)
         dao.insertPhotos(newPhotoEntities)
+
+        // レビュー 24-7 補正: 保存後の写真一覧に同一 MD5 があれば、未Push削除の記録を解除する
+        for (savedPhoto in newPhotoEntities) {
+            if (savedPhoto.md5Hash.isNotBlank()) {
+                releasePendingPhotoDeletion(preservedUuid, savedPhoto.md5Hash)
+            }
+        }
 
         return@withContext itemId.toLong()
     }
@@ -514,6 +596,12 @@ class FleaMarketRepository(private val context: Context) {
                 }
             }
 
+            // レビュー 24-7: 削除した写真を未Push削除として記録する (送信されるまで復活防止の対象)
+            for (removedPhoto in toRemove) {
+                if (removedPhoto.md5Hash.isNotBlank()) {
+                    recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, removedPhoto.md5Hash)
+                }
+            }
             dao.deletePhotosByIds(toRemove.map { it.id })
             if (remaining.isNotEmpty()) {
                 val reindexed = remaining.mapIndexed { idx, photo ->

@@ -259,10 +259,11 @@ class PcServerClient(
     }
 
     // Claude ジョブ一覧を取得する (フェーズ 5-4)。失敗時は null を返し、呼び出し側で状態を維持する。
+    // レビュー 24-4: ジョブ一覧と変化カウンタをセットで返す (反映側でカウンタも進めるため)
     suspend fun fetchClaudeJobs(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): List<ClaudeJobDto>? = withContext(Dispatchers.IO) {
+    ): ClaudeJobListResponseDto? = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
             if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
@@ -273,10 +274,33 @@ class PcServerClient(
                 val respStr = response.body?.string()
                 if (respStr.isNullOrBlank()) return@withContext null
                 val parsed = try { claudeJobListResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                if (parsed?.status == "ok") parsed.jobs else null
+                if (parsed?.status == "ok") parsed else null
             }
         } catch (e: Exception) {
             android.util.Log.e("PC_SYNC", "fetchClaudeJobs 例外: ${e.message}", e)
+            null
+        }
+    }
+
+    // 変化カウンタだけを取得する軽量窓口 (フェーズ 6-3 / レビュー 24-4)。
+    // 認証不要・サーバー側の最終接続時刻も更新しないため、独立監視の定期確認に使う。
+    suspend fun fetchClaudeRevision(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Long? = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/revision").get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val respStr = response.body?.string()
+                if (respStr.isNullOrBlank()) return@withContext null
+                val v = org.json.JSONObject(respStr).optLong("claudeRevision", -1L)
+                if (v >= 0L) v else null
+            }
+        } catch (e: Exception) {
             null
         }
     }
@@ -636,6 +660,8 @@ class PcServerClient(
             val currentSettings = repository.defaultSettings.value
             val settingsDto = toSyncSettingsDto(currentSettings)
             val pendingDeletedUuids = repository.getPendingDeletedUuids()
+            // レビュー 24-7: 送信に含める未Push写真削除の記録 (成功時にこの分だけ消去する)
+            val pendingPhotoDeletions = repository.getAllPendingPhotoDeletions()
             val syncReq = SyncItemsRequest(
                 protocolVersion = 4,
                 storeId = savedStoreId,
@@ -709,6 +735,11 @@ class PcServerClient(
             // PCへ正常に伝達済みの完全削除UUIDをローカル待機リストから除去
             if (pendingDeletedUuids.isNotEmpty()) {
                 repository.removePendingDeletedUuids(pendingDeletedUuids)
+            }
+
+            // レビュー 24-7: 商品データの送信で削除がサーバーへ伝わったため、送信に含めた記録を消去する
+            if (pendingPhotoDeletions.isNotEmpty()) {
+                repository.removePendingPhotoDeletions(pendingPhotoDeletions)
             }
 
             // 送信時点と updatedAt が一致する商品の未同期フラグを解除
@@ -922,6 +953,82 @@ class PcServerClient(
     }
 
     /**
+     * レビュー 24-7: isDirty 保護で商品マージをスキップする際の、写真だけの加算マージ。
+     * サーバー側の写真のうち、ローカルに無く、未Push削除の記録にも無いものだけを追加する。
+     * ローカル写真の削除・上書き、商品項目の変更は一切行わない。
+     * 実ファイルの解決は通常マージと同じ規則 (同一 MD5 の既存写真から流用) に従う。
+     */
+    private fun mergeServerPhotosAdditively(
+        obj: JSONObject,
+        itemId: Int,
+        itemSyncUuid: String,
+        allExistingPhotos: List<PhotoEntity>
+    ) {
+        val photosArray = obj.optJSONArray("photos") ?: return
+        if (photosArray.length() == 0) return
+        val dao = repository.getDao()
+        val currentPhotos = dao.getPhotosByItemId(itemId)
+        val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }.toSet()
+        val pendingDeletions = repository.getPendingPhotoDeletions(itemSyncUuid)
+        var nextOrder = (currentPhotos.maxOfOrNull { it.displayOrder } ?: -1) + 1
+        val additions = mutableListOf<PhotoEntity>()
+        for (pIdx in 0 until photosArray.length()) {
+            val pObj = photosArray.getJSONObject(pIdx)
+            val md5 = pObj.optString("md5Hash", "").trim()
+            if (md5.isBlank()) continue
+            val md5Lower = md5.lowercase()
+            if (localHashes.contains(md5Lower)) continue
+            if (pendingDeletions.contains(md5Lower)) continue
+
+            var localFilePath = ""
+            var localThumbPath: String? = null
+            var isOrigMissing = false
+            val matched = allExistingPhotos.firstOrNull {
+                it.md5Hash.equals(md5, ignoreCase = true) &&
+                    ((it.filePath.isNotBlank() && File(it.filePath).exists()) ||
+                        (!it.thumbnailPath.isNullOrBlank() && File(it.thumbnailPath).exists()))
+            }
+            if (matched != null) {
+                val origFile = if (matched.filePath.isNotBlank()) File(matched.filePath) else null
+                val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) File(matched.thumbnailPath) else null
+                val origIsReal = origFile != null && origFile.exists() &&
+                    !matched.filePath.equals(matched.thumbnailPath, ignoreCase = true)
+                if (origIsReal) {
+                    localFilePath = matched.filePath
+                    localThumbPath = matched.thumbnailPath
+                    isOrigMissing = false
+                } else if (thumbFile != null && thumbFile.exists()) {
+                    localFilePath = matched.thumbnailPath ?: ""
+                    localThumbPath = matched.thumbnailPath
+                    isOrigMissing = true
+                } else {
+                    localFilePath = matched.filePath
+                    localThumbPath = matched.thumbnailPath
+                    isOrigMissing = matched.isOriginalDeleted
+                }
+            }
+            val hasRealOriginal = localFilePath.isNotBlank() &&
+                !localFilePath.equals(localThumbPath, ignoreCase = true) &&
+                File(localFilePath).exists()
+            additions.add(
+                PhotoEntity(
+                    itemId = itemId,
+                    filePath = localFilePath,
+                    thumbnailPath = localThumbPath,
+                    isOriginalDeleted = isOrigMissing || (!hasRealOriginal && !localThumbPath.isNullOrBlank()),
+                    isPcSynced = true,
+                    md5Hash = md5,
+                    syncStatus = "SYNCED",
+                    displayOrder = nextOrder++
+                )
+            )
+        }
+        if (additions.isNotEmpty()) {
+            dao.insertPhotos(additions)
+        }
+    }
+
+    /**
      * サーバーJSON配列を syncUuid 基準・isDirty/updatedAt 保護・ID衝突回避でローカルRoomへマージする
      */
     internal suspend fun mergeServerItemsFromJson(
@@ -990,6 +1097,11 @@ class PcServerClient(
             if (existing != null && existing.item.isDirty &&
                 (serverUpdatedAt <= 0L || existing.item.updatedAt >= serverUpdatedAt)
             ) {
+                // レビュー 24-7: 商品自体のマージはしないが、写真だけは加算マージする。
+                // PC 側で返却された _ai 写真などが、未送信変更のある間もスマホへ届くようにするため。
+                // 未Push削除として記録されたハッシュは対象から外し、削除した写真を復活させない。
+                // 商品項目と isDirty には一切触れない。
+                mergeServerPhotosAdditively(obj, existing.item.id, existing.item.syncUuid, allExistingPhotos)
                 continue
             }
 

@@ -137,13 +137,17 @@ fun FleaMarketApp() {
         )
     }
 
-    // フェーズ 5-5: 完了通知ダイアログ (承認待ちが無い時だけ表示。確認は全端末で共有される)
+    // フェーズ 5-5: 完了通知ダイアログ (確認は全端末で共有される)
+    // レビュー 24-2: 表示条件は承認ダイアログの実表示に連動させる (抑止中の承認待ちに長くマスクされないため)。
+    // 「いったん閉じる」で非表示にした完了は、非表示集合で除外して数える (残件表示も除外後の件数)。
     val unackedClaudeCompletions by viewModel.unackedClaudeCompletions.collectAsState()
-    if (pendingClaudeApprovals.isEmpty()) {
-        unackedClaudeCompletions.minByOrNull { it.createdAt }?.let { job ->
+    val dismissedClaudeCompletionIds by viewModel.dismissedClaudeCompletionIds.collectAsState()
+    val visibleClaudeCompletions = unackedClaudeCompletions.filter { !dismissedClaudeCompletionIds.contains(it.jobId) }
+    if (!showClaudeApprovalDialog) {
+        visibleClaudeCompletions.minByOrNull { it.createdAt }?.let { job ->
             ClaudeCompletionDialog(
                 job = job,
-                remainingCount = unackedClaudeCompletions.size,
+                remainingCount = visibleClaudeCompletions.size,
                 isProcessing = claudeActionInProgress,
                 onAcknowledge = { viewModel.acknowledgeClaudeCompletion(job.jobId) },
                 onCloseForNow = { viewModel.dismissClaudeCompletionForNow(job.jobId) }

@@ -846,6 +846,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     val lastSyncSuccessAt: StateFlow<Long?> = _lastSyncSuccessAt.asStateFlow()
 
     private var heartbeatJob: Job? = null
+    private var claudeWatchJob: Job? = null
+    // レビュー 24-4: Claude 状態の取得・反映専用の直列化 (商品同期の syncMutex とは別)
+    private val claudeRefreshMutex = Mutex()
     private var autoSyncJob: Job? = null
     private var syncSuccessResetJob: Job? = null
     private val syncMutex = Mutex()
@@ -873,6 +876,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     private val _unackedClaudeCompletions = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
     val unackedClaudeCompletions: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _unackedClaudeCompletions.asStateFlow()
+
+    // レビュー 24-2: 完了通知を「いったん閉じる」で非表示にしたジョブID集合。
+    // 承認側 (6-2-2) と同型で、再取得のたびに未確認リストを作り直しても閉じた完了は復活しない。
+    // 掃除は未確認として残っている ID だけに限る (新しい完了の到着で全消去しない)。
+    private val _dismissedClaudeCompletionIds = MutableStateFlow<Set<String>>(emptySet())
+    val dismissedClaudeCompletionIds: StateFlow<Set<String>> = _dismissedClaudeCompletionIds.asStateFlow()
 
     // Build 13 (13-4): 承認・確認送信の処理中フラグ (重複タップ遮断) と、
     // 失敗時に MainActivity が一度だけ Toast 表示するワンショットメッセージ。
@@ -903,11 +912,13 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun dismissClaudeCompletionForNow(jobId: String) {
-        _unackedClaudeCompletions.value = _unackedClaudeCompletions.value.filter { it.jobId != jobId }
+        // レビュー 24-2: リストから消すだけでは次の再取得で復活するため、非表示集合へ記録する
+        _dismissedClaudeCompletionIds.value = _dismissedClaudeCompletionIds.value + jobId
     }
 
     init {
         startHeartbeatLoop()
+        startClaudeWatchLoop()
     }
 
     private fun scheduleSyncSuccessResetToIdle(successTimestamp: Long) {
@@ -934,23 +945,36 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     // フェーズ 5-4 / 6-2: Claude ジョブ状態の再取得。成功時のみ true を返し、StateFlow を更新する。
-    private suspend fun refreshClaudeJobStates(url: String, token: String): Boolean {
-        val jobs = pcServerClient.fetchClaudeJobs(url, token) ?: return false
-        val pending = jobs
-            .filter { it.status == "approval_pending" }
-            .sortedBy { it.createdAt }
-        _pendingClaudeApprovals.value = pending
-        // 非表示集合は、まだ承認待ちとして残っている ID だけに掃除する
-        val pendingIds = pending.map { it.jobId }.toSet()
-        _dismissedClaudeApprovalIds.value = _dismissedClaudeApprovalIds.value.intersect(pendingIds)
-        if (pending.isEmpty()) {
-            _claudeApprovalPeekRequested.value = false
+    private suspend fun refreshClaudeJobStates(url: String, token: String, fromWatch: Boolean = false): Boolean {
+        // レビュー 24-4: 取得と反映を専用 Mutex で直列化し、遅れて返った古い応答が
+        // 新しい状態 (承認・確認の反映結果) を上書きしないようにする。
+        return claudeRefreshMutex.withLock {
+            // 監視経由の取得は、ユーザーの応答処理中は反映しない (20-3 のガードをロック内で担保)
+            if (fromWatch && _claudeActionInProgress.value) return@withLock false
+            val fetched = pcServerClient.fetchClaudeJobs(url, token) ?: return@withLock false
+            val jobs = fetched.jobs
+            val pending = jobs
+                .filter { it.status == "approval_pending" }
+                .sortedBy { it.createdAt }
+            _pendingClaudeApprovals.value = pending
+            // 非表示集合は、まだ承認待ちとして残っている ID だけに掃除する
+            val pendingIds = pending.map { it.jobId }.toSet()
+            _dismissedClaudeApprovalIds.value = _dismissedClaudeApprovalIds.value.intersect(pendingIds)
+            if (pending.isEmpty()) {
+                _claudeApprovalPeekRequested.value = false
+            }
+            _pendingClaudeApprovalThumbnails.value = resolveClaudeApprovalThumbnails(pending)
+            val unacked = jobs.filter {
+                (it.status == "done" || it.status == "done_with_errors") && !it.acknowledged
+            }
+            _unackedClaudeCompletions.value = unacked
+            _dismissedClaudeCompletionIds.value =
+                _dismissedClaudeCompletionIds.value.intersect(unacked.map { it.jobId }.toSet())
+            if (fetched.claudeRevision > 0L) {
+                lastKnownClaudeRevision = fetched.claudeRevision
+            }
+            true
         }
-        _pendingClaudeApprovalThumbnails.value = resolveClaudeApprovalThumbnails(pending)
-        _unackedClaudeCompletions.value = jobs.filter {
-            (it.status == "done" || it.status == "done_with_errors") && !it.acknowledged
-        }
-        return true
     }
 
     // フェーズ 6-2 (6-2-3): 承認待ちジョブのサムネイル解決。
@@ -1033,8 +1057,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     refreshClaudeJobStates(url, token)
                 } catch (_: Exception) {
                 }
-                _dismissedClaudeApprovalIds.value = emptySet()
-                _claudeApprovalPeekRequested.value = false
+                // レビュー 24-3: リセットは「失敗なし・移動失敗なし・承認待ち残件なし」の時だけ。
+                // 途中失敗や残件がある場合はダイアログを開いたままにして、その場で再試行できるようにする。
+                if (!approveFailed && moveFailedCount == 0 && _pendingClaudeApprovals.value.isEmpty()) {
+                    _dismissedClaudeApprovalIds.value = emptySet()
+                    _claudeApprovalPeekRequested.value = false
+                }
                 val messages = mutableListOf<String>()
                 if (approvedCount > 0) {
                     messages.add("${approvedCount}件を承認しました")
@@ -1087,6 +1115,31 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 }
             } finally {
                 _claudeActionInProgress.value = false
+            }
+        }
+    }
+
+    // レビュー 24-4: Claude ジョブ監視の独立コルーチン。
+    // ハートビート本体の値 (hb) を待たず、軽量な変化カウンタ窓口を自分で定期確認する。
+    // 本体が写真同期 (syncMutex) で長時間塞がっていても、承認・完了の検知は止まらない。
+    // 例外は握りつぶしてログのみとし、本体の同期には一切干渉しない (5-4 の分離原則を維持)。
+    private fun startClaudeWatchLoop() {
+        claudeWatchJob?.cancel()
+        claudeWatchJob = viewModelScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                val url = _pcServerUrl.value
+                val token = _pcAuthToken.value
+                if (url.isNotBlank() && !_claudeActionInProgress.value) {
+                    try {
+                        val revision = pcServerClient.fetchClaudeRevision(url, token)
+                        if (revision != null && revision > 0L && revision != lastKnownClaudeRevision) {
+                            refreshClaudeJobStates(url, token, fromWatch = true)
+                        }
+                    } catch (e: Exception) {
+                        android.util.Log.e("PC_SYNC", "Claudeジョブ監視に失敗: ${e.message}")
+                    }
+                }
+                delay(4000)
             }
         }
     }
@@ -1217,21 +1270,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                             }
                         }
                     }
-                    // 第3分岐 (フェーズ 5-4): Claude ジョブの承認待ち・未確認完了の検知。
-                    // 既存のデータPull/設定Pull分岐と isDirty 保護には一切触れない。
-                    // この分岐の例外は握りつぶしてログのみとし、同期本体を止めない。
-                    // レビュー 20-3: 一括応答の送信中は再取得を挟まない (途中経過で件数がチラつくのを防ぐ)。
-                    if (connected && !_claudeActionInProgress.value) {
-                        try {
-                            if (hb.claudeRevision > 0L && hb.claudeRevision != lastKnownClaudeRevision) {
-                                if (refreshClaudeJobStates(url, token)) {
-                                    lastKnownClaudeRevision = hb.claudeRevision
-                                }
-                            }
-                        } catch (e: Exception) {
-                            android.util.Log.e("PC_SYNC", "Claudeジョブ状態の取得に失敗: ${e.message}")
-                        }
-                    }
+                    // Claude ジョブの検知は独立した監視コルーチンへ移設した (レビュー 24-4)。
+                    // 写真同期でこのループが塞がっていても検知が止まらないようにするため。
                 } else {
                     _isPcServerConnected.value = false
                     wasConnected = false
@@ -1299,8 +1339,21 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun updatePcServerUrl(url: String) {
+        val changed = _pcServerUrl.value != url
         _pcServerUrl.value = url
         pcServerClient.saveServerUrl(url)
+        if (changed) {
+            // レビュー 24-8: 接続先を切り替えたら、前サーバーのカウンタ・通知状態を引き継がない
+            lastKnownDataRevision = -1L
+            lastKnownSettingsRevision = -1L
+            lastKnownClaudeRevision = -1L
+            _pendingClaudeApprovals.value = emptyList()
+            _pendingClaudeApprovalThumbnails.value = emptyMap()
+            _dismissedClaudeApprovalIds.value = emptySet()
+            _claudeApprovalPeekRequested.value = false
+            _unackedClaudeCompletions.value = emptyList()
+            _dismissedClaudeCompletionIds.value = emptySet()
+        }
     }
 
     fun updatePcAuthToken(token: String) {
