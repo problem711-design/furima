@@ -286,3 +286,48 @@
 - あわせて §11.3 に Muse 側手順の追記（処理済み写真のスキップ、FIFO の並べ替え）を記録した。
 
 6-2 以降の詳細化は、本詳細のレビュー完了後に順次追記する。
+
+---
+
+## 10. サブフェーズ詳細（§11：`6-1a` / `6-1b`）レビュー（2026-11-16、`9826052` に対する指摘）
+
+`PLAN_CLAUDE_SEND_PHASE6.md` §11（6-1a / 6-1b）の実装明細を現行コードと照合しました。  
+`6-1a-5`（`done_with_errors` の 30日整理条件に `errorDismissed` 追加）、`6-1b` の実行系3エンドポイント限定とリビジョン非更新など、全体構成は良好です。
+
+一方で、**明らかな仕様矛盾 1 件と、このまま実装するとレース・重複保存・通知漏れ・UI表示衝突につながる 4 件** があるため、着工前に §11 を微修正してください。
+
+### 指摘 10-1: 【明確な仕様矛盾】`6-1a-12`（`POST /api/claude/jobs/{jobId}/move`）の許可条件が前後で矛盾している
+- **該当箇所**: `PLAN_CLAUDE_SEND_PHASE6.md` §11.1.2 `6-1a-12`
+- **内容**:
+  - 2つ目の箇条書きでは「**移動を許可するのは `status = queued`（所属は不問）と、`status = approval_pending` かつ移動先が `waiting` の場合のみ。それ以外は 409**」と書かれています。
+  - しかし3つ目の箇条書きでは「**`approval_pending` のまま `patrol` ⇔ `manual` を切り替える場合はリクエスト時刻を維持する**」と書かれており、2つ目の条件だと **409 になって絶対に通過しません**。
+- **修正案**:
+  - 意図どおり `approval_pending` 中の `patrol` ⇔ `manual` 切替を許すなら、許可条件を「**`status = queued` または `status = approval_pending`**（それ以外は 409）」に直してください。
+  - あわせて、**現在と同じ `queue` への移動（no-op）** が呼ばれた場合は状態変更・保存・`BumpClaudeRevision()` を行わずそのまま `200 ok` を返す冪等仕様にしてください。
+
+### 指摘 10-2: 【バグ要因】`6-1a-8`（`HandleCreateClaudeJob`）の 2 段階遷移による中間状態露出・3 回保存
+- **該当箇所**: `tools/ClaudeJobStore.cs:141-155`（`CreateJob`）、`PLAN_CLAUDE_SEND_PHASE6.md` `6-1a-8`
+- **問題**: 現行の `ClaudeJobStore.CreateJob` は内部で無条件に `job.status = "queued"` をセットして `SaveJobsLocked()` を呼びます。その後に `HandleCreateClaudeJob` が `MutateJob`（2回目保存）→ `IncrementRevision`（3回目保存）を呼ぶ手順だと、
+  1. `CreateJob` のロック解放後から `MutateJob` までの僅かな隙間に別スレッドの `GET /api/claude/jobs` が走ると、**`patrol`/`manual` なのに一瞬だけ `status = queued` の中間状態が見えます**。
+  2. 1回のジョブ作成で `claude_jobs.json` を3回連続で全量書き込みすることになります。
+- **修正案**: `CreateJob`（または `CreateJobWithRevision` のような1メソッド）の単一 `_jobLock` 内で、`queue == "patrol" || queue == "manual"` なら **最初から `status = "approval_pending"`, `approvalRequestedAt = now`** をセットし、必要なら同時に `claudeRevision` も加算して **1 回の `SaveJobsLocked()` で原子的に確定** させてください（`waiting` のときだけ `status = "queued"`）。
+
+### 指摘 10-3: 【仕様漏れ】`6-1a-13`（`dismiss-error`）の `BumpClaudeRevision()` と冪等性
+- **該当箇所**: `PLAN_CLAUDE_SEND_PHASE6.md` `6-1a-13`、`FurimaServerNative.cs:5681-5709`（`HandleAckClaudeJob`）
+- **問題**: `6-1a-13` に `BumpClaudeRevision()` の要否と重複呼び出し時の挙動が記載されていません。`6-5`（加工ラベルのエラー警告解除）や `6-7`（ミューズカラムのエラー件数減少）は `claudeRevision` の変化で更新されるため、ここが漏れると画面が自動更新されません。
+- **修正案**: 既存の `HandleAckClaudeJob` と揃えて、「**既に `errorDismissed == true` の場合は再保存・`BumpClaudeRevision()` せず `200 ok` を返す（冪等）。`false -> true` に変わった場合のみ保存＋`BumpClaudeRevision()`**」と明記してください。
+
+### 指摘 10-4: 【UI 表示衝突】`DashboardHtml.cs` の `queued` = `"待機中"` 表記と所属バッジ「待機」の衝突、および残存 `"Claude"` 文言
+- **該当箇所**: `tools/DashboardHtml.cs:2296, 2320, 2439`、`PLAN_CLAUDE_SEND_PHASE6.md` `6-1a-17`
+- **問題**:
+  1. 現行の `claudeJobStatusInfo('queued')`（`2296` 行目）は **`label: '待機中'`** を返します。ここに所属バッジ「巡回／手動／待機」を並べると、**`[待機中] [待機]`** や **`[待機中] [巡回]`** という紛らわしい表記が並びます。
+  2. `2439` 行目の送信確認 `confirm(...)` に **`...でClaudeに送ります`** という旧名称が残っています。
+- **修正案**:
+  - `6-1a-17` に、`(a)` `status = 'queued'` の表示文言整理（例：`queue === 'waiting'` なら「待機中（未送信）」、あるいは所属「待機」＋状態「未依頼／待機中」のように重複・誤認しない表示に揃える）、`(b)` `DashboardHtml.cs:2439` の `confirm` 文言の `Muse` 化、`(c)` `refreshClaudeJobsCount`（`2320` 行目）のアクティブ件数に `waiting` の `queued` を暫定含めるか除外するかの明記、を含めてください。
+
+### 指摘 10-5: 【軽微・抜け漏れ防止】`6-1a-2` の正規化保存と `6-1b` の延長位置
+1. **`6-1a-2`（新形式 `{` 読み込み時の正規化保存）**: 旧形式 `[` の読み込み時は直後に `SaveJobsLocked()` すると明記されていますが、新形式 `{` の読み込み時に `approval_expired -> queued + waiting` の正規化が1件でも発生した場合も、メモリとディスクの乖離を防ぐため `SaveJobsLocked()` を呼ぶようにしてください。
+2. **`6-1b-2`（延長の呼び出しタイミング）**: `HandlePostClaudeJobError`（`FurimaServerNative.cs:5508-5550`）では現在 `ValidateClaudeJobToken` 直後に `status` チェックがなく、`claudeResultWriteLock` 内（`5545` 行目）で `approved`/`processing` を判定しています。`6-1b-1` のヘルパー自体が `approved`/`processing` のみ延長する仕様なので不正延長は起きませんが、**トークン検証＋`approved`/`processing` 判定＋入力・写真検証を通過したあと**（または `HandleGetClaudeJobPhoto:5078` の `approved -> processing` 遷移と同じ `MutateJob` 内）に延長を置くと、400/404 エラー時の無駄な延長や初回写真取得時の二重保存を防げます。
+
+### 判定（着工可否）
+上記 **10-1〜10-5**（特に **10-1 の `move` API 許可条件矛盾の解消** と **10-2・10-3 の仕様補記**）を §11 に反映いただければ、**`6-1a` および `6-1b` の実装着工に完全合意** できます。
