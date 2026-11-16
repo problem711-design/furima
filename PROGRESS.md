@@ -10,7 +10,7 @@
 > - フェーズ 3.2 計画書: [PLAN_PHASE_3_2.md](PLAN_PHASE_3_2.md)
 > - **現行実装計画書 (フェーズ 4 / 重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱[案A] ➔ 同期ステータス％表示＆メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
 > - **現行実装計画書 (フェーズ 5 / 「Museに送る」一括画像加工連携)**: [PLAN_CLAUDE_SEND_PHASE5.md](PLAN_CLAUDE_SEND_PHASE5.md)（2026-11-16 策定・**協議済み（計画書 §10 に協議結果を記録）** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE5.md](REVIEW_CLAUDE_SEND_PHASE5.md)）
-> - **次期実装計画書 (フェーズ 6 / 「Museに送る」運用自動化・見える化・出品ステータス拡張)**: [PLAN_CLAUDE_SEND_PHASE6.md](PLAN_CLAUDE_SEND_PHASE6.md)（2026-11-16 策定・**大枠完全合意（計画書 §9・§10・§12）。6-1a／6-1b 実装完了（Build 14・15）、§12 レビュー修正を Build 16 として採番。以後のフェーズ採番は 6-2=Build 17 〜 6-7=Build 22 に繰り下げ。次は 6-2 のサブフェーズ詳細化** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE6.md](REVIEW_CLAUDE_SEND_PHASE6.md)）
+> - **次期実装計画書 (フェーズ 6 / 「Museに送る」運用自動化・見える化・出品ステータス拡張)**: [PLAN_CLAUDE_SEND_PHASE6.md](PLAN_CLAUDE_SEND_PHASE6.md)（2026-11-16 策定・**大枠完全合意（計画書 §9・§10・§12）。6-1a／6-1b 実装完了（Build 14・15）、§12 レビュー修正を Build 16 として採番。6-2 のサブフェーズ詳細を §14 に策定済み（レビュー待ち）。以後のフェーズ採番は 6-2=Build 17 〜 6-7=Build 22** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE6.md](REVIEW_CLAUDE_SEND_PHASE6.md)）
 
 ---
 
@@ -158,6 +158,10 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-16] フェーズ 6-2 サブフェーズ詳細化 (`PLAN_CLAUDE_SEND_PHASE6.md` §14 / `REVIEW_CLAUDE_SEND_PHASE6.md` §15)
+- **6-2（一括承認、Build 17）のサブフェーズ詳細を計画書 §14 に策定**（ドキュメントのみ・コード変更なし）。サーバー変更が不要であること（既存の単体承認 API と移動 API の組み合わせ）を確認し、スマホ側の状態リスト化・サムネイル解決・一括応答処理・ダイアログ書き換え・画面連動の抑止を明細化した。
+- **次のアクション**: レビュー側が §14 を確認し、問題がなければ 6-2 の実装へ着手する。あわせてユーザー側では Build 16 の実ビルドと §11.1.6 / §11.2.1 の動作確認を進める。
 
 ### [2026-11-16] フェーズ 6-1 レビュー修正完了 バージョン 1.0.0 (Build 16)
 - **ビルドテスト結果**: Android ビルド成功・単体テスト14件全合格・管理画面 JS 構文確認・バージョン3箇所一致（レビュー §12.1）。PC サーバーの実ビルドは Windows 側で別途確認。
