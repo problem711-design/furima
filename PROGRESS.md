@@ -37,7 +37,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 8)** （フェーズ 4-1 〜 4-4、5-1 完了）
+現在のバージョン：**`v1.0.0` (Build 9)** （フェーズ 4-1 〜 4-4、5-1 〜 5-2 完了）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -108,7 +108,11 @@
   - `5-1-2` Android設定モデル・DTO・変換拡張（`DefaultSettings` / `SyncSettingsDto` / `PcServerClient` 相互変換 / `DefaultSettingsManager` の `prompt_templates_json` 永続化）
   - `5-1-3` PC管理画面に `prompt` カテゴリ追加（設定3箇所マッピング＋「画像加工プロンプト用テンプレート」セクション＋編集モーダル3分岐化）
   - `5-1-4` スマホ設定UIにプロンプトテンプレート編集追加（`TemplateCategory.PROMPT`＋`persistSettingsNow()` 引数追加）
-- [ ] **フェーズ 5-2 (`v1.0.0 Build 9`) — ジョブキュー基盤（サーバー保存＋作成API＋PCギャラリー送信UI）** 【計画】
+- [x] **フェーズ 5-2 (`v1.0.0 Build 9`) — ジョブキュー基盤（サーバー保存＋作成API＋PCギャラリー送信UI）** 【完了】
+  - `5-2-1` ジョブストア新設（`tools/ClaudeJobStore.cs`：`claude_jobs.json` 永続化・終端ジョブ30日自動整理、`build-exe.bat` のコンパイル対象へ追加）
+  - `5-2-2` `claudeRevision` 新設（ステータス／ハートビート両応答へ追加、ジョブ作成・取消で更新。`dataRevision` は不変）
+  - `5-2-3` ジョブ作成／一覧／詳細／取消API（商品特定は `itemUuid` 優先、MD5実在検証、テンプレートのスナップショット保存、まとめ親商品は拒否、応答に `jobToken` を含めない）
+  - `5-2-4` PCギャラリー送信UI（テンプレート選択＋「Museに送る」＋送信直前照合＆ファイル名確認ダイアログ、まとめ親商品の無効化、ジョブ一覧モーダル＋`claudeRevision` ポーリング連動）
 - [ ] **フェーズ 5-3 (`v1.0.0 Build 10`) — スマホ側サムネイル複数選択（一括削除＋Muse送信）** 【計画】
 - [ ] **フェーズ 5-4 (`v1.0.0 Build 11`) — スマホ承認フロー（同期リビジョン経由）** 【計画】
 - [ ] **フェーズ 5-5 (`v1.0.0 Build 12`) — 結果返却・完了通知・確認（ack）共有** 【計画】
@@ -117,6 +121,15 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/16 フェーズ 5-2 完了 バージョン 1.0.0 (Build 9)
+- **ジョブキュー基盤（「Museに送る」の受け皿）**：
+  - ジョブストア (`tools/ClaudeJobStore.cs` 新規)：写真ゴミ箱と同じ流儀で `syncDir/claude_jobs.json` へ永続化（サーバー再起動後も復元）。確認済み完了・取消・拒否の終端ジョブは30日経過後に自動整理。`tools/build-exe.bat` のコンパイル対象へ追加。
+  - `claudeRevision` (`tools/FurimaServerNative.cs`)：`dataRevision` / `settingsRevision` と並ぶ第3のリビジョンを新設し、`/api/server/status` と `/api/server/heartbeat` の両応答へ追加（後方互換）。ジョブの作成・取消でのみ更新し、商品データには触れない。
+  - ジョブAPI：`POST /api/claude/jobs`（商品特定は `itemUuid`＝`syncUuid` 優先解決、写真MD5の実在検証、プロンプトテンプレートの内容をジョブへスナップショット保存、まとめ親商品・ゴミ箱内商品は400で拒否）、`GET /api/claude/jobs`（`status` 絞り込み可）、`GET /api/claude/jobs/{jobId}`、`POST /api/claude/jobs/{jobId}/cancel`（実行前のみ取消可）。応答には `jobToken` を一切含めない（発行は 5-4）。
+  - PCギャラリー (`tools/DashboardHtml.cs`)：ツールバーへプロンプトテンプレート選択＋「Museに送る」ボタン＋「Museジョブ」ボタンを追加。送信直前に選択写真を現在の写真一覧と照合し、対象ファイル名の一覧で確認ダイアログを出す（Q6）。まとめ親商品を開いている間は送信を無効化し理由を表示（Q5）。チェックボックスのツールチップ文言を汎用化。ジョブ一覧モーダル（状態バッジ・商品名・枚数・テンプレート名・作成日時・取消ボタン）を新設し、`claudeRevision` の変化で自動再取得する。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 9`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 9)`** へ3箇所同時統一（※PC側バイナリ反映には Windows で `tools/build-exe.bat` 実行が必要。Android のビルド・実機確認はユーザー環境で実施）。
+- 既存機能の削除・置き換え：なし。
 
 ### 2026/11/16 フェーズ 5-1 完了 バージョン 1.0.0 (Build 8)
 - **プロンプトテンプレートの共有基盤（設定同期への相乗り・新規APIなし）**：

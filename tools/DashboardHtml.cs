@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 8)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 9)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -394,9 +394,17 @@ public static class DashboardHtml
                     <button type='button' onclick='toggleSelectAllViewerPhotos()' class='px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold transition text-[11px]'>
                         すべて選択/解除
                     </button>
-                    <span class='text-slate-500 hidden sm:inline'>サムネイル右上のチェックボックスで写真ゴミ箱へ移動できます</span>
+                    <span class='text-slate-500 hidden sm:inline'>サムネイル右上のチェックボックスで写真のゴミ箱移動・Muse送信ができます</span>
                 </div>
-                <div class='flex items-center gap-2'>
+                <div class='flex flex-wrap items-center gap-2'>
+                    <span id='viewer-claude-bundle-note' class='hidden text-[11px] text-amber-700 font-bold'>まとめ商品は個別の子商品から送信してください</span>
+                    <select id='viewer-claude-template' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 max-w-[180px]' title='画像加工プロンプトテンプレート'></select>
+                    <button type='button' id='viewer-claude-send-btn' onclick='sendViewerPhotosToClaude()' disabled class='bg-violet-600 hover:bg-violet-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1.5'>
+                        <i class='fa-solid fa-wand-magic-sparkles'></i> Museに送る (<span id='viewer-claude-selected-count'>0</span>枚)
+                    </button>
+                    <button type='button' onclick='openClaudeJobsModal()' class='bg-white hover:bg-violet-50 border border-violet-200 text-violet-700 text-xs font-bold px-2.5 py-1.5 rounded-lg transition flex items-center gap-1'>
+                        <i class='fa-solid fa-list-check'></i> Museジョブ (<span id='viewer-claude-jobs-count'>0</span>)
+                    </button>
                     <button type='button' id='viewer-trash-selected-btn' onclick='trashSelectedViewerPhotos()' disabled class='bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1.5'>
                         <i class='fa-solid fa-trash-can'></i> 選択した写真をゴミ箱へ移動 (<span id='viewer-selected-count'>0</span>枚)
                     </button>
@@ -507,6 +515,29 @@ public static class DashboardHtml
             <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500'>
                 <span>復元すると元の商品（まとめ商品の場合は内訳含む）へ戻ります。</span>
                 <button type='button' onclick='closePhotoTrashModal()' class='px-4 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Muse 送信ジョブ一覧モーダル -->
+    <div id='claude-jobs-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5' onclick='closeClaudeJobsModal()'>
+        <div class='bg-white rounded-xl max-w-3xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
+            <div class='bg-violet-800 text-white px-5 py-3 flex items-center justify-between border-b border-violet-900'>
+                <div class='flex items-center gap-2.5'>
+                    <i class='fa-solid fa-wand-magic-sparkles text-violet-200 text-lg'></i>
+                    <div>
+                        <h3 class='font-bold text-sm tracking-tight'>Muse 送信ジョブ</h3>
+                        <p class='text-[11px] text-violet-200'>「Museに送る」で作成した画像加工ジョブの一覧です。実行はClaude側の承認フロー（スマホ承認）後に始まります</p>
+                    </div>
+                </div>
+                <button type='button' onclick='closeClaudeJobsModal()' class='text-violet-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div id='claude-jobs-list' class='p-4 flex-1 overflow-y-auto custom-scroll space-y-2'>
+                <!-- JSで動的描画 -->
+            </div>
+            <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500'>
+                <span>待機中のジョブは取り消せます。完了したジョブは30日後に自動整理されます。</span>
+                <button type='button' onclick='closeClaudeJobsModal()' class='px-4 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>閉じる</button>
             </div>
         </div>
     </div>
@@ -978,6 +1009,7 @@ public static class DashboardHtml
         let selectedItemIds = new Set();
         let lastKnownDataRevision = null;
         let lastKnownSettingsRevision = null;
+        let lastKnownClaudeRevision = null;
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
         let selectedViewerPhotoIndices = new Set();
@@ -1264,6 +1296,24 @@ public static class DashboardHtml
                 sel.innerHTML = `<option value=''>説明定型文 (${descTpls.length}件)...</option>` +
                     descTpls.map((t, i) => `<option value='${i}'>${escapeHtml(t.name)}</option>`).join('');
             });
+            renderClaudeTemplateSelect();
+        }
+
+        function renderClaudeTemplateSelect() {
+            const sel = document.getElementById('viewer-claude-template');
+            if (!sel) return;
+            const tpls = pcSettings.promptTemplates || [];
+            const prev = sel.value;
+            if (tpls.length === 0) {
+                sel.innerHTML = `<option value=''>プロンプト未登録（設定で追加）</option>`;
+                sel.disabled = true;
+            } else {
+                sel.innerHTML = tpls.map(t => `<option value='${escapeHtml(t.id)}'>${escapeHtml(t.name)}</option>`).join('');
+                sel.disabled = false;
+                if (prev && tpls.some(t => t.id === prev)) sel.value = prev;
+            }
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            updateViewerSelectionBar(item && item.photos ? item.photos.length : 0);
         }
 
         async function savePcSettingsPayload(nextSettings, toastMsg) {
@@ -1612,6 +1662,15 @@ public static class DashboardHtml
                     lastKnownSettingsRevision = srvSettingsRev;
                     fetchSettings();
                 }
+                const srvClaudeRev = typeof statusData.claudeRevision === 'number' ? statusData.claudeRevision : null;
+                if (srvClaudeRev !== null && srvClaudeRev !== lastKnownClaudeRevision) {
+                    lastKnownClaudeRevision = srvClaudeRev;
+                    refreshClaudeJobsCount();
+                    const jobsModal = document.getElementById('claude-jobs-modal');
+                    if (jobsModal && !jobsModal.classList.contains('hidden')) {
+                        refreshClaudeJobsList();
+                    }
+                }
                 if (srvDataRev === null || srvDataRev !== lastKnownDataRevision) {
                     lastKnownDataRevision = srvDataRev;
                     await fetchItemsOnly();
@@ -1632,11 +1691,13 @@ public static class DashboardHtml
                     updateStatusBannerFromData(statusData);
                     if (typeof statusData.dataRevision === 'number') lastKnownDataRevision = statusData.dataRevision;
                     if (typeof statusData.settingsRevision === 'number') lastKnownSettingsRevision = statusData.settingsRevision;
+                    if (typeof statusData.claudeRevision === 'number') lastKnownClaudeRevision = statusData.claudeRevision;
                 }
             } catch (e) {}
 
             fetchCleanupPreview();
             refreshPhotoTrashCount();
+            refreshClaudeJobsCount();
         }
 
         function isItemTrashed(item) {
@@ -2190,6 +2251,18 @@ public static class DashboardHtml
             const selSize = selectedViewerPhotoIndices.size;
             if (selCountSpan) selCountSpan.innerText = selSize;
             if (trashBtn) trashBtn.disabled = (selSize === 0);
+
+            const claudeCountSpan = document.getElementById('viewer-claude-selected-count');
+            const claudeBtn = document.getElementById('viewer-claude-send-btn');
+            const claudeSel = document.getElementById('viewer-claude-template');
+            const bundleNote = document.getElementById('viewer-claude-bundle-note');
+            if (claudeCountSpan) claudeCountSpan.innerText = selSize;
+            const viewerItem = allItems.find(i => i.id === currentViewerItemId);
+            const isBundle = checkIsBundle(viewerItem);
+            const hasTpl = (pcSettings.promptTemplates || []).length > 0;
+            if (claudeBtn) claudeBtn.disabled = (selSize === 0 || isBundle || !hasTpl);
+            if (claudeSel) claudeSel.disabled = (!hasTpl || isBundle);
+            if (bundleNote) bundleNote.classList.toggle('hidden', !isBundle);
         }
 
         function toggleViewerPhotoSelect(index, event) {
@@ -2213,6 +2286,150 @@ public static class DashboardHtml
                 photos.forEach((_, idx) => selectedViewerPhotoIndices.add(idx));
             }
             renderViewerPhotos();
+        }
+
+        let claudeJobsCache = [];
+
+        function claudeJobStatusInfo(status) {
+            switch (status) {
+                case 'queued': return { label: '待機中', cls: 'bg-slate-200 text-slate-700' };
+                case 'approval_pending': return { label: '承認待ち', cls: 'bg-amber-200 text-amber-800' };
+                case 'approved': return { label: '承認済み', cls: 'bg-sky-200 text-sky-800' };
+                case 'processing': return { label: '処理中', cls: 'bg-indigo-200 text-indigo-800' };
+                case 'done': return { label: '完了', cls: 'bg-emerald-200 text-emerald-800' };
+                case 'done_with_errors': return { label: '一部エラー', cls: 'bg-amber-200 text-amber-800' };
+                case 'denied': return { label: '拒否', cls: 'bg-rose-200 text-rose-800' };
+                case 'approval_expired': return { label: '承認期限切れ', cls: 'bg-rose-200 text-rose-800' };
+                case 'cancelled': return { label: '取消済み', cls: 'bg-slate-200 text-slate-500' };
+                default: return { label: status || '', cls: 'bg-slate-200 text-slate-700' };
+            }
+        }
+
+        async function fetchClaudeJobs() {
+            try {
+                const res = await fetch('/api/claude/jobs', { headers: getHeaders() });
+                if (!res.ok) return;
+                const data = await res.json();
+                claudeJobsCache = Array.isArray(data.jobs) ? data.jobs : [];
+                if (typeof data.claudeRevision === 'number') lastKnownClaudeRevision = data.claudeRevision;
+            } catch (e) {}
+        }
+
+        function refreshClaudeJobsCount() {
+            fetchClaudeJobs().then(() => {
+                const active = claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status)).length;
+                const el = document.getElementById('viewer-claude-jobs-count');
+                if (el) el.innerText = active;
+            });
+        }
+
+        async function openClaudeJobsModal() {
+            document.getElementById('claude-jobs-modal').classList.remove('hidden');
+            await refreshClaudeJobsList();
+        }
+
+        function closeClaudeJobsModal() {
+            document.getElementById('claude-jobs-modal').classList.add('hidden');
+        }
+
+        async function refreshClaudeJobsList() {
+            await fetchClaudeJobs();
+            renderClaudeJobsList();
+            const active = claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status)).length;
+            const el = document.getElementById('viewer-claude-jobs-count');
+            if (el) el.innerText = active;
+        }
+
+        function renderClaudeJobsList() {
+            const container = document.getElementById('claude-jobs-list');
+            if (!container) return;
+            if (!claudeJobsCache || claudeJobsCache.length === 0) {
+                container.innerHTML = `<p class='text-xs text-slate-400 text-center py-6'>ジョブはまだありません。ギャラリーで写真を選択し「Museに送る」を押してください。</p>`;
+                return;
+            }
+            container.innerHTML = claudeJobsCache.map(job => {
+                const info = claudeJobStatusInfo(job.status);
+                const created = job.createdAt ? new Date(job.createdAt).toLocaleString('ja-JP') : '';
+                const canCancel = job.status === 'queued';
+                const ackMark = (job.status === 'done' || job.status === 'done_with_errors')
+                    ? (job.acknowledged ? `<span class='text-[10px] text-emerald-600 font-bold'>確認済み</span>` : `<span class='text-[10px] text-amber-600 font-bold'>未確認</span>`)
+                    : '';
+                return `<div class='flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-200 bg-white'>
+                    <div class='min-w-0 flex-1'>
+                        <div class='flex items-center gap-2 flex-wrap'>
+                            <span class='text-[10px] font-bold px-1.5 py-0.5 rounded ${info.cls}'>${info.label}</span>
+                            <span class='font-bold text-slate-800 truncate'>${escapeHtml(job.itemTitle || '(無題)')}</span>
+                            ${ackMark}
+                        </div>
+                        <p class='text-[11px] text-slate-500 mt-0.5'>写真 ${job.photos ? job.photos.length : 0}枚 / テンプレート「${escapeHtml(job.templateName || '')}」 / ${escapeHtml(job.origin === 'phone' ? 'スマホから' : 'PCから')} / ${escapeHtml(created)}</p>
+                    </div>
+                    ${canCancel ? `<button type='button' onclick='cancelClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[11px] font-bold transition shrink-0'>取消</button>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        async function cancelClaudeJob(jobId) {
+            if (!confirm('このジョブを取り消しますか？')) return;
+            try {
+                const res = await fetch('/api/claude/jobs/' + jobId + '/cancel', { method: 'POST', headers: getHeaders() });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '取消に失敗しました');
+                showToast('ジョブを取り消しました');
+                await refreshClaudeJobsList();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        async function sendViewerPhotosToClaude() {
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            const photos = (item && item.photos) ? item.photos : [];
+            if (!item || selectedViewerPhotoIndices.size === 0) return;
+            if (checkIsBundle(item)) {
+                showToast('まとめ商品は個別の子商品から送信してください');
+                return;
+            }
+            const sel = document.getElementById('viewer-claude-template');
+            const templateId = sel ? sel.value : '';
+            if (!templateId) {
+                showToast('プロンプトテンプレートが未登録です（設定画面で登録してください）');
+                return;
+            }
+            // 送信直前の照合 (Q6): 選択中インデックスが現在の写真一覧の実在写真に対応するか確認する
+            const targets = [];
+            let mismatch = false;
+            selectedViewerPhotoIndices.forEach(idx => {
+                const ph = photos[idx];
+                if (!ph || !ph.md5Hash) { mismatch = true; return; }
+                targets.push({ md5: ph.md5Hash, fileName: ph.fileName || '' });
+            });
+            if (mismatch || targets.length === 0) {
+                showToast('写真の選択状態が変わっています。選択し直してください');
+                return;
+            }
+            const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
+            const tplName = tpl ? tpl.name : '';
+            const listText = targets.map((t, i) => (i + 1) + '. ' + (t.fileName || t.md5)).join('\n');
+            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」でClaudeに送ります。\n\n対象ファイル:\n' + listText)) return;
+
+            try {
+                const res = await fetch('/api/claude/jobs', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, templateId: templateId, origin: 'pc' })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') {
+                    throw new Error(data.message || '送信に失敗しました');
+                }
+                selectedViewerPhotoIndices.clear();
+                updateViewerSelectionBar(photos.length);
+                renderViewerPhotos();
+                showToast('Museジョブを作成しました（' + targets.length + '枚）');
+                openClaudeJobsModal();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
         }
 
         async function trashSelectedViewerPhotos() {
@@ -2354,7 +2571,7 @@ public static class DashboardHtml
                     <img src='${url}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${url}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>
                     <span class='absolute top-1 left-1 bg-black/65 text-white text-[9px] font-mono px-1.5 py-0.5 rounded pointer-events-none'>#${index + 1}</span>
                     <!-- ギャラリー開時限定チェックボックス (右上配置: サムネイルの左上以外) -->
-                    <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black/95 p-1 rounded shadow cursor-pointer flex items-center justify-center border border-white/30' title='選択して写真ゴミ箱へ移動'>
+                    <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black/95 p-1 rounded shadow cursor-pointer flex items-center justify-center border border-white/30' title='写真を選択（ゴミ箱移動・Muse送信）'>
                         <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='toggleViewerPhotoSelect(${index}, event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
                     </label>
                 </div>

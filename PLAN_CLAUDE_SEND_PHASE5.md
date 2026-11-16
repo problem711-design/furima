@@ -145,25 +145,25 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ## 2. ジョブキュー基盤（Target: `v1.0.0 Build 9`）
 
 ### 実装タスクチェックリスト
-- [] **5-2-1: ジョブストア新設 (`tools/ClaudeJobStore.cs` 新規、`tools/build-exe.bat` 変更)**
+- [x] **5-2-1: ジョブストア新設 (`tools/ClaudeJobStore.cs` 新規、`tools/build-exe.bat` 変更)**
 - `PhotoTrashEntry` 管理のパターンに倣い、`ClaudeJob` クラスと静的ストア（`claude_jobs.json` の読込／保存、`lock` 保護、作成・取得・一覧・状態更新）を実装。保存先は `syncDir`。
 - ジョブ履歴の自動整理（レビュー指摘10-1）：`acknowledged == true` の完了ジョブと、取消・拒否の終端ジョブは30日経過後に自動削除する（ゴミ箱の30日保持と同水準）。サーバー起動時とジョブ作成時に掃除する。
 - `build-exe.bat` のコンパイル対象へ `ClaudeJobStore.cs` を追加。
-- [] **5-2-2: `claudeRevision` 新設と応答追加 (`tools/FurimaServerNative.cs`)**
+- [x] **5-2-2: `claudeRevision` 新設と応答追加 (`tools/FurimaServerNative.cs`)**
 - `dataRevision` の隣へ `claudeRevision` フィールド＋ `BumpClaudeRevision()` / `GetClaudeRevision()` を追加（155〜172行目のパターンを複製）。
 - `/api/server/status` と `/api/server/heartbeat` の**両方**の応答に `claudeRevision` を追加。
 - ジョブの作成・状態遷移・取消のたびに `BumpClaudeRevision()` を呼ぶ。商品データ自体は変えないため `dataRevision` は更新しない。
-- [] **5-2-3: ジョブ作成／一覧／詳細／取消API (`tools/FurimaServerNative.cs` の `HandleRequest` へ分岐追加)**
+- [x] **5-2-3: ジョブ作成／一覧／詳細／取消API (`tools/FurimaServerNative.cs` の `HandleRequest` へ分岐追加)**
 - `POST /api/claude/jobs`：ボディ `{itemId, itemUuid?, photos: [{md5, fileName}], templateId, origin}`。**商品特定は `itemUuid`（`syncUuid`）が指定されていればそれを最優先で引き当て、PC側の `item["id"]` を確定する（Q1・レビュー指摘1）。スマホ発では `itemUuid` を必須送信とする**（スマホとPCで整数IDが一致しないケースがあるため）。サーバー側で商品の存在と各MD5がその商品の写真に実在することを検証し、テンプレートの現在内容を `promptText` へスナップショットして保存。検証失敗は 400 で理由を返す。
 - **まとめ商品（Bundle）の扱い（Q5・レビュー指摘6）**：フェーズ5ではまとめ親商品からの送信は受け付けない（400で理由を返す）。子商品を個別に開いて子商品単位で送る運用とする。親フォルダ／親 `photos` と子商品側の二重管理を避けるためであり、親対応は将来課題として記録する。
 - `GET /api/claude/jobs`（`status` 絞り込み可）／ `GET /api/claude/jobs/{jobId}` / `POST /api/claude/jobs/{jobId}/cancel`。
 - 応答に `jobToken` を含めない（発行は 5-4。詳細応答でも `approved` 状態かつ 5-4 実装後に限る）。
-- [] **5-2-4: PCギャラリーへの送信UI追加 (`tools/DashboardHtml.cs`)**
+- [x] **5-2-4: PCギャラリーへの送信UI追加 (`tools/DashboardHtml.cs`)**
 - ギャラリーツールバー（`viewer-trash-selected-btn` の隣）へ、テンプレート選択 `<select id='viewer-claude-template'>`（`pcSettings.promptTemplates` から生成。0件時は無効化＋設定への案内文）と「Museに送る」ボタン（`viewer-claude-send-btn`）を追加。選択数 0 の時はボタン無効（ゴミ箱ボタンと同じ `updateViewerSelectionBar`（2166行目）の更新に相乗り）。なおまとめ親商品（`checkIsBundle(item)` が true）を開いている間も `viewer-claude-send-btn` を無効化し、「まとめ商品は個別の子商品から送信してください」の案内を表示して400エラーを未然に防ぐ。
 - `sendViewerPhotosToClaude()`：`selectedViewerPhotoIndices` から対象写真の `md5` / `fileName` を集め（写真オブジェクトの保持形式は既存ギャラリー実装に合わせる）、**送信直前に現在の商品写真とMD5で照合し（ライブ更新によるインデックスずれ対策・Q6）、対象のファイル名一覧を示す確認ダイアログを出してから**、`POST /api/claude/jobs`（`origin: "pc"`）を呼ぶ。照合で一致しない写真があれば送信を中止して知らせる。成功時は選択を解除し、ジョブ一覧モーダルを開くかトースト相当の表示で知らせる（既存UIの通知手段に合わせる）。
 - チェックボックスの `title` 文言（2338行目付近 `選択して写真ゴミ箱へ移動`）を汎用文言（例：`写真を選択（ゴミ箱移動・Muse送信）`）へ変更する（レビュー指摘7-3）。ツールバー（`#viewer-action-bar`）はボタン追加で幅が逼迫するため、折り返し可能な2段構成にする（レビュー指摘7-4）。選択状態そのもののMD5キー化は将来課題として記録する。
 - ジョブ一覧モーダル（`claude-jobs-modal`、写真ゴミ箱モーダルの型を流用）：状態バッジ、商品名、枚数、テンプレート名、作成日時、取消ボタンを表示。`pollServerRevisions()` で `claudeRevision` の変化を検知したら一覧を再取得する。
-- [] **5-2-5: バージョン統一更新 (`Build 9`) ＆ 検証**
+- [x] **5-2-5: バージョン統一更新 (`Build 9`) ＆ 検証**
 - 検証：PCギャラリーからジョブを作成し、サーバー再起動後も `claude_jobs.json` から復元されること。存在しないMD5での作成が弾かれること。テンプレートを後から編集しても、作成済みジョブの `promptText` が変わらないこと。
 - 既存機能の削除・置き換え：なし（ハートビート／ステータス応答へのフィールド追加のみ＝後方互換）。
 

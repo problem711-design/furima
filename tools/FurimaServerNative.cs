@@ -33,6 +33,7 @@ class FurimaServerNative
     private static ServerLogWriter logWriter = null;
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
+    private static long claudeRevision = 1;
 
     private class PhotoFileCacheEntry
     {
@@ -170,6 +171,16 @@ class FurimaServerNative
     private static long GetSettingsRevision()
     {
         return Interlocked.Read(ref settingsRevision);
+    }
+
+    private static long BumpClaudeRevision()
+    {
+        return Interlocked.Increment(ref claudeRevision);
+    }
+
+    private static long GetClaudeRevision()
+    {
+        return Interlocked.Read(ref claudeRevision);
     }
 
     private static string EnsureItemSyncUuid(Dictionary<string, object> item)
@@ -341,6 +352,8 @@ class FurimaServerNative
 
             Console.WriteLine("商品メタデータ (items_data.json) をロード中...");
             LoadItemsDbFromDisk();
+
+            ClaudeJobStore.CleanupOnStartup();
 
             StartFolderAutoImportWatcher();
 
@@ -1476,6 +1489,7 @@ class FurimaServerNative
                     { "trashCount", trashCount },
                     { "dataRevision", GetDataRevision() },
                     { "settingsRevision", GetSettingsRevision() },
+                    { "claudeRevision", GetClaudeRevision() },
                     { "permanentlyDeletedUuids", SyncStore.GetPermanentlyDeletedUuids() }
                 };
                 SendJson(res, dict);
@@ -1489,7 +1503,8 @@ class FurimaServerNative
                     { "status", "ok" },
                     { "timestamp", DateTime.Now.Ticks },
                     { "dataRevision", GetDataRevision() },
-                    { "settingsRevision", GetSettingsRevision() }
+                    { "settingsRevision", GetSettingsRevision() },
+                    { "claudeRevision", GetClaudeRevision() }
                 });
             }
             else if (rawPath == "/api/sync/hashes")
@@ -1617,6 +1632,25 @@ class FurimaServerNative
             else if (rawPath == "/api/photo-trash/empty" && req.HttpMethod == "POST")
             {
                 HandleEmptyPhotoTrash(res);
+            }
+            else if (rawPath == "/api/claude/jobs" && req.HttpMethod == "POST")
+            {
+                HandleCreateClaudeJob(req, res);
+            }
+            else if (rawPath == "/api/claude/jobs" && req.HttpMethod == "GET")
+            {
+                HandleGetClaudeJobs(req, res);
+            }
+            else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/cancel") && req.HttpMethod == "POST")
+            {
+                string cancelJobId = rawPath.Substring("/api/claude/jobs/".Length);
+                cancelJobId = cancelJobId.Substring(0, cancelJobId.Length - "/cancel".Length).Trim();
+                HandleCancelClaudeJob(res, cancelJobId);
+            }
+            else if (rawPath.StartsWith("/api/claude/jobs/") && req.HttpMethod == "GET")
+            {
+                string detailJobId = rawPath.Substring("/api/claude/jobs/".Length).Trim();
+                HandleGetClaudeJob(res, detailJobId);
             }
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/open-folder") && req.HttpMethod == "POST")
             {
@@ -4384,6 +4418,350 @@ class FurimaServerNative
         catch (Exception ex)
         {
             Console.WriteLine("HandleEmptyPhotoTrash エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    // ===== 「Museに送る」ジョブAPI (フェーズ 5-2) =====
+
+    private static Dictionary<string, object> ToPublicClaudeJob(ClaudeJob job)
+    {
+        // jobToken は一覧・詳細のいずれの応答にも絶対に含めない (計画書 0.6 / レビュー指摘8-3)。
+        // トークンの発行は 5-4 で行い、開示範囲はその時点で別途定める。
+        var photos = new List<Dictionary<string, object>>();
+        if (job.photos != null)
+        {
+            foreach (var ph in job.photos)
+            {
+                photos.Add(new Dictionary<string, object>
+                {
+                    { "md5", ph.md5 ?? "" },
+                    { "fileName", ph.fileName ?? "" }
+                });
+            }
+        }
+        var results = new List<Dictionary<string, object>>();
+        if (job.results != null)
+        {
+            foreach (var r in job.results)
+            {
+                results.Add(new Dictionary<string, object>
+                {
+                    { "sourceMd5", r.sourceMd5 ?? "" },
+                    { "resultFileName", r.resultFileName ?? "" },
+                    { "resultMd5", r.resultMd5 ?? "" }
+                });
+            }
+        }
+        var jobErrors = new List<Dictionary<string, object>>();
+        if (job.errors != null)
+        {
+            foreach (var e in job.errors)
+            {
+                jobErrors.Add(new Dictionary<string, object>
+                {
+                    { "sourceMd5", e.sourceMd5 ?? "" },
+                    { "message", e.message ?? "" }
+                });
+            }
+        }
+        return new Dictionary<string, object>
+        {
+            { "jobId", job.jobId ?? "" },
+            { "itemId", job.itemId },
+            { "itemUuid", job.itemUuid ?? "" },
+            { "itemTitle", job.itemTitle ?? "" },
+            { "folderName", job.folderName ?? "" },
+            { "photos", photos },
+            { "templateId", job.templateId ?? "" },
+            { "templateName", job.templateName ?? "" },
+            { "promptText", job.promptText ?? "" },
+            { "origin", job.origin ?? "" },
+            { "status", job.status ?? "" },
+            { "createdAt", job.createdAt },
+            { "approvalRequestedAt", job.approvalRequestedAt },
+            { "results", results },
+            { "errors", jobErrors },
+            { "completedAt", job.completedAt },
+            { "acknowledged", job.acknowledged },
+            { "acknowledgedAt", job.acknowledgedAt }
+        };
+    }
+
+    private static void HandleCreateClaudeJob(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            if (string.IsNullOrEmpty(jsonStr))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Empty body" } });
+                return;
+            }
+
+            JObject json = JObject.Parse(jsonStr);
+            int itemId = ParseIntSafe(json["itemId"], 0);
+            string itemUuid = (json.Value<string>("itemUuid") ?? "").Trim();
+            string templateId = (json.Value<string>("templateId") ?? "").Trim();
+            string origin = (json.Value<string>("origin") ?? "").Trim();
+            if (origin != "pc" && origin != "phone") origin = "pc";
+
+            var reqPhotos = new List<ClaudeJobPhoto>();
+            JArray photosArr = json["photos"] as JArray;
+            if (photosArr != null)
+            {
+                foreach (var tok in photosArr)
+                {
+                    var obj = tok as JObject;
+                    if (obj == null) continue;
+                    string md5 = (obj.Value<string>("md5") ?? "").Trim().ToLower();
+                    string fileName = (obj.Value<string>("fileName") ?? "").Trim();
+                    if (!string.IsNullOrEmpty(md5))
+                    {
+                        reqPhotos.Add(new ClaudeJobPhoto { md5 = md5, fileName = fileName });
+                    }
+                }
+            }
+
+            if (reqPhotos.Count == 0)
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "送信する写真が指定されていません" } });
+                return;
+            }
+            if (string.IsNullOrEmpty(templateId))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "プロンプトテンプレートが指定されていません" } });
+                return;
+            }
+
+            ClaudeJob created = null;
+            string errorMessage = null;
+            int errorCode = 400;
+            lock (lockObj)
+            {
+                Dictionary<string, object> item = null;
+                if (!string.IsNullOrEmpty(itemUuid))
+                {
+                    // 商品特定は itemUuid (syncUuid) を最優先する (Q1 / レビュー指摘1)
+                    item = itemsDb.Find(i => i != null && i.ContainsKey("syncUuid") && i["syncUuid"] != null &&
+                        string.Equals(i["syncUuid"].ToString().Trim(), itemUuid, StringComparison.OrdinalIgnoreCase));
+                    if (item == null) { errorCode = 404; errorMessage = "商品が見つかりません (itemUuid)"; }
+                }
+                else if (itemId > 0)
+                {
+                    item = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"], 0) == itemId);
+                    if (item == null) { errorCode = 404; errorMessage = "商品が見つかりません"; }
+                }
+                else
+                {
+                    errorMessage = "商品が指定されていません";
+                }
+
+                if (errorMessage == null && item != null)
+                {
+                    int resolvedItemId = ParseIntSafe(item["id"], 0);
+                    if (IsItemTrashed(item))
+                    {
+                        errorMessage = "ゴミ箱内の商品は送信できません";
+                    }
+                    else if (ParseIntSafe(item.ContainsKey("mergedChildCount") ? item["mergedChildCount"] : null, 0) > 0)
+                    {
+                        // まとめ親商品からの送信は受け付けない (Q5 / レビュー指摘6)
+                        errorMessage = "まとめ商品は個別の子商品から送信してください";
+                    }
+                    else
+                    {
+                        TextTemplateConfig tpl = null;
+                        var settings = SyncStore.GetDefaultSettings();
+                        if (settings != null && settings.promptTemplates != null)
+                        {
+                            tpl = settings.promptTemplates.Find(t => t != null && t.id == templateId);
+                        }
+                        if (tpl == null)
+                        {
+                            errorMessage = "プロンプトテンプレートが見つかりません";
+                        }
+                        else
+                        {
+                            var photosList = item.ContainsKey("photos") && item["photos"] != null
+                                ? SyncStore.NormalizePhotosList(item["photos"])
+                                : new List<Dictionary<string, object>>();
+                            var md5ToFileName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var ph in photosList)
+                            {
+                                if (ph == null) continue;
+                                string h = ph.ContainsKey("md5Hash") && ph["md5Hash"] != null ? ph["md5Hash"].ToString().Trim().ToLower() : "";
+                                if (string.IsNullOrEmpty(h) || md5ToFileName.ContainsKey(h)) continue;
+                                string fn = ph.ContainsKey("fileName") && ph["fileName"] != null ? ph["fileName"].ToString().Trim() : "";
+                                md5ToFileName[h] = fn;
+                            }
+
+                            var jobPhotos = new List<ClaudeJobPhoto>();
+                            string missingMd5 = null;
+                            foreach (var rp in reqPhotos)
+                            {
+                                if (!md5ToFileName.ContainsKey(rp.md5)) { missingMd5 = rp.md5; break; }
+                                string fn = rp.fileName;
+                                if (string.IsNullOrEmpty(fn)) fn = md5ToFileName[rp.md5];
+                                if (string.IsNullOrEmpty(fn) && hashToFilePathMap.ContainsKey(rp.md5))
+                                {
+                                    fn = Path.GetFileName(hashToFilePathMap[rp.md5]);
+                                }
+                                jobPhotos.Add(new ClaudeJobPhoto { md5 = rp.md5, fileName = fn ?? "" });
+                            }
+
+                            if (missingMd5 != null)
+                            {
+                                errorMessage = "商品に存在しない写真が含まれています: " + missingMd5;
+                            }
+                            else
+                            {
+                                string folderName = "";
+                                string dir = FindExistingItemFolder(resolvedItemId);
+                                if (!string.IsNullOrEmpty(dir)) folderName = Path.GetFileName(dir);
+                                var job = new ClaudeJob
+                                {
+                                    itemId = resolvedItemId,
+                                    itemUuid = item.ContainsKey("syncUuid") && item["syncUuid"] != null ? item["syncUuid"].ToString().Trim() : itemUuid,
+                                    itemTitle = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "",
+                                    folderName = folderName,
+                                    photos = jobPhotos,
+                                    templateId = tpl.id,
+                                    templateName = tpl.name ?? "",
+                                    promptText = tpl.content ?? "",
+                                    origin = origin
+                                };
+                                created = ClaudeJobStore.CreateJob(job);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (errorMessage != null)
+            {
+                res.StatusCode = errorCode;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", errorMessage } });
+                return;
+            }
+
+            BumpClaudeRevision();
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "job", ToPublicClaudeJob(created) },
+                { "claudeRevision", GetClaudeRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleCreateClaudeJob エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleGetClaudeJobs(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string statusFilter = null;
+            string query = req.Url != null ? (req.Url.Query ?? "") : "";
+            if (!string.IsNullOrEmpty(query))
+            {
+                foreach (var pair in query.TrimStart('?').Split('&'))
+                {
+                    var kv = pair.Split(new char[] { '=' }, 2);
+                    if (kv.Length == 2 && kv[0] == "status")
+                    {
+                        statusFilter = Uri.UnescapeDataString(kv[1]).Trim();
+                    }
+                }
+            }
+            var jobs = ClaudeJobStore.GetJobs(statusFilter);
+            var list = new List<Dictionary<string, object>>();
+            foreach (var job in jobs)
+            {
+                list.Add(ToPublicClaudeJob(job));
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "jobs", list },
+                { "claudeRevision", GetClaudeRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleGetClaudeJobs エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleGetClaudeJob(HttpListenerResponse res, string jobId)
+    {
+        try
+        {
+            var job = ClaudeJobStore.GetJob(jobId);
+            if (job == null)
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                return;
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "job", ToPublicClaudeJob(job) },
+                { "claudeRevision", GetClaudeRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleGetClaudeJob エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleCancelClaudeJob(HttpListenerResponse res, string jobId)
+    {
+        try
+        {
+            int result = ClaudeJobStore.CancelJob(jobId);
+            if (result == 0)
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                return;
+            }
+            if (result == 2)
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "このジョブは取り消せない状態です" } });
+                return;
+            }
+            BumpClaudeRevision();
+            var job = ClaudeJobStore.GetJob(jobId);
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "job", ToPublicClaudeJob(job) },
+                { "claudeRevision", GetClaudeRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleCancelClaudeJob エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }
