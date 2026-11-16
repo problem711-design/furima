@@ -3066,6 +3066,7 @@ class FurimaServerNative
             presets = new List<FeePresetConfig>(),
             titleTemplates = new List<TextTemplateConfig>(),
             descriptionTemplates = new List<TextTemplateConfig>(),
+            promptTemplates = new List<TextTemplateConfig>(),
             settingsUpdatedAt = Math.Max(0, ParseLongSafe(dsObj["settingsUpdatedAt"], 0))
         };
 
@@ -3112,6 +3113,21 @@ class FurimaServerNative
             {
                 if (tToken == null) continue;
                 cfg.descriptionTemplates.Add(new TextTemplateConfig
+                {
+                    id = tToken.Value<string>("id") ?? "",
+                    name = tToken.Value<string>("name") ?? "",
+                    content = tToken.Value<string>("content") ?? ""
+                });
+            }
+        }
+
+        JArray promptTplArr = dsObj["promptTemplates"] as JArray;
+        if (promptTplArr != null)
+        {
+            foreach (JObject tToken in promptTplArr)
+            {
+                if (tToken == null) continue;
+                cfg.promptTemplates.Add(new TextTemplateConfig
                 {
                     id = tToken.Value<string>("id") ?? "",
                     name = tToken.Value<string>("name") ?? "",

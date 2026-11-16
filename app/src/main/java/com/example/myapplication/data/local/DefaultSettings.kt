@@ -25,6 +25,7 @@ data class DefaultSettings(
     val presets: List<FeePreset> = defaultPresets,
     val titleTemplates: List<TextTemplate> = emptyList(),
     val descriptionTemplates: List<TextTemplate> = emptyList(),
+    val promptTemplates: List<TextTemplate> = emptyList(),
     val settingsUpdatedAt: Long = 0L
 ) {
     companion object {

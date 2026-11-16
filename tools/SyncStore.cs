@@ -30,6 +30,7 @@ public class DefaultSettingsConfig
     public List<FeePresetConfig> presets { get; set; }
     public List<TextTemplateConfig> titleTemplates { get; set; }
     public List<TextTemplateConfig> descriptionTemplates { get; set; }
+    public List<TextTemplateConfig> promptTemplates { get; set; }
     public long settingsUpdatedAt { get; set; }
 
     public static DefaultSettingsConfig CreateDefault()
@@ -49,6 +50,7 @@ public class DefaultSettingsConfig
             },
             titleTemplates = new List<TextTemplateConfig>(),
             descriptionTemplates = new List<TextTemplateConfig>(),
+            promptTemplates = new List<TextTemplateConfig>(),
             settingsUpdatedAt = 0
         };
     }
@@ -271,6 +273,10 @@ public static class SyncStore
                 {
                     _currentConfig.defaultSettings.descriptionTemplates = new List<TextTemplateConfig>();
                 }
+                if (_currentConfig.defaultSettings.promptTemplates == null)
+                {
+                    _currentConfig.defaultSettings.promptTemplates = new List<TextTemplateConfig>();
+                }
                 return _currentConfig.defaultSettings;
             }
             return DefaultSettingsConfig.CreateDefault();
@@ -303,6 +309,10 @@ public static class SyncStore
             if (settings.descriptionTemplates == null)
             {
                 settings.descriptionTemplates = new List<TextTemplateConfig>();
+            }
+            if (settings.promptTemplates == null)
+            {
+                settings.promptTemplates = new List<TextTemplateConfig>();
             }
             _currentConfig.defaultSettings = settings;
             if (!string.IsNullOrEmpty(_storeJsonPath))

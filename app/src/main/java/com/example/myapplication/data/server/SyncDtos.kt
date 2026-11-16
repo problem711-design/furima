@@ -63,6 +63,7 @@ data class SyncSettingsDto(
     @param:Json(name = "presets") val presets: List<SyncFeePresetDto>,
     @param:Json(name = "titleTemplates") val titleTemplates: List<SyncTextTemplateDto> = emptyList(),
     @param:Json(name = "descriptionTemplates") val descriptionTemplates: List<SyncTextTemplateDto> = emptyList(),
+    @param:Json(name = "promptTemplates") val promptTemplates: List<SyncTextTemplateDto> = emptyList(),
     @param:Json(name = "settingsUpdatedAt") val settingsUpdatedAt: Long = 0L
 )
 

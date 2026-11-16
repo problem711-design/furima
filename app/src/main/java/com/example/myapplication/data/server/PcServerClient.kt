@@ -128,6 +128,9 @@ class PcServerClient(
             descriptionTemplates = settings.descriptionTemplates.map { t ->
                 SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
             },
+            promptTemplates = settings.promptTemplates.map { t ->
+                SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
+            },
             settingsUpdatedAt = settings.settingsUpdatedAt
         )
     }
@@ -157,6 +160,9 @@ class PcServerClient(
                 TextTemplate(id = t.id, name = t.name, content = t.content)
             },
             descriptionTemplates = dto.descriptionTemplates.map { t ->
+                TextTemplate(id = t.id, name = t.name, content = t.content)
+            },
+            promptTemplates = dto.promptTemplates.map { t ->
                 TextTemplate(id = t.id, name = t.name, content = t.content)
             },
             settingsUpdatedAt = dto.settingsUpdatedAt

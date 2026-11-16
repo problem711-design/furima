@@ -88,7 +88,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
-private enum class TemplateCategory { TITLE, DESCRIPTION }
+private enum class TemplateCategory { TITLE, DESCRIPTION, PROMPT }
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
@@ -109,6 +109,9 @@ fun SettingsStorageScreen(
     }
     val descriptionTemplatesList = remember(currentSettings) {
         mutableStateListOf<TextTemplate>().apply { addAll(currentSettings.descriptionTemplates) }
+    }
+    val promptTemplatesList = remember(currentSettings) {
+        mutableStateListOf<TextTemplate>().apply { addAll(currentSettings.promptTemplates) }
     }
 
     var feeRateText by remember(currentSettings) { mutableStateOf(currentSettings.defaultFeeRatePercent.toString()) }
@@ -136,6 +139,9 @@ fun SettingsStorageScreen(
     var selectedDescTemplateId by remember(descriptionTemplatesList) {
         mutableStateOf(descriptionTemplatesList.firstOrNull()?.id)
     }
+    var selectedPromptTemplateId by remember(promptTemplatesList) {
+        mutableStateOf(promptTemplatesList.firstOrNull()?.id)
+    }
 
     fun persistSettingsNow(
         targetPresets: List<FeePreset> = presetsList.toList(),
@@ -144,7 +150,8 @@ fun SettingsStorageScreen(
         targetShipping: Int = shippingCostText.toIntOrNull() ?: currentSettings.defaultShippingCost,
         targetExpense: Int = expenseCostText.toIntOrNull() ?: currentSettings.defaultExpenseCost,
         targetTitleTemplates: List<TextTemplate> = titleTemplatesList.toList(),
-        targetDescTemplates: List<TextTemplate> = descriptionTemplatesList.toList()
+        targetDescTemplates: List<TextTemplate> = descriptionTemplatesList.toList(),
+        targetPromptTemplates: List<TextTemplate> = promptTemplatesList.toList()
     ) {
         val safeFee = targetFee.coerceAtLeast(0)
         val safeShip = targetShipping.coerceAtLeast(0)
@@ -168,7 +175,8 @@ fun SettingsStorageScreen(
                 activePresetId = targetActiveId,
                 presets = syncedPresets,
                 titleTemplates = targetTitleTemplates,
-                descriptionTemplates = targetDescTemplates
+                descriptionTemplates = targetDescTemplates,
+                promptTemplates = targetPromptTemplates
             )
         )
     }
@@ -408,6 +416,7 @@ fun SettingsStorageScreen(
         var tplName by remember(activeTplCategory, editing?.id) { mutableStateOf(editing?.name ?: "") }
         var tplContent by remember(activeTplCategory, editing?.id) { mutableStateOf(editing?.content ?: "") }
         val isTitleCategory = (activeTplCategory == TemplateCategory.TITLE)
+        val isPromptCategory = (activeTplCategory == TemplateCategory.PROMPT)
 
         Dialog(
             onDismissRequest = {
@@ -431,8 +440,10 @@ fun SettingsStorageScreen(
                             Text(
                                 text = when {
                                     editing != null && isTitleCategory -> "タイトルテンプレート編集"
+                                    editing != null && isPromptCategory -> "画像加工プロンプトテンプレート編集"
                                     editing != null -> "商品説明テンプレート編集"
                                     isTitleCategory -> "タイトルテンプレート追加"
+                                    isPromptCategory -> "画像加工プロンプトテンプレート追加"
                                     else -> "商品説明テンプレート追加"
                                 },
                                 fontSize = 16.sp,
@@ -453,7 +464,7 @@ fun SettingsStorageScreen(
                             Button(
                                 onClick = {
                                     if (tplName.isNotBlank() && tplContent.isNotEmpty()) {
-                                        val targetList = if (isTitleCategory) titleTemplatesList else descriptionTemplatesList
+                                        val targetList = if (isTitleCategory) titleTemplatesList else if (isPromptCategory) promptTemplatesList else descriptionTemplatesList
                                         if (editing != null) {
                                             val updated = editing.copy(name = tplName.trim(), content = tplContent)
                                             val idx = targetList.indexOfFirst { it.id == editing.id }
@@ -471,7 +482,8 @@ fun SettingsStorageScreen(
                                         templateToEdit = null
                                         persistSettingsNow(
                                             targetTitleTemplates = titleTemplatesList.toList(),
-                                            targetDescTemplates = descriptionTemplatesList.toList()
+                                            targetDescTemplates = descriptionTemplatesList.toList(),
+                                            targetPromptTemplates = promptTemplatesList.toList()
                                         )
                                         Toast.makeText(context, "テンプレートを保存・同期しました", Toast.LENGTH_SHORT).show()
                                     }
@@ -553,13 +565,16 @@ fun SettingsStorageScreen(
                     onClick = {
                         if (category == TemplateCategory.TITLE) {
                             titleTemplatesList.removeAll { it.id == tpl.id }
+                        } else if (category == TemplateCategory.PROMPT) {
+                            promptTemplatesList.removeAll { it.id == tpl.id }
                         } else {
                             descriptionTemplatesList.removeAll { it.id == tpl.id }
                         }
                         templateToDelete = null
                         persistSettingsNow(
                             targetTitleTemplates = titleTemplatesList.toList(),
-                            targetDescTemplates = descriptionTemplatesList.toList()
+                            targetDescTemplates = descriptionTemplatesList.toList(),
+                            targetPromptTemplates = promptTemplatesList.toList()
                         )
                         Toast.makeText(context, "テンプレートを削除しました", Toast.LENGTH_SHORT).show()
                     },
@@ -831,6 +846,26 @@ fun SettingsStorageScreen(
                         },
                         onDeleteClick = { tpl ->
                             templateToDelete = Pair(TemplateCategory.DESCRIPTION, tpl)
+                        }
+                    )
+
+                    // 画像加工プロンプト用テンプレート（プルダウン式）
+                    val selectedPromptTemplate = promptTemplatesList.find { it.id == selectedPromptTemplateId } ?: promptTemplatesList.firstOrNull()
+                    SectionTemplateDropdown(
+                        title = "画像加工プロンプト用テンプレート",
+                        templates = promptTemplatesList,
+                        selectedTemplate = selectedPromptTemplate,
+                        onSelectTemplate = { selectedPromptTemplateId = it?.id },
+                        onAddClick = {
+                            templateToEdit = null
+                            editingTemplateCategory = TemplateCategory.PROMPT
+                        },
+                        onEditClick = { tpl ->
+                            templateToEdit = tpl
+                            editingTemplateCategory = TemplateCategory.PROMPT
+                        },
+                        onDeleteClick = { tpl ->
+                            templateToDelete = Pair(TemplateCategory.PROMPT, tpl)
                         }
                     )
                 }

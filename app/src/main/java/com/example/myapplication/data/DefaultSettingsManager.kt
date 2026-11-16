@@ -66,6 +66,18 @@ class DefaultSettingsManager(context: Context) {
             emptyList()
         }
 
+        val promptTemplatesJson = prefs.getString("prompt_templates_json", null)
+        val promptTemplates = if (!promptTemplatesJson.isNullOrBlank()) {
+            try {
+                val type = object : TypeToken<List<TextTemplate>>() {}.type
+                gson.fromJson<List<TextTemplate>>(promptTemplatesJson, type) ?: emptyList()
+            } catch (e: Exception) {
+                emptyList()
+            }
+        } else {
+            emptyList()
+        }
+
         return DefaultSettings(
             defaultFeeRatePercent = feeRate,
             defaultShippingCost = shipping,
@@ -77,6 +89,7 @@ class DefaultSettingsManager(context: Context) {
             presets = presets,
             titleTemplates = titleTemplates,
             descriptionTemplates = descriptionTemplates,
+            promptTemplates = promptTemplates,
             settingsUpdatedAt = settingsUpdatedAt
         )
     }
@@ -102,6 +115,7 @@ class DefaultSettingsManager(context: Context) {
             .putString("fee_presets_json", gson.toJson(resolvedSettings.presets))
             .putString("title_templates_json", gson.toJson(resolvedSettings.titleTemplates))
             .putString("description_templates_json", gson.toJson(resolvedSettings.descriptionTemplates))
+            .putString("prompt_templates_json", gson.toJson(resolvedSettings.promptTemplates))
             .putLong("settings_updated_at", resolvedSettings.settingsUpdatedAt)
             .apply()
         _settings.value = resolvedSettings

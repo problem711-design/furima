@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 7)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 8)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -916,6 +916,19 @@ public static class DashboardHtml
                     </div>
                     <div id='settings-desc-tpl-list' class='space-y-1.5'></div>
                 </div>
+
+                <!-- 4. 画像加工プロンプト用テンプレート -->
+                <div class='space-y-2.5'>
+                    <div class='flex items-center justify-between border-b border-slate-200 pb-1.5'>
+                        <h4 class='font-bold text-slate-800 text-sm flex items-center gap-1.5'>
+                            <i class='fa-solid fa-wand-magic-sparkles text-violet-500'></i> 画像加工プロンプト用テンプレート
+                        </h4>
+                        <button type='button' onclick='openTemplateEditorModal(""prompt"", -1)' class='px-2.5 py-1 bg-violet-600 hover:bg-violet-700 text-white rounded-md font-bold text-[11px] flex items-center gap-1 transition'>
+                            <i class='fa-solid fa-plus'></i> 追加・大型編集
+                        </button>
+                    </div>
+                    <div id='settings-prompt-tpl-list' class='space-y-1.5'></div>
+                </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end'>
                 <button onclick='closeSettingsModal()' class='px-4 py-2 text-xs font-bold bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition'>閉じる</button>
@@ -986,6 +999,7 @@ public static class DashboardHtml
             ],
             titleTemplates: [],
             descriptionTemplates: [],
+            promptTemplates: [],
             settingsUpdatedAt: 0
         };
 
@@ -1189,6 +1203,7 @@ public static class DashboardHtml
                         presets: (Array.isArray(data.presets) && data.presets.length > 0) ? data.presets : pcSettings.presets,
                         titleTemplates: Array.isArray(data.titleTemplates) ? data.titleTemplates : [],
                         descriptionTemplates: Array.isArray(data.descriptionTemplates) ? data.descriptionTemplates : [],
+                        promptTemplates: Array.isArray(data.promptTemplates) ? data.promptTemplates : [],
                         settingsUpdatedAt: data.settingsUpdatedAt || 0
                     };
                     renderTemplateSelects();
@@ -1271,6 +1286,7 @@ public static class DashboardHtml
                     presets: (Array.isArray(saved.presets) && saved.presets.length > 0) ? saved.presets : nextSettings.presets,
                     titleTemplates: Array.isArray(saved.titleTemplates) ? saved.titleTemplates : [],
                     descriptionTemplates: Array.isArray(saved.descriptionTemplates) ? saved.descriptionTemplates : [],
+                    promptTemplates: Array.isArray(saved.promptTemplates) ? saved.promptTemplates : [],
                     settingsUpdatedAt: saved.settingsUpdatedAt || Date.now()
                 };
                 renderSettingsModalLists();
@@ -1323,6 +1339,7 @@ public static class DashboardHtml
 
             renderTemplateListHtml('settings-title-tpl-list', pcSettings.titleTemplates || [], 'title');
             renderTemplateListHtml('settings-desc-tpl-list', pcSettings.descriptionTemplates || [], 'desc');
+            renderTemplateListHtml('settings-prompt-tpl-list', pcSettings.promptTemplates || [], 'prompt');
         }
 
         function renderTemplateListHtml(containerId, list, category) {
@@ -1462,15 +1479,15 @@ public static class DashboardHtml
         }
 
         function openTemplateEditorModal(category, idx) {
-            const list = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const list = category === 'title' ? (pcSettings.titleTemplates || []) : (category === 'prompt' ? (pcSettings.promptTemplates || []) : (pcSettings.descriptionTemplates || []));
             const tpl = (typeof idx === 'number' && idx >= 0) ? list[idx] : null;
             document.getElementById('tpl-editor-category').value = category;
             document.getElementById('tpl-editor-edit-id').value = tpl ? tpl.id : '';
             document.getElementById('tpl-editor-name').value = tpl ? tpl.name : '';
             document.getElementById('tpl-editor-content').value = tpl ? tpl.content : '';
             document.getElementById('tpl-editor-title').innerText = tpl
-                ? (category === 'title' ? 'タイトルテンプレートを編集' : '商品説明テンプレートを編集')
-                : (category === 'title' ? 'タイトルテンプレートを追加' : '商品説明テンプレートを追加');
+                ? (category === 'title' ? 'タイトルテンプレートを編集' : (category === 'prompt' ? '画像加工プロンプトを編集' : '商品説明テンプレートを編集'))
+                : (category === 'title' ? 'タイトルテンプレートを追加' : (category === 'prompt' ? '画像加工プロンプトを追加' : '商品説明テンプレートを追加'));
             updateTemplateEditorCharCount();
             document.getElementById('template-editor-modal').classList.remove('hidden');
         }
@@ -1494,7 +1511,7 @@ public static class DashboardHtml
                 alert('表示名と挿入テキストを入力してください');
                 return;
             }
-            const currentList = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const currentList = category === 'title' ? (pcSettings.titleTemplates || []) : (category === 'prompt' ? (pcSettings.promptTemplates || []) : (pcSettings.descriptionTemplates || []));
             const nextList = currentList.map(t => ({ ...t }));
             if (editId) {
                 const idx = nextList.findIndex(t => t.id === editId);
@@ -1505,21 +1522,23 @@ public static class DashboardHtml
             const next = {
                 ...pcSettings,
                 titleTemplates: category === 'title' ? nextList : (pcSettings.titleTemplates || []),
-                descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || [])
+                descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || []),
+                promptTemplates: category === 'prompt' ? nextList : (pcSettings.promptTemplates || [])
             };
             const ok = await savePcSettingsPayload(next, 'テンプレートを保存しました');
             if (ok) closeTemplateEditorModal();
         }
 
         async function deleteTemplateByIndex(category, idx) {
-            const currentList = category === 'title' ? (pcSettings.titleTemplates || []) : (pcSettings.descriptionTemplates || []);
+            const currentList = category === 'title' ? (pcSettings.titleTemplates || []) : (category === 'prompt' ? (pcSettings.promptTemplates || []) : (pcSettings.descriptionTemplates || []));
             const target = currentList[idx];
             if (!target || !confirm('テンプレート「' + target.name + '」を削除しますか？')) return;
             const nextList = currentList.filter((_, i) => i !== idx);
             const next = {
                 ...pcSettings,
                 titleTemplates: category === 'title' ? nextList : (pcSettings.titleTemplates || []),
-                descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || [])
+                descriptionTemplates: category === 'desc' ? nextList : (pcSettings.descriptionTemplates || []),
+                promptTemplates: category === 'prompt' ? nextList : (pcSettings.promptTemplates || [])
             };
             await savePcSettingsPayload(next, 'テンプレートを削除しました');
         }

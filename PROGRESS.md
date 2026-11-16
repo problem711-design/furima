@@ -37,7 +37,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 7)** （フェーズ 4-1 〜 4-4 完了）
+現在のバージョン：**`v1.0.0` (Build 8)** （フェーズ 4-1 〜 4-4、5-1 完了）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -103,7 +103,11 @@
   - `4-4-2` `POST /api/items/{id}/photos/scan` ＋ ギャラリー「フォルダ取込」ボタン ＋ サムネ/ライトボックスの `fileName` 表示 ＆ 表示中ライブ更新
 
 ### フェーズ 5 計画マイルストーン (詳細仕様は `PLAN_CLAUDE_SEND_PHASE5.md` を参照・2026-11-16 策定)
-- [ ] **フェーズ 5-1 (`v1.0.0 Build 8`) — プロンプトテンプレートの共有基盤（設定同期への相乗り）** 【計画】
+- [x] **フェーズ 5-1 (`v1.0.0 Build 8`) — プロンプトテンプレートの共有基盤（設定同期への相乗り）** 【完了】
+  - `5-1-1` サーバー設定モデル・パーサー拡張（`SyncStore.cs` の `promptTemplates` 追加＋null正規化、`FurimaServerNative.cs` の `ParseDefaultSettingsConfig()` 手書き抽出追加）
+  - `5-1-2` Android設定モデル・DTO・変換拡張（`DefaultSettings` / `SyncSettingsDto` / `PcServerClient` 相互変換 / `DefaultSettingsManager` の `prompt_templates_json` 永続化）
+  - `5-1-3` PC管理画面に `prompt` カテゴリ追加（設定3箇所マッピング＋「画像加工プロンプト用テンプレート」セクション＋編集モーダル3分岐化）
+  - `5-1-4` スマホ設定UIにプロンプトテンプレート編集追加（`TemplateCategory.PROMPT`＋`persistSettingsNow()` 引数追加）
 - [ ] **フェーズ 5-2 (`v1.0.0 Build 9`) — ジョブキュー基盤（サーバー保存＋作成API＋PCギャラリー送信UI）** 【計画】
 - [ ] **フェーズ 5-3 (`v1.0.0 Build 10`) — スマホ側サムネイル複数選択（一括削除＋Muse送信）** 【計画】
 - [ ] **フェーズ 5-4 (`v1.0.0 Build 11`) — スマホ承認フロー（同期リビジョン経由）** 【計画】
@@ -113,6 +117,15 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/16 フェーズ 5-1 完了 バージョン 1.0.0 (Build 8)
+- **プロンプトテンプレートの共有基盤（設定同期への相乗り・新規APIなし）**：
+  - サーバー (`tools/SyncStore.cs`, `tools/FurimaServerNative.cs`)：`DefaultSettingsConfig` に `promptTemplates`（`TextTemplateConfig` のリスト）を追加し、`CreateDefault()` 初期化と `GetDefaultSettings()` / `SaveDefaultSettings()` の null→空リスト正規化を実施。あわせて `ParseDefaultSettingsConfig()` の手書き抽出へ `promptTemplates` を追加し、`PUT /api/settings`・`POST /api/sync/items` 経由で空に初期化される不具合を未然に防止（レビュー指摘4-1）。
+  - Android (`DefaultSettings.kt`, `SyncDtos.kt`, `PcServerClient.kt`, `DefaultSettingsManager.kt`, `SettingsStorageScreen.kt`)：設定モデル・同期DTO・相互変換へ `promptTemplates` を追加し、`SharedPreferences` の手書きキー `prompt_templates_json` で永続化（レビュー指摘4-2）。設定画面には既存テンプレート編集ダイアログを流用した「画像加工プロンプト用テンプレート」セクションを追加し、`persistSettingsNow()` への引数追加で他設定保存時の消失を防止（レビュー指摘4-3）。
+  - PC管理画面 (`tools/DashboardHtml.cs`)：`pcSettings` 初期値・`fetchSettings()`・`savePcSettingsPayload()` の3箇所マッピングへ `promptTemplates` を追加し（レビュー指摘4-4）、テンプレート編集モーダルのカテゴリ分岐（`title` / `desc`）へ `prompt` を追加、設定画面に「画像加工プロンプト用テンプレート」一覧セクションを新設。
+  - 初期テンプレート（窓辺・海／窓辺・森／夕方の部屋）はコードへ埋め込まず、ユーザーが設定画面から登録する運用（計画書 5-1-3）。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 8`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 8)`** へ3箇所同時統一（※PC側バイナリ反映には Windows で `tools/build-exe.bat` 実行が必要。Android のビルド・実機確認はユーザー環境で実施）。
+- 既存機能の削除・置き換え：なし（後方互換な追加のみ。旧バージョン相手との設定同期でも未知フィールド無視・欠落時空リストで安全）。
 
 ### 2026/11/15 フェーズ 4-4 完了 バージョン 1.0.0 (Build 7)
 - **低負荷フォルダ監視による画像自動取込 (`tools/FurimaServerNative.cs`)**：

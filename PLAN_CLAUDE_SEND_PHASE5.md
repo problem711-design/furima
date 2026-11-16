@@ -121,21 +121,21 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ## 1. プロンプトテンプレートの共有基盤（Target: `v1.0.0 Build 8`）
 
 ### 実装タスクチェックリスト
-- [] **5-1-1: サーバー設定モデル・パーサー拡張 (`tools/SyncStore.cs`、`tools/FurimaServerNative.cs`)**
+- [x] **5-1-1: サーバー設定モデル・パーサー拡張 (`tools/SyncStore.cs`、`tools/FurimaServerNative.cs`)**
 - `tools/SyncStore.cs`：`DefaultSettingsConfig` に `public List<TextTemplateConfig> promptTemplates { get; set; }` を追加し、`CreateDefault()` で空リスト初期化。旧 `store.json`（フィールド無し）は Newtonsoft のデフォルトで null になり得るため、`GetDefaultSettings()` **および `SaveDefaultSettings()`（280〜307行目付近）** の両方で null→空リストへ正規化する（既存 `titleTemplates` / `descriptionTemplates` の扱いに合わせる）。
 - `tools/FurimaServerNative.cs`：**`ParseDefaultSettingsConfig()`（3058〜3124行目）へ `promptTemplates` の手書き抽出を追加する（レビュー指摘4-1・必須）**。`PUT /api/settings`（3134行目）と `POST /api/sync/items`（1981行目）の双方がここを通るため、漏らすと同期・保存のたびにサーバー側の `promptTemplates` が空に上書きされる。
-- [] **5-1-2: Android設定モデル・DTO・変換の拡張**
+- [x] **5-1-2: Android設定モデル・DTO・変換の拡張**
 - `data/local/DefaultSettings.kt`：`promptTemplates: List<TextTemplate> = emptyList()` を追加。
 - `data/server/SyncDtos.kt`：`SyncSettingsDto` に `@param:Json(name = "promptTemplates") val promptTemplates: List<SyncTextTemplateDto> = emptyList()` を追加。
 - `data/server/PcServerClient.kt`：`toSyncSettingsDto` / `applyServerSettingsDto` に `promptTemplates` の相互変換を追加。
 - `data/DefaultSettingsManager.kt`：**手書きキー保存が必須対応**（レビュー指摘4-2）。現行は `SharedPreferences` へ `title_templates_json` / `description_templates_json` を個別保存しているため、`prompt_templates_json` の読み書き（45〜67行目・103〜104行目のパターン）を追加する。漏らすとアプリ再起動で `promptTemplates` が消える。
-- [] **5-1-3: PC管理画面のテンプレート編集に `prompt` カテゴリ追加 (`tools/DashboardHtml.cs`)**
+- [x] **5-1-3: PC管理画面のテンプレート編集に `prompt` カテゴリ追加 (`tools/DashboardHtml.cs`)**
 - `pcSettings` の初期値（976行目付近）、`fetchSettings()`（1184行目付近）、`savePcSettingsPayload()`（1266行目付近）の**3箇所すべて**の手書きマッピングへ `promptTemplates` を追加する（レビュー指摘4-4）。`renderTemplateSelects()`（1237行目付近）との連動も確認する。
 - テンプレート編集モーダルのカテゴリ分岐（`title` / `desc`）へ `prompt` を追加し、設定画面に「プロンプトテンプレート」一覧セクション（`renderTemplateListHtml` 流用）を追加。文言は「画像加工プロンプト」であることが分かる表記にする。
 - 初期データとして、既存の確定テンプレート（窓辺・海／窓辺・森／夕方の部屋）の3件をユーザーが設定画面から登録する運用とし、コードへの埋め込みはしない。
-- [] **5-1-4: スマホ設定UIへのプロンプトテンプレート編集追加**
+- [x] **5-1-4: スマホ設定UIへのプロンプトテンプレート編集追加**
 - `ui/screens/SettingsStorageScreen.kt` の既存テンプレート編集（タイトル／説明）に、プロンプト用セクションを追加（同じ編集ダイアログを流用）。 **あわせて `persistSettingsNow()`（140〜174行目）が `DefaultSettings(...)` を全引数手書きで構築しているため、`promptTemplatesList` の状態と引数の追加が必須**（レビュー指摘4-3。漏らすと他の設定を保存した瞬間に `promptTemplates` が空で上書きされる）。
-- [] **5-1-5: バージョン統一更新 (`Build 8`) ＆ 検証**
+- [x] **5-1-5: バージョン統一更新 (`Build 8`) ＆ 検証**
 - 3箇所を **`v1.0.0 (Build 8)`** へ統一（`WebDashboardHtml.kt` は本フェーズではバージョン表記のみ）。
 - 検証：PC⇔スマホ双方からプロンプトテンプレートを登録・編集し、他方へ同期されること。旧バージョンの相手とも設定同期が壊れないこと（未知フィールド無視・欠落時空リスト）。
 - 新規API：なし。既存機能の削除・置き換え：なし。
