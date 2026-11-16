@@ -145,3 +145,13 @@ PCブラウザ管理画面の写真ギャラリーを開いたとき限定で、
   - `DashboardHtml.cs` の写真ギャラリーモーダルに「フォルダ取込」ボタンを追加し、サムネイルカードおよび原寸ライトボックス上部へファイル名バッジを表示してスマホ原画とAI加工版を見比べやすく改善。さらにギャラリー／ライトボックス表示中の `fetchItemsOnly()` 自動追従に対応。
 - [x] **4-4-3：バージョン統一更新 (`Build 7`)**
   - `app/build.gradle.kts` (`versionCode = 7`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 7)`** へ統一更新（PC反映には Windows で `tools/build-exe.bat` 実行が必要）。
+
+---
+
+## 5. Build 12（`e1a42b1`）時点 監査・追試メモ（2026-11-16）
+
+- **ビルド・テスト確認**: `e1a42b1` 上で `compile_applet`、`node --check`（`DashboardHtml.cs` / `WebDashboardHtml.kt` 双方）、`gradle :app:testDebugUnitTest`（全6クラス・14テスト）すべて合格を確認済み。
+- **継続留意事項（詳細・Phase 5 事項は `PLAN_CLAUDE_SEND_PHASE5.md` §11 参照）**:
+  - `tools/furima-server.exe`（Phase 4-1 以前）および `flea_market_app.apk` / `public/flea_market_app.apk`（Build 6）が最新ソース（Build 12）と乖離しているため再ビルドが必要。
+  - スマホ緊急Webサーバー（`LocalWebServer.kt` / `WebDashboardHtml.kt`）について、`0.0.0.0:8080` + `CORS anyHost()` の無認証削除API（家庭内LAN専用前提）、`fetchItemsSilent()` の変更検知キー不足（タイトル・説明・`isOriginalDeleted`）、`previewUploadPhotos` の `readAsDataURL` によるブラウザメモリ消費が今後の改善候補として確認された。
+

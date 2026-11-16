@@ -132,6 +132,11 @@
 
 ## 更新履歴 (Changelog)
 
+### [2026-11-16] フェーズ 4〜5-5 実装完了後コードレビュー・ビルド検証 ＆ 協議事項追記 (`PLAN_CLAUDE_SEND_PHASE5.md` §11)
+- **ビルド・自動テスト実測（`e1a42b1` / `v1.0.0 Build 12`）**: `compile_applet` 合格、`node --check`（`DashboardHtml.cs` / `WebDashboardHtml.kt` 双方）合格、`gradle :app:testDebugUnitTest` 全6クラス・14テスト合格（失敗0・スキップ0）を確認。
+- **計画書への調査結果＆協議事項追記**:
+  - `PLAN_CLAUDE_SEND_PHASE5.md` §11（および `REVIEW_CLAUDE_SEND_PHASE5.md` §5、`PLAN_SYNC_STATUS_AND_MEMORY.md` §5）へ、検出された課題（高：`DetectImageMimeType` フォールバックバグによる 415/HEIF 判定漏れ、`.exe`・`.apk` バイナリ未更新／中：`ClaudeJobStore` スレッド安全＆`POST /results` 冪等性競合、承認・完了ダイアログ失敗時UX・閉塞、緊急Webサーバー認証・差分検知／軽微：`ItemEditScreen` `loadedPhotosByPath` 滞留・経過時間表示）とフェーズ 5-1〜5-5 担当エージェントとの協議事項 5 点を記録。
+
 ### 2026/11/16 フェーズ 5-5 完了 バージョン 1.0.0 (Build 12)
 - **結果返却・完了通知・確認（ack）共有**：
   - 結果返却 `POST /api/claude/jobs/{jobId}/results`（ジョブトークン必須）：ヘッダ `X-Source-Md5` / `X-File-Name` を受け、ボディの画像バイトをマジックバイトで検証（画像でなければ 415）。受付上限 25MB。保存名は Q4 の決定通り「ジョブ記録の元ファイル名 → サニタイズ済み `X-File-Name` → フォルダ内実ファイル → フォールバック」の優先順位でベース名を決め、`_ai` ＋バイト判定の拡張子（`DetectImageExtension`）を付ける（元ファイル名の拡張子は使わない）。同名があれば `_ai2`, `_ai3`…と連番。同一ジョブ・同一 `sourceMd5` への再送は既存レコードを成功として返す冪等仕様（リトライで `_ai2` が増殖しない）。

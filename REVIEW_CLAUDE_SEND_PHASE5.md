@@ -201,3 +201,17 @@
 2. **5-4-1 サーバー側 EXIF 回転補正・リサイズの新規実装明記**：`FurimaServerNative.cs` には既存の EXIF 回転処理が存在しない（Android 側 `PhotoStorageManager.kt` のみ）ため、`System.Drawing.Image`（タグ `0x0112` → `RotateFlip`）＋ `MemoryStream` 完結方式での新規実装と、「2048px以下でも EXIF 回転タグ付きは正立化して返す」条件を明確化。
 3. **まとめ親商品の UI 側無効化（5-2-4 / 5-3-3）**：サーバー 400 拒否だけでなく、PC ギャラリー（`checkIsBundle(item)`）およびスマホ編集画面（`mergedChildCount > 0`）でも送信ボタンを無効化＋理由表示するガードを追加。
 4. **関数名修正（5-2-4）**：`updateViewerSelectionUi` → 現行実コードの `updateViewerSelectionBar`（`DashboardHtml.cs` 2166行目）へ修正。
+
+---
+
+## 5. フェーズ 5-1〜5-5 実装完了後（`e1a42b1` / `Build 12`）コードレビュー・ビルド検証サマリー（2026-11-16）
+
+5-1〜5-5 実装後の実コード・計画書突合およびビルド検証（`compile_applet` 合格、`node --check` 合格、`gradle :app:testDebugUnitTest` 14テスト全合格）を実施した。詳細およびフェーズ 5-1〜5-5 担当エージェントとの協議項目は **`PLAN_CLAUDE_SEND_PHASE5.md` §11** へ統合記載済み。
+
+### 要対応・協議項目の概要
+1. **【重要度 高】`DetectImageMimeType()` フォールバックバグ（`tools/FurimaServerNative.cs` 5576〜5600行目）**：PNG/WebP/GIF/BMP 以外を無条件で `"image/jpeg"` 扱いしているため、`POST /results` の 415 拒否がデッドコード化し、`TryBuildClaudeDeliveryCopy` でも HEIF 等を JPEG 誤認する（`FF D8 FF` 判定追加・未一致時 `""` 返却が必須）。
+2. **【重要度 高】バイナリ成果物の未更新**：`tools/furima-server.exe`（Phase 4-1 以前のまま）および `flea_market_app.apk`（Build 6 のまま）の更新が必要。
+3. **【重要度 中】`ClaudeJobStore` スレッド安全＆ `POST /results` 冪等性競合**：`GetJob()`/`GetJobs()` の生参照返却による列挙例外リスク、および結果保存時の同一 `sourceMd5` 二重書き出し余地。
+4. **【重要度 中】スマホ承認・完了ダイアログの失敗時UX**：HTTP 失敗時の通知・ローディング欠如と、`ClaudeCompletionDialog` が PC 不達時に閉じられない問題。
+5. **【重要度 中／軽微】その他**：`LocalWebServer.kt` / `WebDashboardHtml.kt` の認証・差分検知ハッシュ・`readAsDataURL`（Phase 4 範囲）、`ItemEditScreen.kt` の `loadedPhotosByPath` 滞留、`ClaudeApprovalDialog.kt` の経過時間表示。
+

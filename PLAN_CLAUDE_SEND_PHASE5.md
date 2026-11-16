@@ -302,3 +302,83 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - **指摘11（用語）**：命名規約を冒頭に明記。
 - **画像形式・サイズ方針（ユーザー追加確定）**：HEIFは使用しない。基本はアプリ内カメラの2048px運用とし、フル解像度写真はPC側の配達用コピーで2048pxへ統一する（確定事項9 / 5-4-1）。
 - **最終チェック追記（2026-11-16・実装着手前補完）**：5-1-1 へ `FurimaServerNative.cs` の `ParseDefaultSettingsConfig()` / `SyncStore.SaveDefaultSettings()` を明記、5-2-4 の関数名を `updateViewerSelectionBar` へ修正しPC・スマホ双方のUIにまとめ親商品の送信無効化ガードを追加、5-4-1 のEXIF回転補正・リサイズはサーバー側に既存実装が無いため `System.Drawing` ＋ `MemoryStream` で新規実装し EXIF 回転タグ付き画像は2048px以下でも正立化対象とするよう明確化。
+
+---
+
+## 11. 実装完了後コードレビュー・ビルド検証結果 ＆ 担当エージェント協議事項（2026-11-16 / `e1a42b1`・`v1.0.0 Build 12` 時点）
+
+フェーズ 5-1〜5-5 完了時点（`origin/main` `e1a42b1` / 4-1〜5-5 全17コミット対象）に対するコードレビュー、計画書突合、ビルド＆ユニットテスト実測結果を以下に記録する。**フェーズ 5-6（実機試運転）および Build 13 以降の修正を進める前に、フェーズ 5-1〜5-5 実装担当エージェントと本節の内容を協議・確定すること。**
+
+### 11.1 ビルド・構文チェック・自動テスト実測結果（`e1a42b1`）
+
+| 検証項目 | 結果 | 詳細・補足 |
+|---|---|---|
+| **Android ビルド (`compile_applet`)** | **合格** | エラーなし（`Build succeeded`） |
+| **JS 構文チェック (`node --check`)** | **合格** | `tools/DashboardHtml.cs` および `WebDashboardHtml.kt` 双方の `<script>` 抽出検証が exit 0 |
+| **JVM ユニット＆Robolectric テスト (`gradle :app:testDebugUnitTest`)** | **合格 (2m 7s)** | 全 6 テストクラス・**14 テスト合格（失敗 0 / エラー 0 / スキップ 0）**<br>・`CsvExporterTest` (1) / `ExampleRobolectricTest` (1) / `ExampleUnitTest` (1)<br>・`Phase214TrashAndSyncTest` (5：`deletePhotoById`・`deletePhotosByIds`・設定同期・論理削除/復元/衝突解決)<br>・`Phase215PhotoIntegrityTest` (3) / `PhotoStorageManagerTest` (3) |
+| **3箇所バージョン表記統一** | **確認済み** | `app/build.gradle.kts` (`versionCode = 12`, `versionName = "1.0.0"`)、`tools/DashboardHtml.cs` (160行目)、`WebDashboardHtml.kt` (28行目) がすべて `v1.0.0 (Build 12)` で一致 |
+| **自動テスト未カバー範囲（要留意）** | **注意** | フェーズ 4-3（同期進捗UI）・フェーズ 5-1〜5-5（プロンプト同期・複数選択・Muse 承認/完了フロー）および PC 側 C# エンドポイント専用の自動ユニットテストは未追加 |
+
+### 11.2 計画整合性 ＆ 良好確認済み項目
+
+- **計画書への準拠状況**: フェーズ 4（4-1〜4-4）およびフェーズ 5（5-1〜5-5）の全チェックリスト項目、`REVIEW_CLAUDE_SEND_PHASE5.md` の指摘11件・協議Q1〜Q7 が実装へ忠実に反映されている。
+- **実コードで安全性が確認できた箇所**:
+  - `TryBuildClaudeDeliveryCopy`（`tools/FurimaServerNative.cs` 5144行目）で透過PNG再エンコード前に `Graphics.Clear(Color.White)` が実施されており、JPEG変換時の黒背景化を防げている。
+  - `HandlePostClaudeJobResult`（同 5394〜5409行目）でファイル保存直後に `CommitAutoImportedPhotosBatch` を呼び出して `photoStatCache` / `hashToFilePathMap` を即時更新しており、400ms後の `FileSystemWatcher` による二重取込を抑制できている。
+  - `claudeRevision` の初期値が `1L` であり、`FleaMarketViewModel.kt` の `!=` 比較により初回接続・サーバー再起動直後でも第3分岐が正常発火する。
+  - `DefaultSettingsManager.kt`（`prompt_templates_json`）と `SettingsStorageScreen.kt`（`persistSettingsNow`）の連携漏れはなく、他設定保存時のテンプレ消失は防止されている。
+
+### 11.3 検出された問題点一覧（重要度順）
+
+#### 【重要度 高】
+1. **`DetectImageMimeType()` のフォールバックバグにより 415 検証と HEIF 拒否が無効化（`tools/FurimaServerNative.cs` 5576〜5600行目）**
+   - **現状**: `IsValidImageHeader()`（706行目）は JPEG (`FF D8 FF`) を明示チェックしている一方、新設の `DetectImageMimeType()` は PNG / WebP / GIF / BMP に一致しないバイト列を**すべて `"image/jpeg"` として返している**。
+   - **影響 1（セキュリティ／データ整合）**: `HandlePostClaudeJobResult()`（5320〜5327行目）の `if (string.IsNullOrEmpty(mime) || !mime.StartsWith("image/"))` による 415 拒否が**到達不能（デッドコード）**になっており、HTML・JSON・テキスト・破損データ・HEIC 等を返却APIへ送信してもそのまま `_ai.jpg` として保存・商品DB登録されてしまう。
+   - **影響 2（配達用コピーのエラー分類）**: `TryBuildClaudeDeliveryCopy()`（5095〜5100行目）でも HEIF/HEIC 等の非対応形式が `"image/jpeg"` と誤判定されるため、「未対応の画像形式です」として 415 拒否＋エラー記録に落ちず、`Image.FromStream(ms)` のデコード例外経路へ入る。
+   - **修正方針案**: `DetectImageMimeType()` で JPEG マジックバイト（`bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF`）を明示チェックし、どの画像形式にも一致しない場合は `""`（空文字）を返すように修正する（あわせて `DetectImageExtension()` 側も非画像時のフォールバックを整理する）。
+
+2. **PC サーバー実行ファイル（`tools/furima-server.exe`）および配布 APK の未更新（成果物の乖離）**
+   - **現状**:
+     - `tools/furima-server.exe` は `d87cc85`（フェーズ 4-1 以前）からリビルドされておらず、**フェーズ 4-2（写真ゴミ箱）・4-4（フォルダ監視）・フェーズ 5-1〜5-5（Muse 連携一式）がバイナリに含まれていない**。
+     - `flea_market_app.apk` および `public/flea_market_app.apk` も **Build 6（`7397c81`）のまま**で、Build 8〜12 のスマホ側機能（プロンプト同期・複数選択送信・承認/完了オーバーレイ）が未同梱。
+   - **対応**: Phase 5 修正コミット後、Windows 環境での `tools/build-exe.bat` 実行と Build 13（または最新 Build）としての APK 再生成・配置が必要。
+
+#### 【重要度 中】
+3. **`ClaudeJobStore` の生参照返却 ＆ `POST /results` 冪等性チェックの競合リスク（`tools/ClaudeJobStore.cs` 170〜201行目、`tools/FurimaServerNative.cs` 5273〜5416行目）**
+   - **現状 1（スレッド安全性）**: `ClaudeJobStore.GetJob()` / `GetJobs()` は `_jobLock` を抜ける際に、`_jobList` 内の生 `ClaudeJob` インスタンスおよびその `List<...>`（`photos` / `results` / `errors`）への参照をそのまま返している。別スレッドの `MutateJob()` が `results.Add(...)` 等でリストを書き換えている最中に `ToPublicClaudeJob()` や `Find()` が走ると `InvalidOperationException`（列挙中コレクション変更）を起こし得る。
+   - **現状 2（冪等性のTOCTOU競合）**: `HandlePostClaudeJobResult()` で `job.results.Find(...)`（5275行目）を行ってからファイル書き出し（5394行目）・`MutateJob` で `j.results.Add(...)`（5414行目）を行う間に排他がないため、同一 `sourceMd5` のリトライ要求が並行到着すると `_ai.jpg` と `_ai2.jpg` の二重書き込みが起こり得る。
+   - **修正方針案**: `GetJob()` / `GetJobs()` でディープコピー（または読み取りスナップショット）を返すか、`ToPublicClaudeJob` 生成・状態参照をロック保護する。また `HandlePostClaudeJobResult` では「保存予定の採番＋冪等確認（あるいは `sourceMd5` 単位の処理中ガード）」をロック内で直列化し、重複時は既存レコードを返してファイル書き出しをスキップする。
+
+4. **スマホ承認・完了ダイアログの HTTP 失敗時サイレント失敗＆画面操作不能リスク（`FleaMarketViewModel.kt` 902〜935行目、`ClaudeCompletionDialog.kt` 29行目、`ClaudeApprovalDialog.kt` 40行目）**
+   - **現状**:
+     - `respondToClaudeApproval()` と `acknowledgeClaudeCompletion()` は `if (ok)` の場合のみダイアログを閉じ、通信失敗（PCオフライン・タイムアウト・409/400等）時に Toast 通知もボタン無効化／スピナー表示も一切行わない。
+     - 特に `ClaudeCompletionDialog.kt` は `onDismissRequest = {}`（強制モーダル）であり「確認」以外のボタンが無いため、PCサーバーが一時停止した状態で「確認」をタップしても無反応のままアプリ全体を操作不能にする恐れがある。
+   - **修正方針案**: ViewModel に処理中フラグ＋エラーToast（例：`snackbarHost` または `Toast`）を追加し、失敗時は理由を表示する。あわせて `ClaudeCompletionDialog` / `ClaudeApprovalDialog` には「処理中インジケータ」および通信不能時の回避動線（例：完了ダイアログへの「あとで確認（一時的に閉じる）」ボタン等、次ハートビートで再表示される導線）を検討する。
+
+5. **スマホ緊急Webサーバー（`LocalWebServer.kt` / `WebDashboardHtml.kt`）のセキュリティ・UI同期差分（フェーズ4継続留意）**
+   - **現状**:
+     - `LocalWebServer.kt`（108行目等）は `0.0.0.0:8080`＋`CORS { anyHost() }`＋認証なしで `DELETE /api/items/{id}`、`DELETE /api/photos/{id}`、`POST /api/photos/delete-batch` 等を公開している（PCサーバー側のような `authToken` なし）。信頼できる家庭内Wi-Fi専用での利用が前提となっている。
+     - `WebDashboardHtml.kt` はPC版と異なり `_photo_trash` を使わない即時物理削除であり、`header` の接続バッジ文言も「スマホ接続中」固定。
+     - `WebDashboardHtml.kt` 473〜474行目の `fetchItemsSilent()` 差分ハッシュが `id / status / isShared / price / photos.length` のみを見ているため、商品名・説明・`isOriginalDeleted` の変更を自動リロードで検知できない。また `previewUploadPhotos()`（902〜916行目）が `FileReader.readAsDataURL` を使用しており、高画質複数枚選択時にブラウザ側メモリ消費が大きい（PC版は `URL.createObjectURL` 等）。
+
+#### 【重要度 軽微】
+6. **`ItemEditScreen.kt`（210〜235行目）の `loadedPhotosByPath` キャッシュ滞留**
+   - 編集画面を開いたまま裏で自動同期が完了し写真が `isPcSynced = true` になっても、`LaunchedEffect(itemId)` 以降再取得されないため、画面を開き直すまで「Museに送る」対象として認識されない。
+7. **`ClaudeApprovalDialog.kt`（30〜37行目）の経過時間表示**
+   - PCサーバーの `approvalRequestedAt` とスマホ側の `System.currentTimeMillis()` の差を `remember` で1回だけ計算しているため、端末間の時計ズレで表示が前後し、表示中の分数も自動更新されない。
+
+---
+
+### 11.4 フェーズ 5-1〜5-5 担当エージェントとの協議事項（Build 13 修正着手前チェック）
+
+1. **【協議1 / 最優先】`DetectImageMimeType()` の JPEG 厳格化（高-1）**
+   - `FF D8 FF` チェック追加＋非画像時 `""` 返却への修正を Build 13 で即実施してよいか？（既存の呼び出し元は `TryBuildClaudeDeliveryCopy` / `HandlePostClaudeJobResult` / `DetectImageExtension` のみであり、既存挙動のデグレなし）
+2. **【協議2】`ClaudeJobStore` スナップショット複製 ＆ `POST /results` 競合ガード（中-1）**
+   - `GetJob` / `GetJobs` でディープコピーを返す方式にするか、それとも `ToPublicClaudeJob` を `ClaudeJobStore` ロック内へ寄せるか？また同一 `sourceMd5` の並行リトライ防止をどう入れるか？
+3. **【協議3】承認・完了ダイアログの失敗時UX（中-2）**
+   - `respondToClaudeApproval` / `acknowledgeClaudeCompletion` の処理中表示と失敗時エラー通知を追加し、`ClaudeCompletionDialog`（または双方）に PC 不達時の「一時的に閉じる（次回同期で再通知）」ボタンを設けるか？
+4. **【協議4】`ItemEditScreen` の `isPcSynced` ライブ追従（軽微-1）と緊急Webサーバー（中-3）のスコープ切り分け**
+   - 緊急Webサーバー（`LocalWebServer.kt` 認証／`WebDashboardHtml.kt` `fetchItemsSilent` ハッシュ拡張・`readAsDataURL` 改善）を今回の Build 13 に含めるか、別タスクへ分離するか？
+5. **【協議5】5-6 試運転前の成果物ビルド（高-2）**
+   - Build 13 修正コミット確定後に、① Android 側 `flea_market_app.apk` / `public/flea_market_app.apk` の再ビルド、② Windows 側 `tools/build-exe.bat` による `furima-server.exe` 再ビルド、の順で実機＋PC環境を揃えてフェーズ 5-6 の試運転へ進む方針でよいか？
+
