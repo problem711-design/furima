@@ -27,7 +27,7 @@ public static class DashboardHtml
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
     <header class='bg-indigo-700 text-white shadow-md sticky top-0 z-30'>
-        <div class='max-w-[1800px] mx-auto px-3 sm:px-4 h-10 flex items-center justify-between gap-3'>
+        <div class='max-w-[1800px] mx-auto px-3 sm:px-4 min-h-10 py-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1'>
             <!-- 左側: タイトル & Yahoo!フリマショートカット -->
             <div class='flex items-center space-x-2 shrink-0'>
                 <i class='fa-solid fa-boxes-stacked text-base text-indigo-200'></i>
@@ -51,6 +51,7 @@ public static class DashboardHtml
                     <i class='fa-solid fa-magnifying-glass absolute left-2.5 top-2 text-indigo-300 text-xs'></i>
                     <input type='text' id='search-input' oninput='renderItems()' placeholder='商品名・説明文で検索...' class='w-full pl-7 pr-2 py-1 text-xs bg-indigo-800/80 text-white placeholder-indigo-300 border border-indigo-500/50 rounded-md focus:outline-none focus:bg-indigo-900 focus:ring-1 focus:ring-white'>
                 </div>
+                <span id='stat-connection-status' class='font-bold text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap'><i class='fa-solid fa-circle-exclamation'></i> 未接続</span>
             </div>
         </div>
     </header>
@@ -82,7 +83,7 @@ public static class DashboardHtml
             </div>
 
             <!-- 右側: 固定コントロールパネル (売上分析拡充) -->
-            <aside class='w-full lg:w-64 shrink-0 sticky top-24 space-y-3'>
+            <aside class='w-full lg:w-64 shrink-0 lg:sticky lg:top-14 lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto custom-scroll space-y-3'>
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
                         <i class='fa-solid fa-chart-pie text-indigo-500'></i> 実績・売上分析
@@ -141,12 +142,8 @@ public static class DashboardHtml
 
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
-                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真・接続情報
+                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真情報
                     </h2>
-                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
-                        <span class='text-slate-600 font-medium'>接続ステータス</span>
-                        <span id='stat-connection-status' class='font-bold text-amber-600 flex items-center gap-1'><i class='fa-solid fa-circle-exclamation'></i> 未接続</span>
-                    </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>取込済み写真</span>
                         <span id='stat-photo-index-count' class='font-bold text-slate-800 font-mono'>0枚</span>
@@ -157,7 +154,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.1 (Build 3)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.1 (Build 4)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -1653,10 +1650,10 @@ public static class DashboardHtml
             }
             if (statusElem) {
                 if (statusData.appConnected) {
-                    statusElem.className = 'font-bold text-emerald-600 flex items-center gap-1';
+                    statusElem.className = 'font-bold text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap';
                     statusElem.innerHTML = `<i class='fa-solid fa-circle-check text-emerald-600'></i> 接続中`;
                 } else {
-                    statusElem.className = 'font-bold text-amber-600 flex items-center gap-1';
+                    statusElem.className = 'font-bold text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap';
                     statusElem.innerHTML = `<i class='fa-solid fa-circle-exclamation text-amber-500'></i> 未接続`;
                 }
             }
