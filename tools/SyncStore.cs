@@ -61,6 +61,9 @@ public class StoreConfig
     public string storeId { get; set; }
     public string path { get; set; }
     public string authToken { get; set; }
+    // フェーズ 6-3 (案2): Muse 端末の許可アドレス。サーバー専用領域であり、
+    // スマホと同期される DefaultSettingsConfig には絶対に入れない (同期で上書き消去されるため)。
+    public string trustedMuseIp { get; set; }
     public string createdAt { get; set; }
     public DefaultSettingsConfig defaultSettings { get; set; }
 }
@@ -324,6 +327,49 @@ public static class SyncStore
                 catch (Exception ex)
                 {
                     Console.WriteLine("[警告] store.json の設定保存に失敗しました: " + ex.Message);
+                }
+            }
+        }
+    }
+
+    // フェーズ 6-3 (案2): 許可アドレスの取得。StoreConfig のトップレベルに保持し、
+    // SaveDefaultSettings (スマホ同期) では一切触らない。
+    public static string GetTrustedMuseIp()
+    {
+        lock (_configLock)
+        {
+            if (_currentConfig != null && !string.IsNullOrEmpty(_currentConfig.trustedMuseIp))
+            {
+                return _currentConfig.trustedMuseIp;
+            }
+            return "";
+        }
+    }
+
+    public static void SetTrustedMuseIp(string ip)
+    {
+        lock (_configLock)
+        {
+            if (_currentConfig == null)
+            {
+                _currentConfig = new StoreConfig
+                {
+                    storeId = _storeId,
+                    path = _syncDir,
+                    authToken = _authToken,
+                    createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK")
+                };
+            }
+            _currentConfig.trustedMuseIp = ip ?? "";
+            if (!string.IsNullOrEmpty(_storeJsonPath))
+            {
+                try
+                {
+                    File.WriteAllText(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), Encoding.UTF8);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[警告] store.json の許可アドレス保存に失敗しました: " + ex.Message);
                 }
             }
         }

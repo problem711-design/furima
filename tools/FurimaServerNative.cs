@@ -1351,6 +1351,13 @@ class FurimaServerNative
             return true;
         }
 
+        // フェーズ 6-3 (案2): 許可アドレス (Muse 端末) からの対象エンドポイントだけ Bearer を免除する。
+        // 免除するのは Bearer 層のみで、ジョブトークン等の検証は各ハンドラで従来どおり行う。
+        if (IsTrustedClaudeExemptRequest(req, path))
+        {
+            return true;
+        }
+
         // ループバック以外からの /api/ リクエストには Bearer トークンが必要
         if (path.StartsWith("/api/"))
         {
@@ -1371,6 +1378,95 @@ class FurimaServerNative
         }
 
         return true;
+    }
+
+    // フェーズ 6-3 (案2 / レビュー 23-1): Bearer 免除の対象は、メソッドとパスで厳密に一致する
+    // 次のエンドポイントだけに限る。一覧 (GET)、詳細 (GET {jobId})、写真 (GET {jobId}/photos/{md5})、
+    // 実行系 (POST {jobId}/results・errors・complete)。作成・承認・移動・確認・取消は免除しない。
+    private static bool IsTrustedClaudeExemptPath(string method, string path)
+    {
+        if (path == "/api/claude/jobs") return method == "GET";
+        string prefix = "/api/claude/jobs/";
+        if (!path.StartsWith(prefix)) return false;
+        string rest = path.Substring(prefix.Length);
+        string[] parts = rest.Split('/');
+        if (method == "GET")
+        {
+            if (parts.Length == 1 && parts[0].Length > 0) return true;
+            if (parts.Length == 3 && parts[0].Length > 0 && parts[1] == "photos" && parts[2].Length > 0) return true;
+            return false;
+        }
+        if (method == "POST")
+        {
+            if (parts.Length == 2 && parts[0].Length > 0 && (parts[1] == "results" || parts[1] == "errors" || parts[1] == "complete")) return true;
+            return false;
+        }
+        return false;
+    }
+
+    // 送信元が許可アドレスと一致するか。判定は RemoteEndPoint のみで行い、転送ヘッダは使わない。
+    // IPv4-mapped IPv6 は IPv4 へ正規化してから比較する。
+    private static bool IsTrustedClaudeExemptRequest(HttpListenerRequest req, string path)
+    {
+        if (!IsTrustedClaudeExemptPath(req.HttpMethod, path)) return false;
+        string configured = SyncStore.GetTrustedMuseIp();
+        if (string.IsNullOrEmpty(configured)) return false;
+        IPAddress allowed;
+        if (!IPAddress.TryParse(configured, out allowed)) return false;
+        IPAddress remote = req.RemoteEndPoint != null ? req.RemoteEndPoint.Address : null;
+        if (remote == null) return false;
+        if (remote.IsIPv4MappedToIPv6) remote = remote.MapToIPv4();
+        if (allowed.IsIPv4MappedToIPv6) allowed = allowed.MapToIPv4();
+        return remote.Equals(allowed);
+    }
+
+    // 許可アドレスの設定値の検証と正規化。空欄は「免除オフ」として有効。
+    // 単一の IP のみ受理し、ループバックと未指定アドレス (0.0.0.0 / ::) は危険なため拒否する。
+    private static bool TryNormalizeTrustedIp(string raw, out string normalized)
+    {
+        normalized = "";
+        if (raw == null) raw = "";
+        raw = raw.Trim();
+        if (raw.Length == 0) return true;
+        IPAddress ip;
+        if (!IPAddress.TryParse(raw, out ip)) return false;
+        if (ip.IsIPv4MappedToIPv6) ip = ip.MapToIPv4();
+        if (IPAddress.IsLoopback(ip)) return false;
+        if (ip.Equals(IPAddress.Any) || ip.Equals(IPAddress.IPv6Any)) return false;
+        normalized = ip.ToString();
+        return true;
+    }
+
+    private static void HandleUpdateTrustedMuseIp(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            string raw = "";
+            if (!string.IsNullOrEmpty(jsonStr))
+            {
+                JObject json = JObject.Parse(jsonStr);
+                raw = json.Value<string>("trustedMuseIp") ?? "";
+            }
+            string normalized;
+            if (!TryNormalizeTrustedIp(raw, out normalized))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "許可アドレスの形式が不正です（単一のIPアドレスを指定してください）" } });
+                return;
+            }
+            SyncStore.SetTrustedMuseIp(normalized);
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "trustedMuseIp", normalized } });
+        }
+        catch (Exception ex)
+        {
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
     }
 
     private static void HandleRequest(HttpListenerContext ctx)
@@ -1479,6 +1575,19 @@ class FurimaServerNative
                 {
                     { "claudeRevision", GetClaudeRevision() }
                 });
+            }
+            else if (rawPath == "/api/server/trusted-muse-ip" && req.HttpMethod == "GET")
+            {
+                // フェーズ 6-3 (案2 / レビュー 23-2): 許可アドレスはサーバー専用設定。
+                // このエンドポイント自体は通常認証 (Bearer / ループバック) の対象で、Muse 免除には含めない。
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "trustedMuseIp", SyncStore.GetTrustedMuseIp() }
+                });
+            }
+            else if (rawPath == "/api/server/trusted-muse-ip" && req.HttpMethod == "PUT")
+            {
+                HandleUpdateTrustedMuseIp(req, res);
             }
             else if (rawPath == "/api/server/status")
             {

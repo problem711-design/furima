@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.1 (Build 2)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.1 (Build 3)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -965,6 +965,19 @@ public static class DashboardHtml
                     </div>
                     <div id='settings-prompt-tpl-list' class='space-y-1.5'></div>
                 </div>
+                <!-- Muse 巡回用の許可アドレス (サーバー専用設定・スマホとは同期しない) -->
+                <div class='space-y-3'>
+                    <div class='border-b border-slate-200 pb-1.5'>
+                        <h4 class='font-bold text-slate-800 text-sm flex items-center gap-1.5'>
+                            <i class='fa-solid fa-robot text-indigo-500'></i> Muse 巡回用の許可アドレス（サーバー専用）
+                        </h4>
+                    </div>
+                    <p class='text-[11px] text-slate-500 leading-relaxed'>Muse 端末側の Tailscale IP を登録すると、そのアドレスからのジョブ実行系アクセスだけが合鍵なしで通るようになります（スマホでの承認は今までどおり必要です）。<span class='font-bold text-rose-600'>PC 自身のアドレスではありません</span>。空欄にすると無効です。この設定はスマホと同期されません。</p>
+                    <div class='flex items-center gap-2'>
+                        <input type='text' id='settings-trusted-claude-ip' placeholder='例: 100.x.x.x（空欄で無効）' class='flex-1 border border-slate-300 rounded-md px-2.5 py-1.5 text-xs font-mono' />
+                        <button type='button' onclick='saveTrustedClaudeIp()' class='px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-bold text-[11px] transition'>保存</button>
+                    </div>
+                </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end'>
                 <button onclick='closeSettingsModal()' class='px-4 py-2 text-xs font-bold bg-slate-700 hover:bg-slate-800 text-white rounded-lg transition'>閉じる</button>
@@ -1362,7 +1375,37 @@ public static class DashboardHtml
             resetTemplateForm('title');
             resetTemplateForm('desc');
             renderSettingsModalLists();
+            loadTrustedClaudeIp();
             document.getElementById('settings-modal').classList.remove('hidden');
+        }
+
+        async function loadTrustedClaudeIp() {
+            try {
+                const res = await fetch('/api/server/trusted-muse-ip', { headers: { 'Authorization': 'Bearer ' + AUTH_TOKEN } });
+                if (!res.ok) return;
+                const data = await res.json();
+                document.getElementById('settings-trusted-claude-ip').value = data.trustedMuseIp || '';
+            } catch (e) { /* 読み込みに失敗した場合は空欄のままにする */ }
+        }
+
+        async function saveTrustedClaudeIp() {
+            const value = document.getElementById('settings-trusted-claude-ip').value.trim();
+            try {
+                const res = await fetch('/api/server/trusted-muse-ip', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + AUTH_TOKEN },
+                    body: JSON.stringify({ trustedMuseIp: value })
+                });
+                const data = await res.json().catch(() => null);
+                if (res.ok && data && data.status === 'ok') {
+                    document.getElementById('settings-trusted-claude-ip').value = data.trustedMuseIp || '';
+                    showToast(data.trustedMuseIp ? '許可アドレスを保存しました' : '許可アドレスを解除しました');
+                } else {
+                    showToast((data && data.message) || '許可アドレスの保存に失敗しました');
+                }
+            } catch (e) {
+                showToast('許可アドレスの保存に失敗しました');
+            }
         }
 
         function closeSettingsModal() {
