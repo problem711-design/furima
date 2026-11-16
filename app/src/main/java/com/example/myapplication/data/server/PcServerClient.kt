@@ -112,7 +112,8 @@ class PcServerClient(
     private val syncSettingsAdapter = moshi.adapter(SyncSettingsDto::class.java)
     private val createClaudeJobRequestAdapter = moshi.adapter(CreateClaudeJobRequestDto::class.java)
     private val claudeJobResponseAdapter = moshi.adapter(ClaudeJobResponseDto::class.java)
-    private val claudeLabelSeenRequestAdapter = moshi.adapter(ClaudeLabelSeenRequestDto::class.java)
+    private val claudeLabelSeenBatchRequestAdapter = moshi.adapter(ClaudeLabelSeenBatchRequestDto::class.java)
+    private val claudeLabelSeenResponseAdapter = moshi.adapter(ClaudeLabelSeenResponseDto::class.java)
     private val claudeJobListResponseAdapter = moshi.adapter(ClaudeJobListResponseDto::class.java)
     private val claudeApprovalRequestAdapter = moshi.adapter(ClaudeApprovalRequestDto::class.java)
 
@@ -364,33 +365,35 @@ class PcServerClient(
         }
     }
 
-    // Claude ジョブの所属リスト移動 (フェーズ 6-1a の move API / 6-2 の一括承認で未チェック分を待機へ戻すために使用)。
-    // フェーズ 6-5: 加工済みラベルの既読化 (商品を開いたときに呼ぶ。失敗しても本処理は止めない)
+    // フェーズ 6-5 (是正 Build 8): 加工済みラベルの一括既読化 (商品を開いたときに呼ぶ)。
+    // 応答にはサーバー確定の seenAt と labelSeenRevision が含まれ、呼び出し側で楽観値を確定させる。
+    // 失敗しても本処理は止めない (null を返す)。
     suspend fun postClaudeLabelSeen(
-        itemUuid: String,
+        itemUuids: List<String>,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): ClaudeLabelSeenResponseDto? = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || itemUuid.isBlank()) return@withContext false
-            val bodyJson = claudeLabelSeenRequestAdapter.toJson(ClaudeLabelSeenRequestDto(itemUuid))
+            val targets = itemUuids.map { it.trim() }.filter { it.isNotEmpty() }
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || targets.isEmpty()) return@withContext null
+            val bodyJson = claudeLabelSeenBatchRequestAdapter.toJson(ClaudeLabelSeenBatchRequestDto(targets))
             val body = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
             val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/labels/seen").post(body)
             if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
             client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
+                if (!response.isSuccessful) return@withContext null
                 val respStr = response.body?.string()
-                val parsed = if (!respStr.isNullOrBlank()) {
-                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                if (!respStr.isNullOrBlank()) {
+                    try { claudeLabelSeenResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
                 } else null
-                parsed?.status == "ok"
             }
         } catch (e: Exception) {
-            false
+            null
         }
     }
 
+    // Claude ジョブの所属リスト移動 (フェーズ 6-1a の move API / 6-2 の一括承認で未チェック分を待機へ戻すために使用)。
     suspend fun postClaudeJobMove(
         jobId: String,
         queue: String,
@@ -507,7 +510,8 @@ class PcServerClient(
                             isConnected = true,
                             dataRevision = json.optLong("dataRevision", 0L),
                             settingsRevision = json.optLong("settingsRevision", 0L),
-                            claudeRevision = json.optLong("claudeRevision", 0L)
+                            claudeRevision = json.optLong("claudeRevision", 0L),
+                            labelSeenRevision = json.optLong("labelSeenRevision", 0L)
                         )
                     } catch (_: Exception) {
                     }

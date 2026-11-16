@@ -1745,6 +1745,7 @@ class FurimaServerNative
                     { "dataRevision", GetDataRevision() },
                     { "settingsRevision", GetSettingsRevision() },
                     { "claudeRevision", GetClaudeRevision() },
+                    { "labelSeenRevision", ClaudeJobStore.GetLabelSeenRevision() },
                     { "permanentlyDeletedUuids", SyncStore.GetPermanentlyDeletedUuids() }
                 };
                 SendJson(res, dict);
@@ -1759,7 +1760,8 @@ class FurimaServerNative
                     { "timestamp", DateTime.Now.Ticks },
                     { "dataRevision", GetDataRevision() },
                     { "settingsRevision", GetSettingsRevision() },
-                    { "claudeRevision", GetClaudeRevision() }
+                    { "claudeRevision", GetClaudeRevision() },
+                    { "labelSeenRevision", ClaudeJobStore.GetLabelSeenRevision() }
                 });
             }
             else if (rawPath == "/api/sync/hashes")
@@ -5081,7 +5083,8 @@ class FurimaServerNative
                 { "status", "ok" },
                 { "jobs", list },
                 { "claudeRevision", GetClaudeRevision() },
-                { "labelSeenAtByItemUuid", ClaudeJobStore.GetLabelSeenAtSnapshot() }
+                { "labelSeenAtByItemUuid", ClaudeJobStore.GetLabelSeenAtSnapshot() },
+                { "labelSeenRevision", ClaudeJobStore.GetLabelSeenRevision() }
             });
         }
         catch (Exception ex)
@@ -5942,7 +5945,7 @@ class FurimaServerNative
                 try
                 {
                     JObject json = JObject.Parse(jsonStr);
-                    if (json["sourceMd5"] != null) sourceMd5 = json["sourceMd5"].ToString().Trim();
+                    if (json["sourceMd5"] != null) sourceMd5 = json["sourceMd5"].ToString().Trim().ToLowerInvariant();
                     if (json["message"] != null) message = json["message"].ToString();
                 }
                 catch { }
@@ -6113,7 +6116,7 @@ class FurimaServerNative
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         string newStatus = (job.errors != null && job.errors.Count > 0) ? "done_with_errors" : "done";
-        ClaudeJobStore.MutateJob(jobId, j =>
+        ClaudeJobStore.MutateJobWithErrorSupersede(jobId, j =>
         {
             j.status = newStatus;
             j.completedAt = now;
@@ -6265,20 +6268,35 @@ class FurimaServerNative
             {
                 jsonStr = reader.ReadToEnd();
             }
-            string itemUuid = "";
+            var itemUuids = new List<string>();
             if (!string.IsNullOrEmpty(jsonStr))
             {
                 JObject json = JObject.Parse(jsonStr);
-                itemUuid = (json.Value<string>("itemUuid") ?? "").Trim();
+                string single = (json.Value<string>("itemUuid") ?? "").Trim();
+                if (single.Length > 0) itemUuids.Add(single);
+                var arr = json["itemUuids"] as JArray;
+                if (arr != null)
+                {
+                    foreach (var el in arr)
+                    {
+                        string u = (el != null ? el.ToString() : "").Trim();
+                        if (u.Length > 0) itemUuids.Add(u);
+                    }
+                }
             }
-            if (string.IsNullOrEmpty(itemUuid))
+            if (itemUuids.Count == 0)
             {
                 res.StatusCode = 400;
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "itemUuid が必要です" } });
                 return;
             }
-            ClaudeJobStore.MarkLabelSeen(itemUuid);
-            SendJson(res, new Dictionary<string, object> { { "status", "ok" } });
+            long seenAt = ClaudeJobStore.MarkLabelsSeen(itemUuids);
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "seenAt", seenAt },
+                { "labelSeenRevision", ClaudeJobStore.GetLabelSeenRevision() }
+            });
         }
         catch (Exception ex)
         {

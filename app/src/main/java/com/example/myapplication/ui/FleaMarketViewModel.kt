@@ -858,6 +858,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     @Volatile private var lastKnownSettingsRevision: Long = -1L
     @Volatile private var lastKnownClaudeRevision: Long = -1L
 
+    // フェーズ 6-5 是正 (32-3): 既読専用カウンタの既知値 (claudeRevision とは別管理)
+    @Volatile private var lastKnownLabelSeenRevision: Long = 0L
+
     // フェーズ 5-4: 承認待ちジョブと未確認の完了ジョブ (ハートビート第3分岐で更新)
     // フェーズ 6-2: 承認待ちは単体から一覧 (createdAt 昇順) へ拡張した。
     private val _pendingClaudeApprovals = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
@@ -868,6 +871,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     val claudeJobsForLabels: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _claudeJobsForLabels.asStateFlow()
     private val _claudeLabelSeenAt = MutableStateFlow<Map<String, Long>>(emptyMap())
     val claudeLabelSeenAt: StateFlow<Map<String, Long>> = _claudeLabelSeenAt.asStateFlow()
+
+    // フェーズ 6-5 是正 (34-2): 閲覧セッションのスナップショット (小文字 itemUuid -> 入室時点の既読時刻)。
+    // 一覧→詳細→編集の遷移では上書きせず、一覧へ戻る/別商品へ移ると破棄する。
+    private val _labelVisitSnapshot = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val labelVisitSnapshot: StateFlow<Map<String, Long>> = _labelVisitSnapshot.asStateFlow()
 
     // フェーズ 6-2 (6-2-2): 「いったん閉じる」で非表示にした承認待ちのジョブID集合。
     // この集合に含まれない承認待ちが新たに現れた場合にだけダイアログを再表示する。
@@ -949,6 +957,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         if (hb.isConnected) {
             lastKnownDataRevision = hb.dataRevision
             lastKnownSettingsRevision = hb.settingsRevision
+            // 既読カウンタに差分があればジョブ状態を取り直す。既知値の更新は
+            // refreshClaudeJobStates の成功時にのみ行い、ここでは先行代入しない (§36.2-1)
+            if (hb.labelSeenRevision > 0L && hb.labelSeenRevision != lastKnownLabelSeenRevision) {
+                refreshClaudeJobStates(url, token)
+            }
         }
     }
 
@@ -962,7 +975,13 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             val fetched = pcServerClient.fetchClaudeJobs(url, token) ?: return@withLock false
             val jobs = fetched.jobs
             _claudeJobsForLabels.value = jobs
-            _claudeLabelSeenAt.value = fetched.labelSeenAtByItemUuid
+            // 既読マップは古い応答で先祖返りさせない (34-4-1)。既知カウンタは取得成功時にだけ進める
+            if (fetched.labelSeenRevision == 0L || fetched.labelSeenRevision >= lastKnownLabelSeenRevision) {
+                _claudeLabelSeenAt.value = fetched.labelSeenAtByItemUuid.mapKeys { it.key.lowercase() }
+            }
+            if (fetched.labelSeenRevision > lastKnownLabelSeenRevision) {
+                lastKnownLabelSeenRevision = fetched.labelSeenRevision
+            }
             val pending = jobs
                 .filter { it.status == "approval_pending" }
                 .sortedBy { it.createdAt }
@@ -987,28 +1006,48 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // フェーズ 6-5: 写真単位の加工ラベル導出 (優先度: エラー > 加工中 > 承認待ち > 待機中 > 加工済み。§27.1.1)
+    // フェーズ 6-5 (是正 Build 8): 写真単位の加工ラベル導出 (優先度: エラー > 加工中 > 承認待ち > 待機中 > 加工済み。§27.1.1)
+    // 購読済みの State 値を引数で受け取り、呼び出し側の再コンポーズに連動させる (32-4)。
+    // snapshotSeenAt が非 null の場合は加工済み判定にその時刻を使う (閲覧セッション中は開いた時点の状態を保つ。32-2 / 34-2)。
     // 戻り値はラベル種別キー ("error" / "processing" / "approval" / "waiting" / "done")、無ければ null。
-    fun claudePhotoLabelKey(itemUuid: String, md5: String): String? {
+    fun claudePhotoLabelKey(
+        itemUuid: String,
+        md5: String,
+        jobs: List<com.example.myapplication.data.server.ClaudeJobDto>,
+        seenAtMap: Map<String, Long>,
+        snapshotSeenAt: Long?
+    ): String? {
         if (itemUuid.isBlank() || md5.isBlank()) return null
+        val target = md5.lowercase()
+        val uuid = itemUuid.lowercase()
+        val itemJobs = jobs.filter { it.itemUuid.lowercase() == uuid }
+        // エラー: supersede されていないものが1件でもあればエラー (34-3 の厳密条件)
+        for (errJob in itemJobs) {
+            if (errJob.status != "done_with_errors" || errJob.errorDismissed) continue
+            if (errJob.errors.none { it.sourceMd5.lowercase() == target }) continue
+            val errTime = if (errJob.completedAt > 0) errJob.completedAt else errJob.createdAt
+            val superseded = itemJobs.any { ok ->
+                (ok.status == "done" || ok.status == "done_with_errors") && ok.completedAt > errTime &&
+                    ok.results.any { it.sourceMd5.lowercase() == target }
+            }
+            if (!superseded) return "error"
+        }
         var hasProcessing = false
         var hasApproval = false
         var hasWaiting = false
         var hasDone = false
-        val seenAt = _claudeLabelSeenAt.value[itemUuid] ?: 0L
+        val seenAt = snapshotSeenAt ?: (seenAtMap[uuid] ?: 0L)
         val now = System.currentTimeMillis()
-        for (job in _claudeJobsForLabels.value) {
-            if (job.itemUuid != itemUuid) continue
-            if (job.status == "done_with_errors" && !job.errorDismissed && job.errors.any { it.sourceMd5 == md5 }) {
-                return "error"
+        for (job in itemJobs) {
+            if (job.photos.any { it.md5.lowercase() == target }) {
+                when (job.status) {
+                    "approved", "processing" -> hasProcessing = true
+                    "approval_pending" -> hasApproval = true
+                    "queued" -> hasWaiting = true
+                }
             }
-            if (job.photos.none { it.md5 == md5 }) continue
-            when (job.status) {
-                "approved", "processing" -> hasProcessing = true
-                "approval_pending" -> hasApproval = true
-                "queued" -> hasWaiting = true
-            }
-            if ((job.status == "done" || job.status == "done_with_errors") && job.results.any { it.sourceMd5 == md5 }) {
+            // 加工済みは生成物 (resultMd5) 基準で、所属チェックの外で判定する (32-1)
+            if ((job.status == "done" || job.status == "done_with_errors") && job.results.any { it.resultMd5.lowercase() == target }) {
                 if (job.completedAt > seenAt && (now - job.completedAt) <= 3L * 24 * 60 * 60 * 1000) hasDone = true
             }
         }
@@ -1021,15 +1060,41 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    // フェーズ 6-5: 商品を開いたら加工済みラベルを既読化する (楽観的にローカルへ反映し、サーバーへも送る)
+    // フェーズ 6-5 是正 (34-2): 商品の閲覧セッション開始。初回入室時のみスナップショットを確定し、
+    // 既読化 API を投げる前の既読時刻を保持する (詳細→編集の遷移では上書きしない)。
+    fun beginLabelVisit(itemUuid: String) {
+        if (itemUuid.isBlank()) return
+        val key = itemUuid.lowercase()
+        if (!_labelVisitSnapshot.value.containsKey(key)) {
+            _labelVisitSnapshot.value = mapOf(key to (_claudeLabelSeenAt.value[key] ?: 0L))
+        }
+        markClaudeLabelSeen(itemUuid)
+    }
+
+    // 閲覧セッション終了 (一覧へ戻ったとき・別商品へ移ったときに呼ぶ)
+    fun endLabelVisit() {
+        if (_labelVisitSnapshot.value.isNotEmpty()) _labelVisitSnapshot.value = emptyMap()
+    }
+
+    // フェーズ 6-5: 商品を開いたら加工済みラベルを既読化する (楽観的にローカルへ反映し、
+    // サーバー応答の確定値で上書きする。32-5 / 34-4-1)
     fun markClaudeLabelSeen(itemUuid: String) {
         if (itemUuid.isBlank()) return
-        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (itemUuid to System.currentTimeMillis())
+        val key = itemUuid.lowercase()
+        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to System.currentTimeMillis())
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
-            try { pcServerClient.postClaudeLabelSeen(itemUuid, url, token) } catch (e: Exception) { }
+            val resp = try { pcServerClient.postClaudeLabelSeen(listOf(itemUuid), url, token) } catch (e: Exception) { null }
+            if (resp != null && resp.status == "ok" && resp.seenAt > 0) {
+                claudeRefreshMutex.withLock {
+                    _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to resp.seenAt)
+                    if (resp.labelSeenRevision > lastKnownLabelSeenRevision) {
+                        lastKnownLabelSeenRevision = resp.labelSeenRevision
+                    }
+                }
+            }
         }
     }
 
@@ -1325,6 +1390,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                                 }
                             }
                         }
+                    }
+                    // フェーズ 6-5 是正 (34-4-2): 既読カウンタの変化検知は syncMutex の外で
+                    // ジョブ状態を取り直す (写真同期にブロックされない経路)
+                    if (connected && hb.labelSeenRevision > 0L && hb.labelSeenRevision != lastKnownLabelSeenRevision) {
+                        refreshClaudeJobStates(url, token, fromWatch = true)
                     }
                     // Claude ジョブの検知は独立した監視コルーチンへ移設した (レビュー 24-4)。
                     // 写真同期でこのループが塞がっていても検知が止まらないようにするため。

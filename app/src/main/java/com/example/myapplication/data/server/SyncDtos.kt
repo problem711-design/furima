@@ -103,7 +103,9 @@ data class HeartbeatInfo(
     val dataRevision: Long = 0L,
     val settingsRevision: Long = 0L,
     // フェーズ 5-4: 旧サーバー応答にフィールドが無くても 0 で安全
-    val claudeRevision: Long = 0L
+    val claudeRevision: Long = 0L,
+    // フェーズ 6-5 是正 (32-3): 既読専用カウンタ。旧サーバー応答では 0
+    val labelSeenRevision: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)
@@ -162,7 +164,20 @@ data class ClaudeJobListResponseDto(
     @param:Json(name = "jobs") val jobs: List<ClaudeJobDto> = emptyList(),
     @param:Json(name = "claudeRevision") val claudeRevision: Long = 0L,
     // フェーズ 6-5: 加工済みラベルの既読時刻 (itemUuid -> ms)。旧サーバー応答では空。
-    @param:Json(name = "labelSeenAtByItemUuid") val labelSeenAtByItemUuid: Map<String, Long> = emptyMap()
+    @param:Json(name = "labelSeenAtByItemUuid") val labelSeenAtByItemUuid: Map<String, Long> = emptyMap(),
+    @param:Json(name = "labelSeenRevision") val labelSeenRevision: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeLabelSeenBatchRequestDto(
+    @param:Json(name = "itemUuids") val itemUuids: List<String>
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeLabelSeenResponseDto(
+    @param:Json(name = "status") val status: String = "",
+    @param:Json(name = "seenAt") val seenAt: Long = 0L,
+    @param:Json(name = "labelSeenRevision") val labelSeenRevision: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)

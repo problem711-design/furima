@@ -131,9 +131,12 @@ fun ItemDetailScreen(
     val currentItem = itemWithPhotos!!.item
     val photos = itemWithPhotos!!.photos
 
-    // フェーズ 6-5: 開いたら加工済みラベルを既読化する
+    // フェーズ 6-5 (是正 Build 8): 加工ラベル表示のためのジョブ状態購読と閲覧セッション開始
+    val detailClaudeJobs by viewModel.claudeJobsForLabels.collectAsState()
+    val detailClaudeSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
+    val detailVisitSnapshot by viewModel.labelVisitSnapshot.collectAsState()
     LaunchedEffect(currentItem.syncUuid) {
-        if (currentItem.syncUuid.isNotBlank()) viewModel.markClaudeLabelSeen(currentItem.syncUuid)
+        if (currentItem.syncUuid.isNotBlank()) viewModel.beginLabelVisit(currentItem.syncUuid)
     }
 
     // フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める
@@ -706,6 +709,32 @@ fun ItemDetailScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
+                            // フェーズ 6-5 是正: 詳細画面でも加工ラベルチップを表示する (§33.2)
+                            val claudeLabelKey = photo.md5Hash.takeIf { it.isNotBlank() }?.let { md5 ->
+                                viewModel.claudePhotoLabelKey(
+                                    currentItem.syncUuid,
+                                    md5,
+                                    detailClaudeJobs,
+                                    detailClaudeSeenAt,
+                                    detailVisitSnapshot[currentItem.syncUuid.lowercase()]
+                                )
+                            }
+                            if (claudeLabelKey != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomStart)
+                                        .padding(3.dp)
+                                        .background(claudeLabelColor(claudeLabelKey), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = claudeLabelText(claudeLabelKey),
+                                        color = if (claudeLabelKey == "approval") Color.Black else Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
                         }
                     }
                 }

@@ -213,11 +213,12 @@ fun ItemEditScreen(
         }
     }
 
-    // フェーズ 6-5: 加工ラベル表示のためのジョブ状態購読と、開いた時点での既読化
+    // フェーズ 6-5 (是正 Build 8): 加工ラベル表示のためのジョブ状態購読と閲覧セッション開始
     val claudeJobsForLabels by viewModel.claudeJobsForLabels.collectAsState()
     val claudeLabelSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
+    val labelVisitSnapshot by viewModel.labelVisitSnapshot.collectAsState()
     LaunchedEffect(loadedItem?.syncUuid) {
-        loadedItem?.syncUuid?.takeIf { it.isNotBlank() }?.let { viewModel.markClaudeLabelSeen(it) }
+        loadedItem?.syncUuid?.takeIf { it.isNotBlank() }?.let { viewModel.beginLabelVisit(it) }
     }
 
     LaunchedEffect(itemId) {
@@ -831,7 +832,13 @@ fun ItemEditScreen(
                             )
                             // フェーズ 6-5: 加工ラベルチップ (左下)
                             val claudeLabelKey = photoEntity?.md5Hash?.takeIf { it.isNotBlank() }?.let { md5 ->
-                                viewModel.claudePhotoLabelKey(loadedItem?.syncUuid ?: "", md5)
+                                viewModel.claudePhotoLabelKey(
+                                    loadedItem?.syncUuid ?: "",
+                                    md5,
+                                    claudeJobsForLabels,
+                                    claudeLabelSeenAt,
+                                    labelVisitSnapshot[(loadedItem?.syncUuid ?: "").lowercase()]
+                                )
                             }
                             if (claudeLabelKey != null) {
                                 Box(
@@ -1419,7 +1426,7 @@ private fun insertTemplateAtCursor(current: TextFieldValue, insertText: String):
 }
 
 // フェーズ 6-5: 加工ラベルの表示名と色 (PC 管理画面のパレットに合わせる)
-private fun claudeLabelText(key: String): String = when (key) {
+fun claudeLabelText(key: String): String = when (key) {
     "error" -> "エラー"
     "processing" -> "加工中"
     "approval" -> "承認待ち"
@@ -1428,7 +1435,7 @@ private fun claudeLabelText(key: String): String = when (key) {
     else -> ""
 }
 
-private fun claudeLabelColor(key: String): Color = when (key) {
+fun claudeLabelColor(key: String): Color = when (key) {
     "error" -> Color(0xFFE11D48)
     "processing" -> Color(0xFF2563EB)
     "approval" -> Color(0xFFFBBF24)

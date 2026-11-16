@@ -155,7 +155,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 7)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 8)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -1714,6 +1714,10 @@ public static class DashboardHtml
                     lastKnownSettingsRevision = srvSettingsRev;
                     fetchSettings();
                 }
+                const srvLabelSeenRev = typeof statusData.labelSeenRevision === 'number' ? statusData.labelSeenRevision : null;
+                if (srvLabelSeenRev !== null && srvLabelSeenRev !== lastKnownLabelSeenRevision) {
+                    fetchClaudeJobs();
+                }
                 const srvClaudeRev = typeof statusData.claudeRevision === 'number' ? statusData.claudeRevision : null;
                 if (srvClaudeRev !== null && srvClaudeRev !== lastKnownClaudeRevision) {
                     lastKnownClaudeRevision = srvClaudeRev;
@@ -2282,7 +2286,10 @@ public static class DashboardHtml
         function openPhotoViewer(itemId) {
             const item = allItems.find(i => i.id === itemId);
             if (!item) return;
-            markClaudeLabelSeen(item.syncUuid || '');
+            // 開いた時点の既読状態を保持し、表示中は加工済みを確認できるようにする (32-2)。
+            // 既読の記録は直後に行い、背後のカードには最新状態が反映される。
+            viewerSessionSeenMap = Object.assign({}, labelSeenAtByItemUuid);
+            markClaudeLabelSeen(item);
 
             currentViewerItemId = itemId;
             currentViewerTab = 'group';
@@ -2315,6 +2322,7 @@ public static class DashboardHtml
         function closePhotoViewer() {
             closePhotoLightbox();
             document.getElementById('photo-viewer-modal').classList.add('hidden');
+            viewerSessionSeenMap = null;
             currentViewerItemId = null;
             selectedViewerPhotoIndices.clear();
         }
@@ -2382,8 +2390,11 @@ public static class DashboardHtml
 
         let claudeJobsCache = [];
 
-        // フェーズ 6-5: 加工ラベル (導出は §27.1.1、既読は §27.1.2)
+        // フェーズ 6-5 (是正 Build 8): 加工ラベル (導出は §27.1.1、既読は §27.1.2、実装条件は §27.4)
         let labelSeenAtByItemUuid = {};
+        let lastKnownLabelSeenRevision = 0;
+        let viewerSessionSeenMap = null;
+        let viewerUuidSet = [];
         const CLAUDE_LABEL_DONE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
         const CLAUDE_LABEL_META = {
             error: { text: 'エラー', cls: 'bg-rose-600 text-white' },
@@ -2393,21 +2404,55 @@ public static class DashboardHtml
             done: { text: '加工済み', cls: 'bg-emerald-600 text-white' }
         };
 
-        function claudePhotoLabel(itemUuid, md5) {
-            if (!itemUuid || !md5) return null;
+        // まとめ配下の UUID 集合 (自商品 + 子孫すべて)。導出・スナップショット・既読化で共用する (34-1)
+        function collectBundleUuidSet(item) {
+            const result = new Set();
+            const visitedIds = new Set();
+            const queue = [item];
+            while (queue.length) {
+                const cur = queue.shift();
+                if (!cur || visitedIds.has(cur.id)) continue;
+                visitedIds.add(cur.id);
+                if (cur.syncUuid) result.add(String(cur.syncUuid).toLowerCase());
+                (cur.photos || []).forEach(p => {
+                    if (p.childItemId) {
+                        const child = allItems.find(i => i.id === p.childItemId);
+                        if (child) queue.push(child);
+                    }
+                });
+                allItems.forEach(i => { if (i.mergedParentId === cur.id) queue.push(i); });
+            }
+            return Array.from(result);
+        }
+
+        // 写真単位の導出。seenMap は加工済み判定に使う既読マップ (通常は最新、ビューア表示中はスナップショット)
+        function claudePhotoLabel(uuidSet, md5, seenMap) {
+            if (!uuidSet || !uuidSet.length || !md5) return null;
+            const target = String(md5).toLowerCase();
+            const set = new Set(uuidSet);
+            const jobs = claudeJobsCache.filter(j => set.has(String(j.itemUuid || '').toLowerCase()));
+            // エラー (supersede されていないものが1件でもあればエラー)
+            for (const errJob of jobs) {
+                if (errJob.status !== 'done_with_errors' || errJob.errorDismissed) continue;
+                if (!(errJob.errors || []).some(e => String(e.sourceMd5 || '').toLowerCase() === target)) continue;
+                const errTime = errJob.completedAt > 0 ? errJob.completedAt : errJob.createdAt;
+                const superseded = jobs.some(ok =>
+                    (ok.status === 'done' || ok.status === 'done_with_errors') && ok.completedAt > errTime &&
+                    (ok.results || []).some(r => String(r.sourceMd5 || '').toLowerCase() === target));
+                if (!superseded) return { key: 'error', text: CLAUDE_LABEL_META.error.text, cls: CLAUDE_LABEL_META.error.cls };
+            }
             let hasProcessing = false, hasApproval = false, hasWaiting = false, hasDone = false;
-            const seenAt = labelSeenAtByItemUuid[itemUuid] || 0;
             const now = Date.now();
-            for (const job of claudeJobsCache) {
-                if (job.itemUuid !== itemUuid) continue;
-                if (job.status === 'done_with_errors' && !job.errorDismissed && (job.errors || []).some(e => e.sourceMd5 === md5)) {
-                    return { key: 'error', text: CLAUDE_LABEL_META.error.text, cls: CLAUDE_LABEL_META.error.cls };
+            for (const job of jobs) {
+                if ((job.photos || []).some(p => String(p.md5 || '').toLowerCase() === target)) {
+                    if (job.status === 'approved' || job.status === 'processing') hasProcessing = true;
+                    else if (job.status === 'approval_pending') hasApproval = true;
+                    else if (job.status === 'queued') hasWaiting = true;
                 }
-                if (!(job.photos || []).some(p => p.md5 === md5)) continue;
-                if (job.status === 'approved' || job.status === 'processing') hasProcessing = true;
-                else if (job.status === 'approval_pending') hasApproval = true;
-                else if (job.status === 'queued') hasWaiting = true;
-                if ((job.status === 'done' || job.status === 'done_with_errors') && (job.results || []).some(r => r.sourceMd5 === md5)) {
+                // 加工済みは生成物 (resultMd5) 基準で、所属チェックの外で判定する (32-1)
+                if ((job.status === 'done' || job.status === 'done_with_errors') &&
+                    (job.results || []).some(r => String(r.resultMd5 || '').toLowerCase() === target)) {
+                    const seenAt = seenMap[String(job.itemUuid || '').toLowerCase()] || 0;
                     if (job.completedAt > seenAt && (now - job.completedAt) <= CLAUDE_LABEL_DONE_WINDOW_MS) hasDone = true;
                 }
             }
@@ -2419,12 +2464,12 @@ public static class DashboardHtml
         }
 
         function claudeItemLabel(item) {
-            const uuid = item.syncUuid || '';
-            if (!uuid) return null;
+            const uuidSet = collectBundleUuidSet(item);
+            if (!uuidSet.length) return null;
             const order = { error: 0, processing: 1, approval: 2, waiting: 3, done: 4 };
             const counts = {};
             (item.photos || []).forEach(p => {
-                const l = claudePhotoLabel(uuid, p.md5Hash);
+                const l = claudePhotoLabel(uuidSet, p.md5Hash, labelSeenAtByItemUuid);
                 if (l) counts[l.key] = (counts[l.key] || 0) + 1;
             });
             const keys = Object.keys(counts).sort((a, b) => order[a] - order[b]);
@@ -2440,12 +2485,20 @@ public static class DashboardHtml
             return `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm ${l.cls}' title='Muse 加工状態'>${l.text}</span>`;
         }
 
-        async function markClaudeLabelSeen(itemUuid) {
-            if (!itemUuid) return;
-            labelSeenAtByItemUuid[itemUuid] = Date.now();
+        // 既読化は UUID 集合で一括送信し、サーバー確定の seenAt でローカルを確定させる (32-5 / 34-1)
+        async function markClaudeLabelSeen(item) {
+            const uuids = collectBundleUuidSet(item);
+            if (!uuids.length) return;
+            let serverSeenAt = Date.now();
             try {
-                await fetch('/api/claude/labels/seen', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ itemUuid: itemUuid }) });
+                const res = await fetch('/api/claude/labels/seen', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ itemUuids: uuids }) });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (typeof data.seenAt === 'number' && data.seenAt > 0) serverSeenAt = data.seenAt;
+                    if (typeof data.labelSeenRevision === 'number') lastKnownLabelSeenRevision = Math.max(lastKnownLabelSeenRevision, data.labelSeenRevision);
+                }
             } catch (e) {}
+            uuids.forEach(u => { labelSeenAtByItemUuid[u] = serverSeenAt; });
             renderItems();
             if (currentViewerItemId) renderViewerPhotos();
         }
@@ -2474,7 +2527,11 @@ public static class DashboardHtml
                 const data = await res.json();
                 claudeJobsCache = Array.isArray(data.jobs) ? data.jobs : [];
                 if (typeof data.claudeRevision === 'number') lastKnownClaudeRevision = data.claudeRevision;
-                if (data.labelSeenAtByItemUuid) labelSeenAtByItemUuid = data.labelSeenAtByItemUuid;
+                // 既読マップは古い応答で先祖返りさせない (34-4-1)
+                if (data.labelSeenAtByItemUuid && (typeof data.labelSeenRevision !== 'number' || data.labelSeenRevision >= lastKnownLabelSeenRevision)) {
+                    labelSeenAtByItemUuid = data.labelSeenAtByItemUuid;
+                }
+                if (typeof data.labelSeenRevision === 'number') lastKnownLabelSeenRevision = Math.max(lastKnownLabelSeenRevision, data.labelSeenRevision);
                 renderItems();
                 if (currentViewerItemId) renderViewerPhotos();
             } catch (e) {}
@@ -2701,6 +2758,7 @@ public static class DashboardHtml
         function renderViewerPhotos() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             if (!item) return;
+            viewerUuidSet = collectBundleUuidSet(item);
 
             const container = document.getElementById('viewer-photos-container');
             const photos = item.photos || [];
@@ -2786,8 +2844,7 @@ public static class DashboardHtml
 
         function renderSinglePhotoCard(photo, index) {
             const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
-            const viewerItemForLabel = allItems.find(i => i.id === currentViewerItemId);
-            const photoLabel = viewerItemForLabel ? claudePhotoLabel(viewerItemForLabel.syncUuid || '', photo.md5Hash) : null;
+            const photoLabel = claudePhotoLabel(viewerUuidSet, photo.md5Hash, viewerSessionSeenMap || labelSeenAtByItemUuid);
             const fileName = (photo.fileName || '').trim();
             const isChecked = selectedViewerPhotoIndices.has(index);
             return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between transition'>
@@ -3554,7 +3611,7 @@ public static class DashboardHtml
             await fetchSettings();
             const item = allItems.find(i => i.id === id);
             if (!item) return;
-            markClaudeLabelSeen(item.syncUuid || '');
+            markClaudeLabelSeen(item);
 
             document.getElementById('edit-id').value = item.id;
             document.getElementById('edit-title').value = item.title || '';

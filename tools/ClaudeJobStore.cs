@@ -62,6 +62,8 @@ public class ClaudeJobsFile
     public List<ClaudeJob> jobs { get; set; }
     // フェーズ 6-5: 加工済みラベルの既読時刻 (itemUuid -> ms)。カードを開いたら消える表示の共有状態。
     public Dictionary<string, long> labelSeenAtByItemUuid { get; set; }
+    // フェーズ 6-5 是正 (32-3): 既読専用の単調増加カウンタ。見張り用 claudeRevision とは分離する。
+    public long labelSeenRevision { get; set; }
 }
 
 public static class ClaudeJobStore
@@ -69,7 +71,8 @@ public static class ClaudeJobStore
     private static readonly object _jobLock = new object();
     private static List<ClaudeJob> _jobList = null;
     private static long _claudeRevision = 0;
-    private static Dictionary<string, long> _labelSeenAt = new Dictionary<string, long>();
+    private static Dictionary<string, long> _labelSeenAt = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+    private static long _labelSeenRevision = 0;
 
     // 終端ジョブの保持期間 (30日)。写真ゴミ箱の保持期間と同水準。
     private const long RetentionMs = 30L * 24L * 60L * 60L * 1000L;
@@ -113,9 +116,15 @@ public static class ClaudeJobStore
                 {
                     jobs = file.jobs;
                     _claudeRevision = file.claudeRevision > 0 ? file.claudeRevision : 1;
+                    _labelSeenRevision = file.labelSeenRevision > 0 ? file.labelSeenRevision : 1;
                     if (file.labelSeenAtByItemUuid != null)
                     {
-                        _labelSeenAt = new Dictionary<string, long>(file.labelSeenAtByItemUuid);
+                        // キーは小文字へ統一し、大小文字を区別しない辞書で保持する (32-6)
+                        _labelSeenAt = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                        foreach (var kv in file.labelSeenAtByItemUuid)
+                        {
+                            if (!string.IsNullOrEmpty(kv.Key)) _labelSeenAt[kv.Key.Trim().ToLowerInvariant()] = kv.Value;
+                        }
                     }
                 }
             }
@@ -175,7 +184,8 @@ public static class ClaudeJobStore
             {
                 claudeRevision = _claudeRevision > 0 ? _claudeRevision : 1,
                 jobs = _jobList,
-                labelSeenAtByItemUuid = _labelSeenAt
+                labelSeenAtByItemUuid = _labelSeenAt,
+                labelSeenRevision = _labelSeenRevision > 0 ? _labelSeenRevision : 1
             };
             File.WriteAllText(path, JsonConvert.SerializeObject(file, Formatting.Indented), Encoding.UTF8);
         }
@@ -197,14 +207,43 @@ public static class ClaudeJobStore
 
     // フェーズ 6-5: 商品カードを開いたときに加工済みラベルを既読化する。
     // UI 状態のため claudeRevision は進めない (見張りを起こさない)。
-    public static void MarkLabelSeen(string itemUuid)
+    // フェーズ 6-5 是正 (34-1): 複数 UUID の一括既読化。単一ロック・単一保存で、
+    // 全対象に同一のサーバー確定時刻を設定し、実際に変化があった場合のみ
+    // labelSeenRevision を進める。戻り値はサーバー確定の既読時刻 (対象なしは 0)。
+    public static long MarkLabelsSeen(List<string> itemUuids)
     {
-        if (string.IsNullOrEmpty(itemUuid)) return;
+        if (itemUuids == null || itemUuids.Count == 0) return 0;
         lock (_jobLock)
         {
             LoadJobsLocked();
-            _labelSeenAt[itemUuid] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            bool changed = false;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var raw in itemUuids)
+            {
+                string uuid = (raw ?? "").Trim().ToLowerInvariant();
+                if (uuid.Length == 0 || !seen.Add(uuid)) continue;
+                long current;
+                if (!_labelSeenAt.TryGetValue(uuid, out current) || current != now)
+                {
+                    _labelSeenAt[uuid] = now;
+                    changed = true;
+                }
+            }
+            if (!changed) return now;
+            if (_labelSeenRevision <= 0) _labelSeenRevision = 1;
+            _labelSeenRevision++;
             SaveJobsLocked();
+            return now;
+        }
+    }
+
+    public static long GetLabelSeenRevision()
+    {
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            return _labelSeenRevision > 0 ? _labelSeenRevision : 1;
         }
     }
 
@@ -231,7 +270,26 @@ public static class ClaudeJobStore
             }
             remaining.Add(job);
         }
-        if (changed)
+        // フェーズ 6-5 是正 (32-7-3): 関連ジョブが無く既読から保持期間を超えた既読エントリも掃除する。
+        // この削除では labelSeenRevision は進めず、保存だけを行う (34-4-3)。
+        bool seenPruned = false;
+        var seenKeys = new List<string>(_labelSeenAt.Keys);
+        foreach (var key in seenKeys)
+        {
+            long seenAt = _labelSeenAt[key];
+            if ((now - seenAt) <= RetentionMs) continue;
+            bool hasJob = false;
+            foreach (var job in remaining)
+            {
+                if (job != null && string.Equals(job.itemUuid, key, StringComparison.OrdinalIgnoreCase)) { hasJob = true; break; }
+            }
+            if (!hasJob)
+            {
+                _labelSeenAt.Remove(key);
+                seenPruned = true;
+            }
+        }
+        if (changed || seenPruned)
         {
             _jobList = remaining;
             SaveJobsLocked();
@@ -413,6 +471,71 @@ public static class ClaudeJobStore
                 }
             }
             return null;
+        }
+    }
+
+    // フェーズ 6-5 是正 (34-3 / §36.2-2): 完了確定と同一ロック内でまとめて保存する変更。
+    // mutate 適用後、同一商品の旧エラーのうち全て supersede 済みとなったものを自動解消する。
+    public static ClaudeJob MutateJobWithErrorSupersede(string jobId, Func<ClaudeJob, bool> mutate)
+    {
+        if (string.IsNullOrEmpty(jobId) || mutate == null) return null;
+        lock (_jobLock)
+        {
+            var list = LoadJobsLocked();
+            ClaudeJob target = null;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (string.Equals(list[i].jobId, jobId, StringComparison.OrdinalIgnoreCase)) { target = list[i]; break; }
+            }
+            if (target == null) return null;
+            if (mutate(target))
+            {
+                AutoDismissSupersededErrorsLocked(target.itemUuid);
+                SaveJobsLocked();
+            }
+            return CloneJob(target);
+        }
+    }
+
+    // 同一商品の全ての成功ジョブを対象に、旧ジョブの全エラーが supersede 済みか判定する。
+    // supersede 条件 (計画 §27.1.1): okJob.completedAt > errTime かつ results に小文字一致の sourceMd5。
+    // 分割再加工 (前ジョブで M1 成功・今回ジョブで M2 成功) でも全エラー解消になれば解消済みにする。
+    private static void AutoDismissSupersededErrorsLocked(string itemUuid)
+    {
+        if (string.IsNullOrEmpty(itemUuid)) return;
+        var okJobs = new List<ClaudeJob>();
+        foreach (var j in _jobList)
+        {
+            if (j != null && string.Equals(j.itemUuid, itemUuid, StringComparison.OrdinalIgnoreCase)
+                && (j.status == "done" || j.status == "done_with_errors") && j.completedAt > 0)
+            {
+                okJobs.Add(j);
+            }
+        }
+        if (okJobs.Count == 0) return;
+        foreach (var errJob in _jobList)
+        {
+            if (errJob == null || errJob.status != "done_with_errors" || errJob.errorDismissed) continue;
+            if (!string.Equals(errJob.itemUuid, itemUuid, StringComparison.OrdinalIgnoreCase)) continue;
+            if (errJob.errors == null || errJob.errors.Count == 0) continue;
+            long errTime = errJob.completedAt > 0 ? errJob.completedAt : errJob.createdAt;
+            bool allSuperseded = true;
+            foreach (var err in errJob.errors)
+            {
+                string md5 = (err.sourceMd5 ?? "").Trim().ToLowerInvariant();
+                bool superseded = false;
+                foreach (var ok in okJobs)
+                {
+                    if (ok.completedAt <= errTime || ok.results == null) continue;
+                    foreach (var r in ok.results)
+                    {
+                        if (string.Equals((r.sourceMd5 ?? "").Trim(), md5, StringComparison.OrdinalIgnoreCase)) { superseded = true; break; }
+                    }
+                    if (superseded) break;
+                }
+                if (!superseded) { allSuperseded = false; break; }
+            }
+            if (allSuperseded) errJob.errorDismissed = true;
         }
     }
 
