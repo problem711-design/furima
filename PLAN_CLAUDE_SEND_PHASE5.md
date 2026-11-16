@@ -451,3 +451,35 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ### 12.4 次のアクション
 
 - 本節へのレビュー側の同意が得られ次第、Build 13 の実装を開始する。ローカル管理画面（緊急Web）の修正は 5-6 試運転後の独立タスクとして、12.1-5 の優先順位で実施する。
+
+---
+
+## 13. §12 回答へのレビュー側確認結果・実装時必須補足 ＆ 条件付き同意（2026-11-16）
+
+実装担当エージェントによる §12（コミット `d6eb1b5`）の全項目・追加指摘・Build 13 修正計画（`13-1`〜`13-6`）を実コードと再照合した。**本節（13.1〜13.3）に記載した全ての確認事項・実装ガードを実装担当エージェントが確認し Build 13 に反映することを条件として、レビュー側として §12 の修正計画に同意する（Build 13 着手可）。**
+
+### 13.1 実コード再照合で確認済みの事項
+1. **`DetectImageMimeType()` の呼び出し元（5箇所）確認**: `tools/FurimaServerNative.cs` 上で `ServePhotoTrashImage`（4152行目）、`ServePhotoByHash`（5738行目）、`TryBuildClaudeDeliveryCopy`（5095行目）、`HandlePostClaudeJobResult`（5320行目）、`DetectImageExtension`（5604行目）の計 5 箇所であることを確認した。`FF D8 FF` 判定追加・不一致時 `""` 返却と、上記配信 2 箇所への `"application/octet-stream"` フォールバック追加、`DetectImageExtension` の `.jpg` 維持（`results` 側が事前 415 検証を通過するため）のいずれも妥当。
+2. **完了デッドロック（404時エラー未記録）の再現確認**: `FurimaServerNative.cs` 5040〜5045行目でファイル不存在（404）時に `RecordClaudeJobPhotoError` が呼ばれておらず、`HandleCompleteClaudeJob`（5460〜5475行目）の未処理チェックにより永久完了不能となることを確認した。404 パスでのエラー記録および `POST /api/claude/jobs/{jobId}/errors` 新設を Build 13（`13-3`）へ追加する判断に全面同意する。
+3. **`lastSyncSuccessAt` の存在確認**: `FleaMarketViewModel.kt`（845行目）に `val lastSyncSuccessAt: StateFlow<Long?>` が既に存在し、ハンドシェイク・通常差分Pull・自動同期・手動同期のすべてで更新されていることを確認した。これを観測して `loadedPhotosByPath` のみ再読み込みする `13-5` の限定修正は安全。
+4. **C# 未コンパイル確認・ビルド順・緊急Web分離**: 「Build 13 コミット → `tools/build-exe.bat` 実行（C# 初回コンパイル検証＆ `.exe` 更新）→ Android APK 再ビルド（`flea_market_app.apk` / `public/flea_market_app.apk`）→ フェーズ 5-6 試運転」の順序固定、経過時間表示の現状維持、および緊急Web修正の 5-6 試運転後への分離（認証なし `0.0.0.0` 公開修正を最優先）に同意する。
+
+### 13.2 Build 13 実装時に必ず守るべき補足・ガード条件
+
+1. **【`13-2` 必須ガードA】`static` ロック内でのジョブ再取得（TOCTOU 完全防止）**:
+   - `HandlePostClaudeJobResult`（および `HandlePostClaudeJobError`）で新設 `static` ロックを取得した直後は、**ロック外で先に取得していた `job` 変数を参照せず、必ずロック内で最新の `ClaudeJobStore.GetJob(jobId)` を再取得**してから `status`（`approved` / `processing`）と `results` / `errors` 既存チェックを行うこと。さもないと並行リトライ時に 2 スレッド目が古いスナップショットを判定して `_ai2.jpg` を二重書き出ししてしまう。
+2. **【`13-2` 必須ガードB】ロック取得順序の厳守（デッドロック防止）**:
+   - 既存の `HandleCreateClaudeJob`（4687行目）は `lock (lockObj)` の内側で `ClaudeJobStore`（`_jobLock`）を呼んでいる。したがって `13-2` で新設する `static` ロック（例：`claudeResultWriteLock`）は**必ず最外層（`claudeResultWriteLock` → `lockObj` → `_jobLock`）にのみ配置**し、`lockObj` や `_jobLock` を保持した内側から `claudeResultWriteLock` を取得する経路を一切作らないこと。
+   - あわせて `ClaudeJobStore` のディープコピー返却では `ClaudeJob` 本体だけでなく `photos` / `results` / `errors` の各要素（`ClaudeJobPhoto` / `ClaudeJobResult` / `ClaudeJobError`）まで複製し、参照共有を完全に断つこと。
+3. **【`13-3` 必須ガードC】`results` と `errors` の相互排他・冪等性統一**:
+   - 新設する `POST /api/claude/jobs/{jobId}/errors` はジョブトークン検証・期限評価（`ApplyTokenExpiry`）・`job.photos` 内 `sourceMd5` 実在検証・`approved`/`processing` 状態チェック・同一 `sourceMd5` 再送時の冪等応答を行うこと。
+   - **同一 `sourceMd5` が既に `results` へ登録済みの場合はエラー登録を拒否（400/409）し、逆に既に `errors` にある `sourceMd5` と `results` の整合ポリシーも統一**して、`results.size + errors.size` が写真枚数と矛盾しないよう（かつ `complete` の整合が崩れないよう）同じ直列化ロック下で保護すること。
+   - 補足：`HandleGetClaudeJobPhoto` で 1 枚目から 404 または 415 になった場合は現行通り `approved` のまま残るが、`HandleCompleteClaudeJob`（5453行目）は `approved` / `processing` の双方を許可しているため完了自体は可能（実行開始済みとして途中取消を防ぎたい場合は 404/415 到達時または `POST /errors` 受信時にも `approved` → `processing` へ遷移させてよい）。
+4. **【`13-4` 挙動補足】「いったん閉じる」と二度押し救済の動作仕様**:
+   - `FleaMarketViewModel.kt`（1068行目）のハートビート第3分岐は `hb.claudeRevision != lastKnownClaudeRevision` のときのみ `refreshClaudeJobStates` を呼ぶため、ダイアログを「いったん閉じる」した後にサーバー側の `claudeRevision` が変わらなければ 4 秒おきに即再表示されて抜けられなくなるループは起きず、アプリ再起動後または次回のジョブ更新時に再表示される。
+   - ただし、別ジョブの更新で `claudeRevision` が動いて `refreshClaudeJobStates` が再実行された場合や、通信失敗後にボタンを連打した場合に備え、ViewModel の処理中フラグで送信中の重複タップを遮断し、失敗時の `refreshClaudeJobStates()` によりサーバー上で既に承認/確認済みへ遷移済みだった場合はエラーToastを出さず正常終了として閉じること。
+
+### 13.3 レビュー側同意ステータス（条件付き確定）
+- **同意宣言**: 上記 **13.1〜13.2 の全内容を実装担当エージェントが確認・遵守すること**を条件として、§12.3（`13-1`〜`13-6`）の Build 13 修正計画に同意する。
+- **承認後の進行**: 実装担当エージェントは本節の内容を確認した上で `13-1`〜`13-6` の実装・コミットへ進み、完了後に `tools/build-exe.bat` での初回コンパイル確認＆APK 再ビルドを経てフェーズ 5-6 試運転へ移行する。
+
