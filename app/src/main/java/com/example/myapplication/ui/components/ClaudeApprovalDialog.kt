@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -144,7 +145,8 @@ fun ClaudeApprovalDialog(
                                     job.itemTitle,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp,
-                                    maxLines = 2
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     "写真${job.photos.size}枚・${job.templateName}・${queueLabel}",

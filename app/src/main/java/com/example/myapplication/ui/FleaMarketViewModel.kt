@@ -967,14 +967,18 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 if (md5.isNotBlank()) {
                     val photo = repository.getPhotoByMd5(md5)
                     if (photo != null) {
-                        path = photo.thumbnailPath ?: photo.filePath
+                        // レビュー 20-2: 端末上に実ファイルが存在するパスのみを採用する
+                        // (欠損パスを採用すると itemUuid フォールバックへ進まず、空白表示になる)
+                        path = listOfNotNull(photo.thumbnailPath, photo.filePath)
+                            .firstOrNull { it.isNotBlank() && java.io.File(it).exists() }
                     }
                 }
                 if (path == null && job.itemUuid.isNotBlank()) {
                     val withPhotos = repository.getItemWithPhotosBySyncUuid(job.itemUuid)
                     val first = withPhotos?.photos?.minByOrNull { it.displayOrder }
                     if (first != null) {
-                        path = first.thumbnailPath ?: first.filePath
+                        path = listOfNotNull(first.thumbnailPath, first.filePath)
+                            .firstOrNull { it.isNotBlank() && java.io.File(it).exists() }
                     }
                 }
                 if (!path.isNullOrBlank()) {
@@ -1216,7 +1220,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     // 第3分岐 (フェーズ 5-4): Claude ジョブの承認待ち・未確認完了の検知。
                     // 既存のデータPull/設定Pull分岐と isDirty 保護には一切触れない。
                     // この分岐の例外は握りつぶしてログのみとし、同期本体を止めない。
-                    if (connected) {
+                    // レビュー 20-3: 一括応答の送信中は再取得を挟まない (途中経過で件数がチラつくのを防ぐ)。
+                    if (connected && !_claudeActionInProgress.value) {
                         try {
                             if (hb.claudeRevision > 0L && hb.claudeRevision != lastKnownClaudeRevision) {
                                 if (refreshClaudeJobStates(url, token)) {

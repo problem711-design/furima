@@ -340,7 +340,7 @@ class PcServerClient(
         jobId: String,
         queue: String,
         baseUrl: String = getSavedServerUrl(),
-        token: <redacted>
+        token: String = getSavedAuthToken()
     ): Boolean = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
