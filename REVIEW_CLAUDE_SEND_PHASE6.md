@@ -922,3 +922,53 @@ Secure Vault が Tailscale IP を受け付けられず、平文ファイルへ�
 - 上記（`§30.1`〜`§30.5`）をすべて反映する前提で、**このまま `v1.2 (Build 6)`（`versionCode 1206`）の実装（`6-4`＋`25-1`＋`25-2`）へ進んでよい**（確定案や配色・順位に異論／別案がある場合のみ先に §31 をコミットすること）。
 - **`v1.2 (Build 6)` 実装完了後、ステップ3（`6-5`〜`6-7`）へ進む前に必ず第2段階レビュー（必須ポイント2・段階2）を依頼すること。**
 
+---
+
+## 31. `v1.2 Build 6`（`1344670` / `e0d831b`）段階2 実装コードレビュー結果（2026-11-17）
+
+必須ポイント2・段階2として、リモートコミット **`1344670`**（フェーズ `6-4` ＋追補 `25-1`・`25-2` 実装）および **`e0d831b`**（import 補完ビルド修正＋配布バイナリ・APK 更新）の全変更21ファイルおよび周辺コード（`ItemDao.kt`・`SyncStore.cs`・`MergeItemsDialog.kt`）を精査した。
+
+### 31.1 総合判定：【合格（承認）— ステップ3（`6-5`〜`6-7`）へ進行可】
+- **追補修正 `25-1`・`25-2` はともに漏れなく実装完了**。
+- **`6-4` 本体も §30 で提示した事前確定条件・確認3点回答・見落とし防止チェックリスト・3箇所バージョン統一＋配布バイナリ同期まで過不足なく実装**されており、致命的・中高リスクの指摘は **0件**。
+- ステップ3（`6-5`〜`6-7` / `v1.3 Build 7〜9`）の計画詳細化・実装へ進んでよい（`PLAN` §16・台帳 §4.2 のとおり、`6-5` 完了時および `6-7` 完了時に中間レビューを挟むこと）。
+
+---
+
+### 31.2 検証済み（合格）項目一覧
+
+#### 1. 最優先追補検証（`25-1`・`25-2`）
+- **`25-1`（`FleaMarketRepository.kt:399-402`）**: `removePhotoFromItem` 内の `dao.deletePhotosByItemId(itemId)` 前に `if (targetPhoto.md5Hash.isNotBlank()) { recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, targetPhoto.md5Hash) }` が組み込まれており、単体写真削除経路からの復活窓が閉じたことを確認。
+- **`25-2`（`PcServerClient.kt:966-1036, 1111-1121`）**: `mergeServerPhotosAdditively` が `Boolean`（`additions.isNotEmpty()` で `true`）を返すようになり、`mergeServerItemsFromJson` の `isDirty` スキップ分岐でも `addedPhotos && repairThumbnails && baseUrl.isNotBlank()` 時に `repairMissingOrCorruptThumbnailsForItem(existing.item.id, baseUrl, token)` を `try/catch` 付きで即時呼び出すことを確認。
+
+#### 2. サーバー側（`tools/FurimaServerNative.cs`・`tools/SyncStore.cs`）
+- **共通ヘルパー（`FurimaServerNative.cs:1335-1361`）**: `IsSoldFamily`（`{"SOLD", "SHIPPING"}`）・`GetStatusLabel`（不明コードは生コード返却で `"出品中"` 既定フォールバック全廃）・`GetMergedChildStatusLabel`（`"まとめ下書き中"` / `"まとめ下書き済み"` / `"まとめ発送準備中"` / `"まとめ売却済"` / `"まとめ出品中"`）が統一表どおり定義・適用されている。
+- **各ハンドラ横断適用**: `HandleSyncItems`（`L2188, 2249`）・`HandleUpdateItem`（`L2543, 2565, 2574, 2588` ＋ `L2594-2606` まとめ子 `statusLabel` 連動更新追加）・`HandleRestoreItem`（`L2794-2816` 親参照含む）・`HandleBatchRestoreItems`（`L3008, 3023`）・`HandleBatchUpdateItems`（`L3171, 3177, 3197, 3205, 3218`）・`HandleCreateItem`（`L3363-3413`）・`HandleMergeItems`（`L3699-3776` `DRAFT`/`DRAFT_DONE`/`LISTED` かつ非ゴミ箱のサーバー側子前提検証 400 拒否＋親/子生成）のすべてを確認。
+- **30日写真整理保護の不変条件（`SyncStore.cs:631, 642, 676`）**: `GetCleanupCandidates` の第1ループ（参照写真保護収集）・第2ループ（削除候補抽出）とも変更せず **厳格に `"SOLD"` のみ** を維持しており、`SHIPPING` の写真保護が壊れていないことを確認。
+- **C# 5 互換性**: `tools/FurimaServerNative.cs`・`tools/SyncStore.cs`・`tools/ClaudeJobStore.cs` に `$""`・`?.`・`nameof(` 等の C# 5 非互換構文が無いことを確認。
+
+#### 3. PC 管理画面（`tools/DashboardHtml.cs`）
+- **フィルタ＆集計分離（`L44-47, 1792-1855, 2111-2116`）**: 旧 `#filter-unshared` を「下書き」（`filter-draft` / `count-draft`、`DRAFT || DRAFT_DONE`）へ統合し、「発送準備中」（`filter-shipping` / `count-shipping`）を追加した6ボタン構成に統一。売上・純利益・手数料・送料・経費・平均単価・`#stat-sold-count` は `soldFamily`（`SOLD + SHIPPING`）、ヘッダフィルタ件数 `#count-sold` は `SOLD` のみに明確分離。
+- **9段階並び順（`L2136-2152`）**: §30.3 確定案どおり `1: まとめ LISTED` → `2: まとめ SHIPPING` → `3: 単品 LISTED` → `4: 単品 SHIPPING` → `5: まとめ DRAFT_DONE` → `6: まとめ DRAFT` → `7: 単品 DRAFT_DONE` → `8: 単品 DRAFT` → `9: SOLD/その他` に固定。
+- **統一配色・ラベル・モーダル・CSV・整理案内文**: `statusBadgeClassOf` / `statusLabelOf` / `isSoldFamilyStatus` / `isMergeEligibleStatus` が `renderItems`（`L2169-2253`）・`openMergeModal`（`L3133` 否定判定解消）・`setModalStatus`（`L3272-3297`）・`calcModalProfit`（`L3391-3424`）・`evaluateListingWarningsObj`（`L3427`）・`updateItem`/`createItem`・`updateBatchEditPreview`・`downloadPcCsv`（`L4038-4055`）・整理案内文（`L588`）へ一貫適用済み。抽出 JS は `node --check` で構文エラー 0 を確認。
+
+#### 4. Android 側（`ItemEntity.kt`・`Repository`・`PcServerClient`・`ViewModel`・`UI`・`CsvExporter`）
+- **データ層（`ItemEntity.kt:43, 57-77`, `FleaMarketRepository.kt:170, 203, 419-433, 471, 483, 685-691`, `PcServerClient.kt:638-644, 1173, 1207`）**: `getCalculatedProfit`・`getSalesSummary`・`saveItem`・`updateItemStatus`（売却系出入りの `soldPrice`/`soldAt` 正規化）・`mergeItems`・`batchUpdateItems`・`PcServerClient` Push 親参照子ラベル＆Pull `resolvedSoldAt` 売却系保持がすべて整合。
+- **UI・操作・狭幅対応**:
+  - `FleaMarketViewModel.kt:202-229, 296, 816`: 5状態フィルタ（`DRAFT` は `DRAFT || DRAFT_DONE`）・価格ソート2箇所・期間集計は売却系、`cleanupSoldPhotosOlderThan`（`L816`）は厳格に `"SOLD"` のみ維持。
+  - `ItemListScreen.kt:169-179, 548-605, 691, 794, 869-886`: 5チップ横スクロール化、統一配色パレット（`LISTED` 固定エメラルド `0xFF059669`・`DRAFT_DONE` ティール `0xFF0D9488` で同期バッジ青系と衝突回避）、まとめ可否に `DRAFT_DONE` 追加。
+  - `ItemQuickActionDialog.kt:78-95, 208, 241-305`: ワンタップ切替を従来範囲＋新コード互換に保ちつつ、直接5状態切替の横スクロールチップ列を追加。
+  - `ItemEditScreen.kt:439, 1016-1066, 1242` / `BatchEditDialog.kt:135-146, 290-291` / `ItemDetailScreen.kt:135-143, 440-453, 621` / `TrashScreen.kt:385` / `ListingValidationBanner.kt:44` / `SalesAnalysisScreen.kt:112` / `CsvExporter.kt:37-60` / `CsvExporterTest.kt:89-116`: 全件反映＋新規単体テストケース追加を確認。
+- **緊急 WebUI（§25.4 範囲のみ）**: `LocalWebServer.kt:231, 672-674`・`WebDashboardHtml.kt:28, 198-200, 570-575, 1000-1005` で新コードの表示名・`soldAt` 同期と JS 構文（`node --check` 通過）を確認（§0 に従い既存構造は対象外）。
+
+#### 5. バージョン3箇所同期・配布バイナリ同期
+- `app/build.gradle.kts` (`versionCode = 1206`, `versionName = "1.2"`)、`tools/DashboardHtml.cs` (`v1.2 (Build 6)`)、`WebDashboardHtml.kt` (`v1.2 (Build 6)`) の完全一致を確認。
+- コミット `e0d831b` で `flea_market_app.apk`・`public/flea_market_app.apk`・`tools/furima-server.exe` の更新同梱を確認。
+
+---
+
+### 31.3 軽微観察メモ（合格・修正強制なし）
+- `FurimaServerNative.HandleBatchRestoreItems`（`L3008`）: `HandleRestoreItem`（`L2795-2802`）では単体復元対象が `st == "MERGED"` の場合に親商品を参照して `GetMergedChildStatusLabel(pst)` を算出しているが、`HandleBatchRestoreItems` 側は親の復元ループ内で子のラベルを更新するのみで、配列先頭項目自身が `MERGED` の場合は `GetStatusLabel("MERGED")` になる（通常 UI のゴミ箱は `MERGED` 子を非表示とするため実運用上の支障はないが、将来整理時に揃えるとより盤石）。
+- ステップ1から継続の観察点（`PLAN` §22）: 10:00〜22:00 の稼働時間帯内における Muse 自動巡回フックの初回 wake 発火の現場確認は引き続き運用の中で観察すること。
+
+
