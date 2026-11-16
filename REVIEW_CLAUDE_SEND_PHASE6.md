@@ -345,3 +345,35 @@
 - `6-1a-2` / `6-1b-2`: 正規化時の保存と、延長の呼び出し位置（検証通過後・写真取得は状態遷移と同一の変更に相乗り）を反映。
 
 判定どおり、**6-1a / 6-1b の実装に着工する**。
+
+---
+
+## 12. Build 14 / 15（`6-1a` / `6-1b`）実装ビルドテスト・コードレビュー（2026-11-16、`6d8fcf4` 対象）
+
+`bce7b14`（6-1a / Build 14）および `6d8fcf4`（6-1b / Build 15）の実装コミットに対してビルドテストおよび実コード照合を実施しました。
+
+### 12.1 ビルド・テスト結果
+- **Android ビルド（`v1.0.0 Build 15`）**: `:app:compileDebugKotlin` / `:app:assembleDebug` 成功（`versionCode = 15`, `versionName = "1.0.0"`, `app-debug.apk` 生成確認）。
+- **Android 単体・Robolectric テスト**: `:app:testDebugUnitTest` 全件合格（6スイート / 14テスト、`failures=0, errors=0, skipped=0`）。
+- **PC管理画面 JS（`tools/DashboardHtml.cs`）**: C# verbatim 文字列の `""` エスケープ整合確認（不整合 0 件）、抽出 JavaScript の `node --check` 構文エラーなし。
+- **PCサーバー C#（`tools/ClaudeJobStore.cs`, `tools/FurimaServerNative.cs`）**: `.NET Framework csc.exe`（C# 5）非互換構文の新規混入なし（※ Linux 環境のため、Windows 側での `tools/build-exe.bat` 実ビルド確認は別途実施願います）。
+- **バージョン3箇所統一**: `app/build.gradle.kts` / `tools/DashboardHtml.cs` / `WebDashboardHtml.kt` すべて `v1.0.0 (Build 15)` で一致。
+
+### 12.2 実装上の不具合・微修正ポイント
+
+#### 指摘 12-1: 【バグ】`DashboardHtml.cs:2345`（`refreshClaudeJobsList`）の件数集計が未更新
+- **該当箇所**: `tools/DashboardHtml.cs:2327`（`refreshClaudeJobsCount`）vs `tools/DashboardHtml.cs:2345`（`refreshClaudeJobsList`）
+- **現象**: `refreshClaudeJobsCount` では `6-1a-17` に従って `!(j.status === 'queued' && j.queue === 'waiting')` で待機ジョブを除外している一方、`refreshClaudeJobsList` の `2345` 行目は旧式の `['queued', 'approval_pending', 'approved', 'processing'].includes(j.status)` のまま残っています。
+- **症状**: 待機ジョブがある状態で「Museジョブ」モーダルを開いたり、「待機へ」「巡回へ」「確認」「取消」を押した直後だけ `#viewer-claude-jobs-count` バッジに待機分が加算され、次の自動ポーリングで元に戻るチラつきが発生します。
+- **修正案**: `2345` 行目も `refreshClaudeJobsCount` と同一の判定条件（または共通ヘルパー関数）に統一してください。
+
+#### 指摘 12-2: 【軽微】`DashboardHtml.cs:2269`（`updateViewerSelectionBar`）で `#viewer-claude-queue` の `disabled` 連動漏れ
+- **該当箇所**: `tools/DashboardHtml.cs:2260-2270`
+- **内容**: まとめ商品表示時（`isBundle`）やテンプレート未登録時（`!hasTpl`）に `#viewer-claude-template` と `#viewer-claude-send-btn` は `disabled` にされますが、新設された `#viewer-claude-queue` セレクトは有効のまま残っています。送信ボタンが無効なため実害はありませんが、同じ条件で無効化を揃えるとUIとして一貫します。
+
+#### 指摘 12-3: 【軽微】`ClaudeSendDialog.kt:55-145` の小画面・拡大フォント時のスクロール対応
+- **該当箇所**: `app/src/main/java/com/example/myapplication/ui/components/ClaudeSendDialog.kt:55-145`
+- **内容**: 送り先 3 択ラジオ（説明文付き）の追加によりダイアログ本文の縦幅が増えているため、文字サイズ設定が大きい端末や小画面端末でも選択肢・ボタンが押し出されないよう、本文の `Column` に `verticalScroll(rememberScrollState())` を追加（および選択行の垂直余白を少し確保）しておくと安心です。
+
+### 12.3 判定
+`6-1a`（`CreateJob` の単一ロック原子化、`claude_jobs.json` 移行と後方互換パーサー、`move`/`dismiss-error` API）および `6-1b`（実行系3エンドポイント限定のスライディング延長とロック順序 `claudeResultWriteLock -> _jobLock` 順守）の設計・実装は良好です。上記 **指摘 12-1**（＋可能なら 12-2 / 12-3）の修正を次コミット（または `6-2` 詳細化の前提整備）に含めていただければ問題ありません。
