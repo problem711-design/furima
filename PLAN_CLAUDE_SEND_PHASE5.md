@@ -438,12 +438,12 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 
 ### 12.3 Build 13 修正チェックリスト（§11.4 協議1〜5への回答を兼ねる）
 
-- [] **13-1: `DetectImageMimeType` 厳格化**（`FF D8 FF` チェック追加、不一致時 `""` 返却）＋ `ServePhotoTrashImage` / `ServePhotoByHash` の `ContentType` フォールバック（`""` 時 `application/octet-stream`）。
-- [] **13-2: `ClaudeJobStore` ディープコピー返却**（`GetJob` / `GetJobs` / `MutateJob`）＋ **results ハンドラの直列化**（`static` ロック内で冪等確認→書き込み→登録→記録）。
-- [] **13-3: エラー記録の網羅**（写真取得 404 でのエラー記録 ＋ `POST /api/claude/jobs/{jobId}/errors` 新設・冪等）。
-- [] **13-4: 承認・完了ダイアログの失敗時UX**（通知用 `StateFlow`＋Toast、処理中表示、応答後の状態再整合、二度押し時の誤表示防止、「いったん閉じる」導線を両ダイアログへ）。
-- [] **13-5: `ItemEditScreen` の対象判定ライブ追従**（同期成功時に `loadedPhotosByPath` のみ再読込）。
-- [] **13-6: バージョン統一更新 (`Build 13`) ＆ 検証**
+- [x] **13-1: `DetectImageMimeType` 厳格化**（`FF D8 FF` チェック追加、不一致時 `""` 返却）＋ `ServePhotoTrashImage` / `ServePhotoByHash` の `ContentType` フォールバック（`""` 時 `application/octet-stream`）。
+- [x] **13-2: `ClaudeJobStore` ディープコピー返却**（`GetJob` / `GetJobs` / `MutateJob`）＋ **results ハンドラの直列化**（`static` ロック内で冪等確認→書き込み→登録→記録）。
+- [x] **13-3: エラー記録の網羅**（写真取得 404 でのエラー記録 ＋ `POST /api/claude/jobs/{jobId}/errors` 新設・冪等）。
+- [x] **13-4: 承認・完了ダイアログの失敗時UX**（通知用 `StateFlow`＋Toast、処理中表示、応答後の状態再整合、二度押し時の誤表示防止、「いったん閉じる」導線を両ダイアログへ）。
+- [x] **13-5: `ItemEditScreen` の対象判定ライブ追従**（同期成功時に `loadedPhotosByPath` のみ再読込）。
+- [x] **13-6: バージョン統一更新 (`Build 13`) ＆ 検証**
 - 検証: 非画像バイトの返却が 415 で拒否されること。HEIF が写真単位エラーとして記録されること。元写真を削除したジョブが `done_with_errors` で完了できること。同一 `sourceMd5` のリトライで `_ai2` が増殖しないこと。PCサーバー停止時に承認・完了ダイアログから「いったん閉じる」で抜けられること。
 - 順序は「Build 13 コミット → Windows で `tools/build-exe.bat`（コンパイル確認を含む）→ Android APK 再ビルド・配置（`flea_market_app.apk` / `public/flea_market_app.apk`）→ フェーズ 5-6 試運転」とする。
 - 既存機能の削除・置き換え: なし（`POST /api/claude/jobs/{jobId}/errors` の追加のみ）。

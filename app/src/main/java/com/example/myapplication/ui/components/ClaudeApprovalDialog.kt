@@ -1,6 +1,7 @@
 package com.example.myapplication.ui.components
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
@@ -24,8 +25,10 @@ import com.example.myapplication.data.server.ClaudeJobDto
 @Composable
 fun ClaudeApprovalDialog(
     job: ClaudeJobDto,
+    isProcessing: Boolean = false,
     onApprove: () -> Unit,
-    onDeny: () -> Unit
+    onDeny: () -> Unit,
+    onCloseForNow: () -> Unit = {}
 ) {
     val elapsedText = remember(job.approvalRequestedAt) {
         if (job.approvalRequestedAt > 0L) {
@@ -61,16 +64,25 @@ fun ClaudeApprovalDialog(
                     "承認すると、Claudeがこのジョブの写真を取得して加工を開始します。",
                     fontSize = 12.sp
                 )
+                Text(
+                    "「いったん閉じる」を選んでもサーバー側の状態は変わりません（承認待ちは10分で自動的に取り消されます）。",
+                    fontSize = 12.sp
+                )
             }
         },
         confirmButton = {
-            Button(onClick = onApprove) {
-                Text("実行を承認")
+            Button(onClick = onApprove, enabled = !isProcessing) {
+                Text(if (isProcessing) "送信中…" else "実行を承認")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDeny) {
-                Text("拒否")
+            Row {
+                TextButton(onClick = onDeny, enabled = !isProcessing) {
+                    Text("拒否")
+                }
+                TextButton(onClick = onCloseForNow, enabled = !isProcessing) {
+                    Text("いったん閉じる")
+                }
             }
         }
     )

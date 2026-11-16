@@ -163,8 +163,61 @@ public static class ClaudeJobStore
             job.acknowledgedAt = 0;
             list.Add(job);
             SaveJobsLocked();
-            return job;
+            return CloneJob(job);
         }
+    }
+
+    // Build 13 (13-2): 呼び出し側へは必ずディープコピーを返す。
+    // 生参照を返すと、別スレッドの MutateJob と列挙が競合して例外になり得るため、
+    // ジョブ本体だけでなく photos / results / errors の要素まで複製して参照共有を断つ。
+    private static ClaudeJob CloneJob(ClaudeJob job)
+    {
+        if (job == null) return null;
+        var clone = new ClaudeJob
+        {
+            jobId = job.jobId,
+            itemId = job.itemId,
+            itemUuid = job.itemUuid,
+            itemTitle = job.itemTitle,
+            folderName = job.folderName,
+            photos = new List<ClaudeJobPhoto>(),
+            templateId = job.templateId,
+            templateName = job.templateName,
+            promptText = job.promptText,
+            origin = job.origin,
+            status = job.status,
+            createdAt = job.createdAt,
+            approvalRequestedAt = job.approvalRequestedAt,
+            jobToken = job.jobToken,
+            jobTokenExpiresAt = job.jobTokenExpiresAt,
+            results = new List<ClaudeJobResult>(),
+            errors = new List<ClaudeJobError>(),
+            completedAt = job.completedAt,
+            acknowledged = job.acknowledged,
+            acknowledgedAt = job.acknowledgedAt
+        };
+        if (job.photos != null)
+        {
+            foreach (var p in job.photos)
+            {
+                clone.photos.Add(new ClaudeJobPhoto { md5 = p.md5, fileName = p.fileName });
+            }
+        }
+        if (job.results != null)
+        {
+            foreach (var r in job.results)
+            {
+                clone.results.Add(new ClaudeJobResult { sourceMd5 = r.sourceMd5, resultFileName = r.resultFileName, resultMd5 = r.resultMd5 });
+            }
+        }
+        if (job.errors != null)
+        {
+            foreach (var e in job.errors)
+            {
+                clone.errors.Add(new ClaudeJobError { sourceMd5 = e.sourceMd5, message = e.message });
+            }
+        }
+        return clone;
     }
 
     public static List<ClaudeJob> GetJobs(string statusFilter)
@@ -176,7 +229,7 @@ public static class ClaudeJobStore
             foreach (var job in list)
             {
                 if (!string.IsNullOrEmpty(statusFilter) && job.status != statusFilter) continue;
-                copy.Add(job);
+                copy.Add(CloneJob(job));
             }
             copy.Sort((a, b) => b.createdAt.CompareTo(a.createdAt));
             return copy;
@@ -193,7 +246,7 @@ public static class ClaudeJobStore
             {
                 if (string.Equals(list[i].jobId, jobId, StringComparison.OrdinalIgnoreCase))
                 {
-                    return list[i];
+                    return CloneJob(list[i]);
                 }
             }
             return null;
@@ -216,7 +269,7 @@ public static class ClaudeJobStore
                     {
                         SaveJobsLocked();
                     }
-                    return list[i];
+                    return CloneJob(list[i]);
                 }
             }
             return null;

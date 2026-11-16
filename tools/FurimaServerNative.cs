@@ -35,6 +35,10 @@ class FurimaServerNative
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
     private static long claudeRevision = 1;
+    // Build 13 (13-2): 結果・エラーの登録を直列化するロック。
+    // ガードB: 必ず最外層にのみ置く (claudeResultWriteLock → lockObj → _jobLock の順)。
+    // lockObj や _jobLock を保持した内側からこのロックを取得する経路は作らないこと。
+    private static readonly object claudeResultWriteLock = new object();
 
     private class PhotoFileCacheEntry
     {
@@ -1673,6 +1677,12 @@ class FurimaServerNative
                     res.StatusCode = 404;
                     SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Not found" } });
                 }
+            }
+            else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/errors") && req.HttpMethod == "POST")
+            {
+                string erJobId = rawPath.Substring("/api/claude/jobs/".Length);
+                erJobId = erJobId.Substring(0, erJobId.Length - "/errors".Length).Trim();
+                HandlePostClaudeJobError(req, res, erJobId);
             }
             else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/results") && req.HttpMethod == "POST")
             {
@@ -4149,7 +4159,8 @@ class FurimaServerNative
             if (entry != null && !string.IsNullOrEmpty(entry.trashFilePath) && File.Exists(entry.trashFilePath))
             {
                 byte[] bytes = File.ReadAllBytes(entry.trashFilePath);
-                res.ContentType = DetectImageMimeType(bytes);
+                string trashContentType = DetectImageMimeType(bytes);
+                res.ContentType = string.IsNullOrEmpty(trashContentType) ? "application/octet-stream" : trashContentType;
                 res.ContentLength64 = bytes.Length;
                 res.OutputStream.Write(bytes, 0, bytes.Length);
                 res.OutputStream.Close();
@@ -4978,6 +4989,8 @@ class FurimaServerNative
                 if (string.Equals(e.sourceMd5, md5, StringComparison.OrdinalIgnoreCase)) return false;
             }
             j.errors.Add(new ClaudeJobError { sourceMd5 = md5, message = message });
+            // Build 13 (13-3): 実行が始まったジョブは取り消せないよう、初回エラー記録でも processing へ進める
+            if (j.status == "approved") j.status = "processing";
             added = true;
             return true;
         });
@@ -5039,6 +5052,8 @@ class FurimaServerNative
             }
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
             {
+                // Build 13 (13-3): エラーを記録しないと complete が永久に失敗するため、404 でも写真単位エラーとして残す
+                RecordClaudeJobPhotoError(job.jobId, md5, "写真ファイルが見つかりません");
                 res.StatusCode = 404;
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "写真ファイルが見つかりません" } });
                 return;
@@ -5269,27 +5284,6 @@ class FurimaServerNative
                 return;
             }
 
-            // 冪等性 (レビュー指摘10-2): 同一 sourceMd5 の結果が既にあれば既存レコードを成功として返す
-            if (job.results != null)
-            {
-                var existing = job.results.Find(r => string.Equals(r.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase));
-                if (existing != null)
-                {
-                    SendJson(res, new Dictionary<string, object>
-                    {
-                        { "status", "ok" },
-                        { "result", new Dictionary<string, object>
-                            {
-                                { "sourceMd5", existing.sourceMd5 },
-                                { "resultFileName", existing.resultFileName },
-                                { "resultMd5", existing.resultMd5 }
-                            } },
-                        { "claudeRevision", GetClaudeRevision() }
-                    });
-                    return;
-                }
-            }
-
             const long maxResultBytes = 25L * 1024L * 1024L;
             if (req.ContentLength64 > maxResultBytes)
             {
@@ -5330,107 +5324,290 @@ class FurimaServerNative
             {
                 resultMd5 = BitConverter.ToString(md5.ComputeHash(bytes)).Replace("-", "").ToLower();
             }
+            string requestedFileName = req.Headers["X-File-Name"];
 
-            // 商品を itemUuid 優先で再解決し、現在のフォルダを得る
-            int currentItemId = 0;
-            lock (lockObj)
+            // Build 13 (13-2): 冪等確認 → ファイル書き込み → 商品登録 → ジョブへの記録を
+            // claudeResultWriteLock で直列化し、同一 sourceMd5 の並行リトライによる二重書き込みを防ぐ。
+            // ガードA: ロック取得直後にジョブを再取得し、最新状態で判定する (ロック外の古い参照で判定しない)。
+            // ガードC: 既にエラー記録済みの sourceMd5 へは結果を登録しない (results と errors の相互排他)。
+            lock (claudeResultWriteLock)
             {
-                Dictionary<string, object> item = null;
-                if (!string.IsNullOrEmpty(job.itemUuid))
+                var fresh = ClaudeJobStore.GetJob(jobId);
+                if (fresh == null)
                 {
-                    item = itemsDb.Find(i => i != null && i.ContainsKey("syncUuid") && i["syncUuid"] != null &&
-                        string.Equals(i["syncUuid"].ToString(), job.itemUuid, StringComparison.OrdinalIgnoreCase));
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                    return;
                 }
-                if (item == null && job.itemId > 0)
+                if (fresh.status != "approved" && fresh.status != "processing")
                 {
-                    item = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"], 0) == job.itemId);
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが実行可能な状態ではありません (status: " + fresh.status + ")" } });
+                    return;
                 }
-                if (item != null) currentItemId = ParseIntSafe(item["id"], 0);
-            }
-            if (currentItemId <= 0)
-            {
-                res.StatusCode = 404;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "商品が見つかりません" } });
-                return;
-            }
-            string folderPath = FindExistingItemFolder(currentItemId);
-            if (string.IsNullOrEmpty(folderPath) && !string.IsNullOrEmpty(job.folderName))
-            {
-                folderPath = Path.Combine(syncDir, job.folderName);
-            }
-            if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
-            {
-                res.StatusCode = 404;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "商品フォルダが見つかりません" } });
-                return;
-            }
+                ClaudeJobPhoto freshSrcPhoto = null;
+                if (fresh.photos != null)
+                {
+                    freshSrcPhoto = fresh.photos.Find(ph => string.Equals(ph.md5, sourceMd5, StringComparison.OrdinalIgnoreCase));
+                }
+                if (freshSrcPhoto == null)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "元写真がジョブに含まれていません" } });
+                    return;
+                }
 
-            // 保存名 (Q4): ベース名の優先順位 + _ai + バイト判定の拡張子。同名は _ai2, _ai3... と連番
-            string baseName = SanitizeClaudeResultBaseName(srcPhoto.fileName);
-            if (string.IsNullOrEmpty(baseName)) baseName = SanitizeClaudeResultBaseName(req.Headers["X-File-Name"]);
-            if (string.IsNullOrEmpty(baseName))
-            {
-                string srcPath = null;
+                // 冪等性: 同一 sourceMd5 の結果が既にあれば既存レコードを成功として返す
+                if (fresh.results != null)
+                {
+                    var existing = fresh.results.Find(r => string.Equals(r.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase));
+                    if (existing != null)
+                    {
+                        SendJson(res, new Dictionary<string, object>
+                        {
+                            { "status", "ok" },
+                            { "result", new Dictionary<string, object>
+                                {
+                                    { "sourceMd5", existing.sourceMd5 },
+                                    { "resultFileName", existing.resultFileName },
+                                    { "resultMd5", existing.resultMd5 }
+                                } },
+                            { "claudeRevision", GetClaudeRevision() }
+                        });
+                        return;
+                    }
+                }
+                if (fresh.errors != null && fresh.errors.Exists(e => string.Equals(e.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase)))
+                {
+                    res.StatusCode = 409;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "この写真は既にエラーとして記録されています" } });
+                    return;
+                }
+
+                // 商品を itemUuid 優先で再解決し、現在のフォルダを得る
+                int currentItemId = 0;
                 lock (lockObj)
                 {
-                    if (hashToFilePathMap.ContainsKey(sourceMd5)) srcPath = hashToFilePathMap[sourceMd5];
-                }
-                if (!string.IsNullOrEmpty(srcPath)) baseName = SanitizeClaudeResultBaseName(Path.GetFileName(srcPath));
-            }
-            if (string.IsNullOrEmpty(baseName))
-            {
-                baseName = "photo_" + (sourceMd5.Length >= 8 ? sourceMd5.Substring(0, 8) : sourceMd5);
-            }
-            string resultFileName = baseName + "_ai" + ext;
-            int seq = 2;
-            while (File.Exists(Path.Combine(folderPath, resultFileName)) ||
-                   IsIgnoredAutoImportPath(Path.Combine(folderPath, resultFileName)))
-            {
-                resultFileName = baseName + "_ai" + seq + ext;
-                seq++;
-            }
-            string resultPath = Path.Combine(folderPath, resultFileName);
-
-            File.WriteAllBytes(resultPath, bytes);
-
-            // フォルダ取込スキャン (フェーズ 4-4) と同一の登録処理で即時登録する。
-            // photoStatCache / hashToFilePathMap / item["photos"] がロック下で即時更新され、
-            // FileSystemWatcher 側の再取込・二重登録を抑制する。
-            var fi = new FileInfo(resultPath);
-            var entries = new List<PendingAutoImportPhoto>();
-            entries.Add(new PendingAutoImportPhoto
-            {
-                filePath = resultPath,
-                itemId = currentItemId,
-                md5 = resultMd5,
-                length = fi.Length,
-                lastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks
-            });
-            CommitAutoImportedPhotosBatch(entries);
-
-            ClaudeJobStore.MutateJob(job.jobId, j =>
-            {
-                if (j.results == null) j.results = new List<ClaudeJobResult>();
-                j.results.Add(new ClaudeJobResult { sourceMd5 = sourceMd5, resultFileName = resultFileName, resultMd5 = resultMd5 });
-                return true;
-            });
-            BumpClaudeRevision();
-
-            SendJson(res, new Dictionary<string, object>
-            {
-                { "status", "ok" },
-                { "result", new Dictionary<string, object>
+                    Dictionary<string, object> item = null;
+                    if (!string.IsNullOrEmpty(fresh.itemUuid))
                     {
-                        { "sourceMd5", sourceMd5 },
-                        { "resultFileName", resultFileName },
-                        { "resultMd5", resultMd5 }
-                    } },
-                { "claudeRevision", GetClaudeRevision() }
-            });
+                        item = itemsDb.Find(i => i != null && i.ContainsKey("syncUuid") && i["syncUuid"] != null &&
+                            string.Equals(i["syncUuid"].ToString(), fresh.itemUuid, StringComparison.OrdinalIgnoreCase));
+                    }
+                    if (item == null && fresh.itemId > 0)
+                    {
+                        item = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"], 0) == fresh.itemId);
+                    }
+                    if (item != null) currentItemId = ParseIntSafe(item["id"], 0);
+                }
+                if (currentItemId <= 0)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "商品が見つかりません" } });
+                    return;
+                }
+                string folderPath = FindExistingItemFolder(currentItemId);
+                if (string.IsNullOrEmpty(folderPath) && !string.IsNullOrEmpty(fresh.folderName))
+                {
+                    folderPath = Path.Combine(syncDir, fresh.folderName);
+                }
+                if (string.IsNullOrEmpty(folderPath) || !Directory.Exists(folderPath))
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "商品フォルダが見つかりません" } });
+                    return;
+                }
+
+                // 保存名 (Q4): ベース名の優先順位 + _ai + バイト判定の拡張子。同名は _ai2, _ai3... と連番
+                string baseName = SanitizeClaudeResultBaseName(freshSrcPhoto.fileName);
+                if (string.IsNullOrEmpty(baseName)) baseName = SanitizeClaudeResultBaseName(requestedFileName);
+                if (string.IsNullOrEmpty(baseName))
+                {
+                    string srcPath = null;
+                    lock (lockObj)
+                    {
+                        if (hashToFilePathMap.ContainsKey(sourceMd5)) srcPath = hashToFilePathMap[sourceMd5];
+                    }
+                    if (!string.IsNullOrEmpty(srcPath)) baseName = SanitizeClaudeResultBaseName(Path.GetFileName(srcPath));
+                }
+                if (string.IsNullOrEmpty(baseName))
+                {
+                    baseName = "photo_" + (sourceMd5.Length >= 8 ? sourceMd5.Substring(0, 8) : sourceMd5);
+                }
+                string resultFileName = baseName + "_ai" + ext;
+                int seq = 2;
+                while (File.Exists(Path.Combine(folderPath, resultFileName)) ||
+                       IsIgnoredAutoImportPath(Path.Combine(folderPath, resultFileName)))
+                {
+                    resultFileName = baseName + "_ai" + seq + ext;
+                    seq++;
+                }
+                string resultPath = Path.Combine(folderPath, resultFileName);
+
+                File.WriteAllBytes(resultPath, bytes);
+
+                // フォルダ取込スキャン (フェーズ 4-4) と同一の登録処理で即時登録する。
+                // photoStatCache / hashToFilePathMap / item["photos"] がロック下で即時更新され、
+                // FileSystemWatcher 側の再取込・二重登録を抑制する。
+                var fi = new FileInfo(resultPath);
+                var entries = new List<PendingAutoImportPhoto>();
+                entries.Add(new PendingAutoImportPhoto
+                {
+                    filePath = resultPath,
+                    itemId = currentItemId,
+                    md5 = resultMd5,
+                    length = fi.Length,
+                    lastWriteUtcTicks = fi.LastWriteTimeUtc.Ticks
+                });
+                CommitAutoImportedPhotosBatch(entries);
+
+                ClaudeJobStore.MutateJob(jobId, j =>
+                {
+                    if (j.results == null) j.results = new List<ClaudeJobResult>();
+                    j.results.Add(new ClaudeJobResult { sourceMd5 = sourceMd5, resultFileName = resultFileName, resultMd5 = resultMd5 });
+                    return true;
+                });
+                BumpClaudeRevision();
+
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "status", "ok" },
+                    { "result", new Dictionary<string, object>
+                        {
+                            { "sourceMd5", sourceMd5 },
+                            { "resultFileName", resultFileName },
+                            { "resultMd5", resultMd5 }
+                        } },
+                    { "claudeRevision", GetClaudeRevision() }
+                });
+            }
         }
         catch (Exception ex)
         {
             Console.WriteLine("HandlePostClaudeJobResult エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    // Build 13 (13-3): Claude 側から写真単位のエラーを報告する。
+    // 生成結果の却下など、写真取得を伴わない失敗でも全写真が「結果またはエラー」へ到達できるようにし、
+    // complete の前提条件が常に満たし得ることを保証する。results と同じ直列化ロックで保護する。
+    private static void HandlePostClaudeJobError(HttpListenerRequest req, HttpListenerResponse res, string jobId)
+    {
+        try
+        {
+            var job = ClaudeJobStore.GetJob(jobId);
+            if (job == null)
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                return;
+            }
+            ApplyTokenExpiry(job);
+            job = ClaudeJobStore.GetJob(jobId);
+            if (!ValidateClaudeJobToken(req, res, job)) return;
+
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            string sourceMd5 = "";
+            string message = "";
+            if (!string.IsNullOrEmpty(jsonStr))
+            {
+                try
+                {
+                    JObject json = JObject.Parse(jsonStr);
+                    if (json["sourceMd5"] != null) sourceMd5 = json["sourceMd5"].ToString().Trim();
+                    if (json["message"] != null) message = json["message"].ToString();
+                }
+                catch { }
+            }
+            if (string.IsNullOrEmpty(sourceMd5))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "sourceMd5 が必要です" } });
+                return;
+            }
+            if (string.IsNullOrEmpty(message)) message = "Claude側でエラーが報告されました";
+            if (message.Length > 500) message = message.Substring(0, 500);
+
+            lock (claudeResultWriteLock)
+            {
+                var fresh = ClaudeJobStore.GetJob(jobId);
+                if (fresh == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                    return;
+                }
+                if (fresh.status != "approved" && fresh.status != "processing")
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが実行可能な状態ではありません (status: " + fresh.status + ")" } });
+                    return;
+                }
+                bool inPhotos = fresh.photos != null &&
+                    fresh.photos.Exists(ph => string.Equals(ph.md5, sourceMd5, StringComparison.OrdinalIgnoreCase));
+                if (!inPhotos)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "元写真がジョブに含まれていません" } });
+                    return;
+                }
+                // ガードC: 結果が登録済みの写真はエラーにできない (results と errors の相互排他)
+                if (fresh.results != null && fresh.results.Exists(r => string.Equals(r.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase)))
+                {
+                    res.StatusCode = 409;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "この写真には既に結果が登録されています" } });
+                    return;
+                }
+                // 冪等性: 同一 sourceMd5 のエラーが既にあれば既存レコードを成功として返す
+                if (fresh.errors != null)
+                {
+                    var existingError = fresh.errors.Find(e => string.Equals(e.sourceMd5, sourceMd5, StringComparison.OrdinalIgnoreCase));
+                    if (existingError != null)
+                    {
+                        SendJson(res, new Dictionary<string, object>
+                        {
+                            { "status", "ok" },
+                            { "error", new Dictionary<string, object>
+                                {
+                                    { "sourceMd5", existingError.sourceMd5 },
+                                    { "message", existingError.message }
+                                } },
+                            { "claudeRevision", GetClaudeRevision() }
+                        });
+                        return;
+                    }
+                }
+
+                ClaudeJobStore.MutateJob(jobId, j =>
+                {
+                    if (j.errors == null) j.errors = new List<ClaudeJobError>();
+                    j.errors.Add(new ClaudeJobError { sourceMd5 = sourceMd5, message = message });
+                    if (j.status == "approved") j.status = "processing";
+                    return true;
+                });
+                BumpClaudeRevision();
+
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "status", "ok" },
+                    { "error", new Dictionary<string, object>
+                        {
+                            { "sourceMd5", sourceMd5 },
+                            { "message", message }
+                        } },
+                    { "claudeRevision", GetClaudeRevision() }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandlePostClaudeJobError エラー: " + ex.Message);
             res.StatusCode = 500;
             SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
         }
@@ -5595,8 +5772,14 @@ class FurimaServerNative
             {
                 return "image/bmp";
             }
+            if (bytes.Length >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
+            {
+                return "image/jpeg";
+            }
         }
-        return "image/jpeg";
+        // Build 13 (13-1): どの画像形式にも一致しない場合は空文字を返す。
+        // 旧実装は無条件に image/jpeg を返していたため、呼び出し側の画像検証が無効化されていた。
+        return "";
     }
 
     private static string DetectImageExtension(byte[] bytes)
@@ -5735,7 +5918,8 @@ class FurimaServerNative
             if (hashToFilePathMap.TryGetValue(hash, out filePath) && File.Exists(filePath))
             {
                 byte[] bytes = File.ReadAllBytes(filePath);
-                res.ContentType = DetectImageMimeType(bytes);
+                string photoContentType = DetectImageMimeType(bytes);
+                res.ContentType = string.IsNullOrEmpty(photoContentType) ? "application/octet-stream" : photoContentType;
                 res.ContentLength64 = bytes.Length;
                 res.OutputStream.Write(bytes, 0, bytes.Length);
                 res.OutputStream.Close();

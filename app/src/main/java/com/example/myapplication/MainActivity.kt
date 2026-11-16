@@ -2,6 +2,7 @@ package com.example.myapplication
 
 import android.app.Activity
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -24,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -95,14 +97,28 @@ fun FleaMarketApp() {
     val navController = rememberNavController()
     val viewModel: FleaMarketViewModel = viewModel()
 
+    // Build 13 (13-4): 承認・確認の送信失敗を一度だけ Toast で知らせる
+    val claudeActionInProgress by viewModel.claudeActionInProgress.collectAsState()
+    val claudeActionMessage by viewModel.claudeActionMessage.collectAsState()
+    val appContext = LocalContext.current
+    LaunchedEffect(claudeActionMessage) {
+        val msg = claudeActionMessage
+        if (!msg.isNullOrBlank()) {
+            Toast.makeText(appContext, msg, Toast.LENGTH_LONG).show()
+            viewModel.clearClaudeActionMessage()
+        }
+    }
+
     // フェーズ 5-4: 「Museに送る」承認ダイアログ (NavHost の外側のアプリレベルオーバーレイ, Q3)。
     // どのタブ・詳細・編集画面にいても承認できる。承認はアプリがフォアグラウンドの間に届く。
     val pendingClaudeApproval by viewModel.pendingClaudeApproval.collectAsState()
     pendingClaudeApproval?.let { job ->
         ClaudeApprovalDialog(
             job = job,
+            isProcessing = claudeActionInProgress,
             onApprove = { viewModel.respondToClaudeApproval(job.jobId, true) },
-            onDeny = { viewModel.respondToClaudeApproval(job.jobId, false) }
+            onDeny = { viewModel.respondToClaudeApproval(job.jobId, false) },
+            onCloseForNow = { viewModel.dismissClaudeApprovalForNow() }
         )
     }
 
@@ -113,7 +129,9 @@ fun FleaMarketApp() {
             ClaudeCompletionDialog(
                 job = job,
                 remainingCount = unackedClaudeCompletions.size,
-                onAcknowledge = { viewModel.acknowledgeClaudeCompletion(job.jobId) }
+                isProcessing = claudeActionInProgress,
+                onAcknowledge = { viewModel.acknowledgeClaudeCompletion(job.jobId) },
+                onCloseForNow = { viewModel.dismissClaudeCompletionForNow(job.jobId) }
             )
         }
     }

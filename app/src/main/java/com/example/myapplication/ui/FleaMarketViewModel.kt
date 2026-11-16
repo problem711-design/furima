@@ -859,6 +859,29 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private val _unackedClaudeCompletions = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
     val unackedClaudeCompletions: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _unackedClaudeCompletions.asStateFlow()
 
+    // Build 13 (13-4): 承認・確認送信の処理中フラグ (重複タップ遮断) と、
+    // 失敗時に MainActivity が一度だけ Toast 表示するワンショットメッセージ。
+    private val _claudeActionInProgress = MutableStateFlow(false)
+    val claudeActionInProgress: StateFlow<Boolean> = _claudeActionInProgress.asStateFlow()
+
+    private val _claudeActionMessage = MutableStateFlow<String?>(null)
+    val claudeActionMessage: StateFlow<String?> = _claudeActionMessage.asStateFlow()
+
+    fun clearClaudeActionMessage() {
+        _claudeActionMessage.value = null
+    }
+
+    // Build 13 (13-4): 「いったん閉じる」。サーバー側の状態は変えず、この端末の表示だけを閉じる。
+    // 承認待ちは次回の状態再取得 (リビジョン変化時・アプリ再起動時) で再表示され、
+    // サーバー側では10分で queued へ自動復帰する。完了の未確認は PC 側からも確認できる。
+    fun dismissClaudeApprovalForNow() {
+        _pendingClaudeApproval.value = null
+    }
+
+    fun dismissClaudeCompletionForNow(jobId: String) {
+        _unackedClaudeCompletions.value = _unackedClaudeCompletions.value.filter { it.jobId != jobId }
+    }
+
     init {
         startHeartbeatLoop()
     }
@@ -898,38 +921,71 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         return true
     }
 
-    // フェーズ 5-4: 承認ダイアログからの応答。成功したら対象をクリアし、最新状態へ整合させる。
+    // フェーズ 5-4 / Build 13 (13-4): 承認ダイアログからの応答。
+    // 成功したら対象をクリアし、最新状態へ整合させる。失敗時も状態を再取得し、
+    // サーバー側で既に遷移済み (二度押し等) ならエラー表示せず正常終了として閉じる。
+    // 対象がまだ承認待ちのままなら、理由をワンショットメッセージで知らせる。
     fun respondToClaudeApproval(jobId: String, approved: Boolean) {
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return
+        if (_claudeActionInProgress.value) return
+        _claudeActionInProgress.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = pcServerClient.postClaudeApproval(jobId, approved, url, token)
-            if (ok) {
-                if (_pendingClaudeApproval.value?.jobId == jobId) {
-                    _pendingClaudeApproval.value = null
+            try {
+                val ok = pcServerClient.postClaudeApproval(jobId, approved, url, token)
+                if (ok) {
+                    if (_pendingClaudeApproval.value?.jobId == jobId) {
+                        _pendingClaudeApproval.value = null
+                    }
+                    try {
+                        refreshClaudeJobStates(url, token)
+                    } catch (_: Exception) {
+                    }
+                } else {
+                    try {
+                        refreshClaudeJobStates(url, token)
+                    } catch (_: Exception) {
+                    }
+                    if (_pendingClaudeApproval.value?.jobId == jobId) {
+                        _claudeActionMessage.value = "PCサーバーへ応答を送信できませんでした。接続を確認してもう一度お試しください。"
+                    }
                 }
-                try {
-                    refreshClaudeJobStates(url, token)
-                } catch (_: Exception) {
-                }
+            } finally {
+                _claudeActionInProgress.value = false
             }
         }
     }
 
-    // フェーズ 5-5: 完了ダイアログからの確認 (ack)。成功したら未確認リストから外し、最新状態へ整合させる。
+    // フェーズ 5-5 / Build 13 (13-4): 完了ダイアログからの確認 (ack)。
+    // 成功したら未確認リストから外し、最新状態へ整合させる。失敗時も状態を再取得し、
+    // サーバー側で確認済みになっていればエラー表示せず閉じる。
     fun acknowledgeClaudeCompletion(jobId: String) {
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return
+        if (_claudeActionInProgress.value) return
+        _claudeActionInProgress.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = pcServerClient.postClaudeJobAck(jobId, url, token)
-            if (ok) {
-                _unackedClaudeCompletions.value = _unackedClaudeCompletions.value.filter { it.jobId != jobId }
-                try {
-                    refreshClaudeJobStates(url, token)
-                } catch (_: Exception) {
+            try {
+                val ok = pcServerClient.postClaudeJobAck(jobId, url, token)
+                if (ok) {
+                    _unackedClaudeCompletions.value = _unackedClaudeCompletions.value.filter { it.jobId != jobId }
+                    try {
+                        refreshClaudeJobStates(url, token)
+                    } catch (_: Exception) {
+                    }
+                } else {
+                    try {
+                        refreshClaudeJobStates(url, token)
+                    } catch (_: Exception) {
+                    }
+                    if (_unackedClaudeCompletions.value.any { it.jobId == jobId }) {
+                        _claudeActionMessage.value = "PCサーバーへ確認を送信できませんでした。接続を確認してもう一度お試しください。"
+                    }
                 }
+            } finally {
+                _claudeActionInProgress.value = false
             }
         }
     }

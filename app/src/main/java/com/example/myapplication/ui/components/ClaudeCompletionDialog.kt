@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -23,10 +24,12 @@ import com.example.myapplication.data.server.ClaudeJobDto
 fun ClaudeCompletionDialog(
     job: ClaudeJobDto,
     remainingCount: Int,
-    onAcknowledge: () -> Unit
+    isProcessing: Boolean = false,
+    onAcknowledge: () -> Unit,
+    onCloseForNow: () -> Unit = {}
 ) {
     AlertDialog(
-        onDismissRequest = { /* 確認ボタンでのみ閉じる (未確認のまま流れないように) */ },
+        onDismissRequest = { /* 外側タップでは閉じない。「確認」か「いったん閉じる」の明示操作でのみ閉じる */ },
         title = { Text("画像加工が完了しました") },
         text = {
             Column {
@@ -49,8 +52,13 @@ fun ClaudeCompletionDialog(
             }
         },
         confirmButton = {
-            Button(onClick = onAcknowledge) {
-                Text("確認")
+            Button(onClick = onAcknowledge, enabled = !isProcessing) {
+                Text(if (isProcessing) "送信中…" else "確認")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onCloseForNow, enabled = !isProcessing) {
+                Text("いったん閉じる")
             }
         }
     )

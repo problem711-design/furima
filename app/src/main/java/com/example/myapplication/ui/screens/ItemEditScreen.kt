@@ -127,6 +127,7 @@ fun ItemEditScreen(
     val context = LocalContext.current
     val defaultSettings by viewModel.defaultSettings.collectAsState()
     val isPcServerConnected by viewModel.isPcServerConnected.collectAsState()
+    val lastSyncSuccessAt by viewModel.lastSyncSuccessAt.collectAsState()
 
     var titleFieldValue by remember { mutableStateOf(TextFieldValue("")) }
     var descriptionFieldValue by remember { mutableStateOf(TextFieldValue("")) }
@@ -249,6 +250,24 @@ fun ItemEditScreen(
         initialExpenseCostText = expenseCostText
         initialExistingFilePaths = existingFilePaths.toList()
         isInitialized = true
+    }
+
+    // Build 13 (13-5): 同期が完了したら写真エンティティだけを再読込し、
+    // 「Museに送る」対象判定 (md5Hash / isPcSynced) を画面を開き直さずに最新化する。
+    // 編集フィールドや existingFilePaths / newImageUris には触れない。
+    LaunchedEffect(lastSyncSuccessAt) {
+        if (itemId != 0 && lastSyncSuccessAt != null && isInitialized) {
+            val itemWithPhotos = viewModel.getItemById(itemId)
+            if (itemWithPhotos != null) {
+                itemWithPhotos.photos.forEach { photo ->
+                    val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
+                    val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
+                    if (targetPath.isNotBlank()) {
+                        loadedPhotosByPath[targetPath] = photo
+                    }
+                }
+            }
+        }
     }
 
     val hasUnsavedChanges = isInitialized && (
