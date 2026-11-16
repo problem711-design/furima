@@ -1344,6 +1344,13 @@ class FurimaServerNative
         if (isLoopback) return true;
 
         string path = req.Url.AbsolutePath;
+        // フェーズ 6-3: 変化カウンタの公開窓口のみ認証を免除する (GET + 完全一致パスのみ)。
+        // 見張りスクリプトはこの数字だけを見て、認証情報を持たない。
+        if (req.HttpMethod == "GET" && path == "/api/claude/revision")
+        {
+            return true;
+        }
+
         // ループバック以外からの /api/ リクエストには Bearer トークンが必要
         if (path.StartsWith("/api/"))
         {
@@ -1390,7 +1397,7 @@ class FurimaServerNative
 
         string rawPath = req.Url.AbsolutePath;
 
-        if (rawPath != "/api/server/heartbeat")
+        if (rawPath != "/api/server/heartbeat" && rawPath != "/api/claude/revision")
         {
             Console.WriteLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] 受信リクエスト: " + req.HttpMethod + " " + rawPath);
         }
@@ -1463,6 +1470,15 @@ class FurimaServerNative
             else if (rawPath == "/api/items" && req.HttpMethod == "POST")
             {
                 HandleCreateItem(req, res);
+            }
+            else if (rawPath == "/api/claude/revision" && req.HttpMethod == "GET")
+            {
+                // フェーズ 6-3: Muse 側の見張り用に変化カウンタだけを公開する。
+                // lastHeartbeat は更新しない (ポーリングでスマホ接続表示が点灯し続けないように)。
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "claudeRevision", GetClaudeRevision() }
+                });
             }
             else if (rawPath == "/api/server/status")
             {
