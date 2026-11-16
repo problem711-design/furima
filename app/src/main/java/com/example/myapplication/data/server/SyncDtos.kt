@@ -181,11 +181,6 @@ data class ClaudeLabelSeenResponseDto(
 )
 
 @JsonClass(generateAdapter = true)
-data class ClaudeLabelSeenRequestDto(
-    @param:Json(name = "itemUuid") val itemUuid: String
-)
-
-@JsonClass(generateAdapter = true)
 data class ClaudeApprovalRequestDto(
     @param:Json(name = "approved") val approved: Boolean
 )

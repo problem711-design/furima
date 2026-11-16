@@ -121,6 +121,12 @@ fun FleaMarketApp() {
     val claudeApprovalPeekRequested by viewModel.claudeApprovalPeekRequested.collectAsState()
     val currentBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = currentBackStackEntry?.destination?.route ?: ""
+    // フェーズ 6-5 是正 (37-3): 詳細・編集以外の画面へ移ったら加工ラベルの閲覧セッションを終了する
+    LaunchedEffect(currentRoute) {
+        if (!currentRoute.startsWith("item_detail") && !currentRoute.startsWith("item_edit")) {
+            viewModel.endLabelVisit()
+        }
+    }
     val inItemEditScreen = currentRoute.startsWith("item_edit")
     val visibleClaudeApprovals = pendingClaudeApprovals.filter { !dismissedClaudeApprovalIds.contains(it.jobId) }
     val anyPcOriginPending = visibleClaudeApprovals.any { it.origin == "pc" }

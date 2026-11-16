@@ -150,11 +150,6 @@ fun ItemListScreen(
     var displayLimit by remember { mutableIntStateOf(20) }
 
     // 検索語やフィルターが変わったら表示件数をリセット
-    // フェーズ 6-5 是正 (34-2): 一覧へ戻ったら加工ラベルの閲覧セッションを終了する
-    LaunchedEffect(Unit) {
-        viewModel.endLabelVisit()
-    }
-
     LaunchedEffect(searchQuery, statusFilter, sortOption) {
         displayLimit = 20
     }

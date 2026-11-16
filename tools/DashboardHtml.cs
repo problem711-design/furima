@@ -2393,6 +2393,7 @@ public static class DashboardHtml
         // フェーズ 6-5 (是正 Build 8): 加工ラベル (導出は §27.1.1、既読は §27.1.2、実装条件は §27.4)
         let labelSeenAtByItemUuid = {};
         let lastKnownLabelSeenRevision = 0;
+        let claudeSeenSeq = 0;
         let viewerSessionSeenMap = null;
         let viewerUuidSet = [];
         const CLAUDE_LABEL_DONE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -2489,7 +2490,12 @@ public static class DashboardHtml
         async function markClaudeLabelSeen(item) {
             const uuids = collectBundleUuidSet(item);
             if (!uuids.length) return;
+            claudeSeenSeq++;
+            // 応答が得られない場合のフォールバックは、対象商品の最大完了時刻以上へ丸める (§33.5 / 37-2)
             let serverSeenAt = Date.now();
+            claudeJobsCache.forEach(j => {
+                if (uuids.indexOf(String(j.itemUuid || '').toLowerCase()) >= 0 && j.completedAt > serverSeenAt) serverSeenAt = j.completedAt;
+            });
             try {
                 const res = await fetch('/api/claude/labels/seen', { method: 'POST', headers: getHeaders(), body: JSON.stringify({ itemUuids: uuids }) });
                 if (res.ok) {
@@ -2521,17 +2527,19 @@ public static class DashboardHtml
         }
 
         async function fetchClaudeJobs() {
+            const seqAtStart = claudeSeenSeq;
             try {
                 const res = await fetch('/api/claude/jobs', { headers: getHeaders() });
                 if (!res.ok) return;
                 const data = await res.json();
                 claudeJobsCache = Array.isArray(data.jobs) ? data.jobs : [];
                 if (typeof data.claudeRevision === 'number') lastKnownClaudeRevision = data.claudeRevision;
-                // 既読マップは古い応答で先祖返りさせない (34-4-1)
-                if (data.labelSeenAtByItemUuid && (typeof data.labelSeenRevision !== 'number' || data.labelSeenRevision >= lastKnownLabelSeenRevision)) {
+                // 取得中に自端末の既読化が走っていない場合のみ、サーバーの既読状態を基準として採用する。
+                // サーバー側カウンタが下がった場合でも取り逃がさない (37-1 と同種の対策 / 34-4-1)
+                if (data.labelSeenAtByItemUuid && claudeSeenSeq === seqAtStart) {
                     labelSeenAtByItemUuid = data.labelSeenAtByItemUuid;
+                    if (typeof data.labelSeenRevision === 'number') lastKnownLabelSeenRevision = data.labelSeenRevision;
                 }
-                if (typeof data.labelSeenRevision === 'number') lastKnownLabelSeenRevision = Math.max(lastKnownLabelSeenRevision, data.labelSeenRevision);
                 renderItems();
                 if (currentViewerItemId) renderViewerPhotos();
             } catch (e) {}

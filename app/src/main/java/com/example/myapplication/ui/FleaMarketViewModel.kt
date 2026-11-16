@@ -861,6 +861,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     // フェーズ 6-5 是正 (32-3): 既読専用カウンタの既知値 (claudeRevision とは別管理)
     @Volatile private var lastKnownLabelSeenRevision: Long = 0L
 
+    // フェーズ 6-5 是正 (37-1): 自端末の既読化の世代カウンタ (取得中の競合判定に使う)
+    @Volatile private var markSeenSeq: Long = 0L
+
     // フェーズ 5-4: 承認待ちジョブと未確認の完了ジョブ (ハートビート第3分岐で更新)
     // フェーズ 6-2: 承認待ちは単体から一覧 (createdAt 昇順) へ拡張した。
     private val _pendingClaudeApprovals = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
@@ -972,14 +975,15 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         return claudeRefreshMutex.withLock {
             // 監視経由の取得は、ユーザーの応答処理中は反映しない (20-3 のガードをロック内で担保)
             if (fromWatch && _claudeActionInProgress.value) return@withLock false
+            val seqAtStart = markSeenSeq
             val fetched = pcServerClient.fetchClaudeJobs(url, token) ?: return@withLock false
             val jobs = fetched.jobs
             _claudeJobsForLabels.value = jobs
-            // 既読マップは古い応答で先祖返りさせない (34-4-1)。既知カウンタは取得成功時にだけ進める
-            if (fetched.labelSeenRevision == 0L || fetched.labelSeenRevision >= lastKnownLabelSeenRevision) {
+            // 取得中に自端末の既読化が走っていない場合のみ、サーバーの既読状態を基準として採用する。
+            // サーバー側カウンタが下がった場合 (接続先変更・保存ファイル再作成) でも取り逃がさず、
+            // 取得中に既読化が走った場合はその応答確定値が優先されるため辞書の適用を見送る (37-1 / 34-4-1)。
+            if (markSeenSeq == seqAtStart) {
                 _claudeLabelSeenAt.value = fetched.labelSeenAtByItemUuid.mapKeys { it.key.lowercase() }
-            }
-            if (fetched.labelSeenRevision > lastKnownLabelSeenRevision) {
                 lastKnownLabelSeenRevision = fetched.labelSeenRevision
             }
             val pending = jobs
@@ -1081,7 +1085,13 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     fun markClaudeLabelSeen(itemUuid: String) {
         if (itemUuid.isBlank()) return
         val key = itemUuid.lowercase()
-        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to System.currentTimeMillis())
+        markSeenSeq++
+        // 応答が得られない場合のフォールバックは、当該商品の最大完了時刻以上へ丸める (§33.5 / 37-2)
+        val fallbackSeenAt = maxOf(
+            System.currentTimeMillis(),
+            _claudeJobsForLabels.value.filter { it.itemUuid.lowercase() == key }.maxOfOrNull { it.completedAt } ?: 0L
+        )
+        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to fallbackSeenAt)
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return
@@ -1479,6 +1489,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             _claudeApprovalPeekRequested.value = false
             _unackedClaudeCompletions.value = emptyList()
             _dismissedClaudeCompletionIds.value = emptySet()
+            // フェーズ 6-5 是正 (37-1): 加工ラベルの状態も前サーバーのものを引き継がない
+            lastKnownLabelSeenRevision = 0L
+            _claudeJobsForLabels.value = emptyList()
+            _claudeLabelSeenAt.value = emptyMap()
+            _labelVisitSnapshot.value = emptyMap()
         }
     }
 

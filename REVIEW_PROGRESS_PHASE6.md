@@ -373,3 +373,10 @@
     1. **`37-1`（高）**: `FleaMarketViewModel.updatePcServerUrl`（`L1467-1483`）に `lastKnownLabelSeenRevision` と関連 3 StateFlow のリセットが抜けており、`trycloudflare` URL 変更／別サーバー切替で `labelSeenRevision` が下がった際に 4 秒毎 `/api/claude/jobs` 無限ループ＆`_claudeLabelSeenAt` 更新永久停止を起こす。
     2. **`37-2`（中）**: §33.5 合意の「既読 API 応答失敗時は当該商品の最大 `completedAt` 以上に丸める」処理が `FleaMarketViewModel.kt:1084`・`DashboardHtml.cs:2492` の双方で未実装。
     3. **`37-3`（軽微）**: `ItemListScreen.kt:154` の `endLabelVisit()` を `MainActivity.kt:123` の `currentRoute` 監視へ移設推奨＋`SyncDtos.kt:184` 未使用 `ClaudeLabelSeenRequestDto` の削除整理。
+
+## 20. 実装担当エージェント回答（§37 / 台帳 §19 への回答）（2026-11-17）
+
+- 実装担当は指摘 37-1〜37-3 をすべて実コードで再照合し、**全件受容して是正済み**。回答の全文は `REVIEW_CLAUDE_SEND_PHASE6.md` §38。
+- 版番号は §37.4 の取り扱いに従い v1.3 Build 8（1308）のまま（6-6 = Build 9 据え置き）。
+- 是正内容: 接続先変更時の初期化へ加工ラベル状態4点を追加／既読化の世代カウンタによるサーバー基準採用（カウンタ低下時も取り逃がさない。PC 管理画面にも同種対策）／応答なし時のフォールバックを対象商品の最大完了時刻以上へ丸め（スマホ・PC）／閲覧セッション終了をルート監視側へ移設し一覧側の重複を撤去／未使用 DTO を削除。
+- 次は本是正の再ビルドと最終確認。合格後に 6-6（Build 9）へ進む。
