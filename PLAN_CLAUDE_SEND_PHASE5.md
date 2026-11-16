@@ -192,7 +192,7 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ## 4. スマホ承認フロー（Target: `v1.0.0 Build 11`）★同期依存・最慎重
 
 ### 実装タスクチェックリスト
-- [] **5-4-1: 承認API (`tools/FurimaServerNative.cs`、`tools/ClaudeJobStore.cs`)**
+- [x] **5-4-1: 承認API (`tools/FurimaServerNative.cs`、`tools/ClaudeJobStore.cs`)**
 - `POST /api/claude/jobs/{jobId}/request-approval`：`queued` のみ受付。`approval_pending` へ遷移し `approvalRequestedAt` を記録、`BumpClaudeRevision()`。
 - `POST /api/claude/jobs/{jobId}/approval`：ボディ `{approved: bool}`。承認時は `jobToken`（GUID）を発行し `jobTokenExpiresAt = 現在 + 30分` をジョブ記録に保存、`approved` へ遷移。拒否時は `denied`（終端）。いずれも `BumpClaudeRevision()`。
 - `GET /api/claude/jobs/{jobId}` の応答に、`status == approved`（または `processing`）の場合のみ `jobToken` と有効期限を含めるよう変更（5-2-3 の制限をここで解除）。
@@ -206,16 +206,16 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
   - 長辺が2048pxを超える／サイズ上限を超える／**EXIF Orientation で回転・反転指定が付いている**場合は、PC側で正立化＋必要に応じ長辺2048pxへ縮小し、Orientation タグを除外した上でJPEG品質90で再エンコードして返す（フル解像度写真と通常写真の差は、生成側の出力サイズでは実質出ない想定）。
   - **実装上の注意（再確認追記）**：`FurimaServerNative.cs` には現在 `System.Drawing` の `using` のみがあり、EXIF回転補正・リサイズの既存関数はサーバー側には無い（Android側 `PhotoStorageManager.kt` のみに存在）。そのため `System.Drawing.Image` の `PropertyItems`（`0x0112`）解析→ `RotateFlip` ＋高品質リサイズ（`InterpolationMode.HighQualityBicubic`）をサーバー側に新規実装する。
   - **HEIFは対象外**（運用方針として使用しない）。HEIF等の未対応形式が対象に含まれる場合は、その写真だけエラーとしてジョブに記録し、他の写真は継続する。
-- [] **5-4-2: ハートビートへの `claudeRevision` 相乗り（Android）**
+- [x] **5-4-2: ハートビートへの `claudeRevision` 相乗り（Android）**
 - `data/server/SyncDtos.kt` の `HeartbeatInfo` と `data/server/PcServerClient.kt` の `HeartbeatInfo` 構築箇所へ `claudeRevision: Long = 0L` を追加（旧サーバー応答にフィールドが無くても 0 で安全）。
 - `ui/FleaMarketViewModel.kt`：`lastKnownClaudeRevision` を追加し、ハートビートループ内に**独立分岐**を新設：不一致を検知したら `GET /api/claude/jobs` から `approval_pending` と「未確認の完了ジョブ」を取得して `StateFlow`（`pendingClaudeApproval` / `unackedClaudeCompletions`）を更新する。**既存のデータPull／設定Pull分岐と `isDirty` 保護には一切触れない**。この分岐の例外は握りつぶしてログのみ（次回ハートビートで再試行）とし、同期本体を止めない。
 - サーバー側の `claudeRevision` 更新漏れが無いよう、ジョブ状態を変える全APIで `BumpClaudeRevision()` を呼ぶことを 5-4-1 と合わせて実装する。
-- [] **5-4-3: 承認ダイアログ（フリマ管理アプリ内）**
+- [x] **5-4-3: 承認ダイアログ（フリマ管理アプリ内）**
 - 新規 `ui/components/ClaudeApprovalDialog.kt`：商品名、写真枚数、テンプレート名、返却先フォルダ名、リクエスト経過時間を表示し、「実行を承認」「拒否」の2ボタン。**表示場所は `ItemListScreen` ではなく `MainActivity.kt` の `FleaMarketApp()`（`NavHost` の外側の共通オーバーレイ）とする（Q3・レビュー指摘3）**。どのタブ・どの詳細／編集画面にいても承認できるようにするため。完了通知（5-5-4）も同じ配置とする。
 - **フォアグラウンド必須の明記**：アプリがバックグラウンド／画面OFFの間はハートビートが止まり得るため、承認は「フリマ管理アプリを開いている間に届く。閉じていた場合は次に開いた直後のハートビートで表示される」ことを仕様とし、運用（6-1）にも転記する。
 - 承認／拒否は `PcServerClient.postClaudeApproval(jobId, approved)` → `POST /api/claude/jobs/{jobId}/approval`。応答後は `StateFlow` をクリアし、次のハートビートで整合させる。
 - **Muse アプリ側に承認UIは作らない**（確定事項2）。
-- [] **5-4-4: バージョン統一更新 (`Build 11`) ＆ 検証**
+- [x] **5-4-4: バージョン統一更新 (`Build 11`) ＆ 検証**
 - 検証：外部（トンネル経由・Bearer付き）から承認リクエストを送ると、接続中のスマホにだけ承認ダイアログが出ること。スマホ未接続／無応答では画像取得が一切できないこと。拒否で終端すること。期限切れで再承認に戻ること。承認フロー実行中も通常の商品同期（データ／設定Pull）が従来通り動くこと。
 - 既存機能の削除・置き換え：なし。
 

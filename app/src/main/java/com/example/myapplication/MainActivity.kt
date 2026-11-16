@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.example.myapplication.ui.components.ClaudeApprovalDialog
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -92,6 +93,17 @@ class MainActivity : ComponentActivity() {
 fun FleaMarketApp() {
     val navController = rememberNavController()
     val viewModel: FleaMarketViewModel = viewModel()
+
+    // フェーズ 5-4: 「Museに送る」承認ダイアログ (NavHost の外側のアプリレベルオーバーレイ, Q3)。
+    // どのタブ・詳細・編集画面にいても承認できる。承認はアプリがフォアグラウンドの間に届く。
+    val pendingClaudeApproval by viewModel.pendingClaudeApproval.collectAsState()
+    pendingClaudeApproval?.let { job ->
+        ClaudeApprovalDialog(
+            job = job,
+            onApprove = { viewModel.respondToClaudeApproval(job.jobId, true) },
+            onDeny = { viewModel.respondToClaudeApproval(job.jobId, false) }
+        )
+    }
 
     NavHost(
         navController = navController,

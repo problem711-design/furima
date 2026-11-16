@@ -108,6 +108,8 @@ class PcServerClient(
     private val syncSettingsAdapter = moshi.adapter(SyncSettingsDto::class.java)
     private val createClaudeJobRequestAdapter = moshi.adapter(CreateClaudeJobRequestDto::class.java)
     private val claudeJobResponseAdapter = moshi.adapter(ClaudeJobResponseDto::class.java)
+    private val claudeJobListResponseAdapter = moshi.adapter(ClaudeJobListResponseDto::class.java)
+    private val claudeApprovalRequestAdapter = moshi.adapter(ClaudeApprovalRequestDto::class.java)
 
     private fun toSyncSettingsDto(settings: DefaultSettings): SyncSettingsDto {
         return SyncSettingsDto(
@@ -254,6 +256,57 @@ class PcServerClient(
         }
     }
 
+    // Claude ジョブ一覧を取得する (フェーズ 5-4)。失敗時は null を返し、呼び出し側で状態を維持する。
+    suspend fun fetchClaudeJobs(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): List<ClaudeJobDto>? = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs").get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val respStr = response.body?.string()
+                if (respStr.isNullOrBlank()) return@withContext null
+                val parsed = try { claudeJobListResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                if (parsed?.status == "ok") parsed.jobs else null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "fetchClaudeJobs 例外: ${e.message}", e)
+            null
+        }
+    }
+
+    // Claude ジョブの承認/拒否を送信する (フェーズ 5-4)。
+    suspend fun postClaudeApproval(
+        jobId: String,
+        approved: Boolean,
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val body = claudeApprovalRequestAdapter.toJson(ClaudeApprovalRequestDto(approved))
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/approval").post(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string()
+                val parsed = if (!respStr.isNullOrBlank()) {
+                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                } else null
+                parsed?.status == "ok"
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "postClaudeApproval 例外: ${e.message}", e)
+            false
+        }
+    }
+
     suspend fun fetchAndSyncServerSettings(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')
@@ -342,7 +395,8 @@ class PcServerClient(
                         return@withContext HeartbeatInfo(
                             isConnected = true,
                             dataRevision = json.optLong("dataRevision", 0L),
-                            settingsRevision = json.optLong("settingsRevision", 0L)
+                            settingsRevision = json.optLong("settingsRevision", 0L),
+                            claudeRevision = json.optLong("claudeRevision", 0L)
                         )
                     } catch (_: Exception) {
                     }

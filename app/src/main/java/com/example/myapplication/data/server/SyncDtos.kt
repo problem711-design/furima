@@ -101,7 +101,9 @@ data class SyncPhotoResponse(
 data class HeartbeatInfo(
     val isConnected: Boolean,
     val dataRevision: Long = 0L,
-    val settingsRevision: Long = 0L
+    val settingsRevision: Long = 0L,
+    // フェーズ 5-4: 旧サーバー応答にフィールドが無くても 0 で安全
+    val claudeRevision: Long = 0L
 )
 
 @JsonClass(generateAdapter = true)
@@ -124,8 +126,26 @@ data class ClaudeJobDto(
     @param:Json(name = "jobId") val jobId: String = "",
     @param:Json(name = "itemId") val itemId: Int = 0,
     @param:Json(name = "itemTitle") val itemTitle: String = "",
+    @param:Json(name = "folderName") val folderName: String = "",
+    @param:Json(name = "photos") val photos: List<ClaudeJobPhotoDto> = emptyList(),
     @param:Json(name = "templateName") val templateName: String = "",
-    @param:Json(name = "status") val status: String = ""
+    @param:Json(name = "origin") val origin: String = "",
+    @param:Json(name = "status") val status: String = "",
+    @param:Json(name = "createdAt") val createdAt: Long = 0L,
+    @param:Json(name = "approvalRequestedAt") val approvalRequestedAt: Long = 0L,
+    @param:Json(name = "acknowledged") val acknowledged: Boolean = false
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeJobListResponseDto(
+    @param:Json(name = "status") val status: String = "",
+    @param:Json(name = "jobs") val jobs: List<ClaudeJobDto> = emptyList(),
+    @param:Json(name = "claudeRevision") val claudeRevision: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeApprovalRequestDto(
+    @param:Json(name = "approved") val approved: Boolean
 )
 
 @JsonClass(generateAdapter = true)

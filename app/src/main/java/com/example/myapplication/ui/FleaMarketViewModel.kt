@@ -850,6 +850,14 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private val syncMutex = Mutex()
     @Volatile private var lastKnownDataRevision: Long = -1L
     @Volatile private var lastKnownSettingsRevision: Long = -1L
+    @Volatile private var lastKnownClaudeRevision: Long = -1L
+
+    // フェーズ 5-4: 承認待ちジョブと未確認の完了ジョブ (ハートビート第3分岐で更新)
+    private val _pendingClaudeApproval = MutableStateFlow<com.example.myapplication.data.server.ClaudeJobDto?>(null)
+    val pendingClaudeApproval: StateFlow<com.example.myapplication.data.server.ClaudeJobDto?> = _pendingClaudeApproval.asStateFlow()
+
+    private val _unackedClaudeCompletions = MutableStateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>>(emptyList())
+    val unackedClaudeCompletions: StateFlow<List<com.example.myapplication.data.server.ClaudeJobDto>> = _unackedClaudeCompletions.asStateFlow()
 
     init {
         startHeartbeatLoop()
@@ -875,6 +883,37 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         if (hb.isConnected) {
             lastKnownDataRevision = hb.dataRevision
             lastKnownSettingsRevision = hb.settingsRevision
+        }
+    }
+
+    // フェーズ 5-4: Claude ジョブ状態の再取得。成功時のみ true を返し、StateFlow を更新する。
+    private suspend fun refreshClaudeJobStates(url: String, token: String): Boolean {
+        val jobs = pcServerClient.fetchClaudeJobs(url, token) ?: return false
+        _pendingClaudeApproval.value = jobs
+            .filter { it.status == "approval_pending" }
+            .minByOrNull { it.createdAt }
+        _unackedClaudeCompletions.value = jobs.filter {
+            (it.status == "done" || it.status == "done_with_errors") && !it.acknowledged
+        }
+        return true
+    }
+
+    // フェーズ 5-4: 承認ダイアログからの応答。成功したら対象をクリアし、最新状態へ整合させる。
+    fun respondToClaudeApproval(jobId: String, approved: Boolean) {
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = pcServerClient.postClaudeApproval(jobId, approved, url, token)
+            if (ok) {
+                if (_pendingClaudeApproval.value?.jobId == jobId) {
+                    _pendingClaudeApproval.value = null
+                }
+                try {
+                    refreshClaudeJobStates(url, token)
+                } catch (_: Exception) {
+                }
+            }
         }
     }
 
@@ -1002,6 +1041,20 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                                     syncMutex.unlock()
                                 }
                             }
+                        }
+                    }
+                    // 第3分岐 (フェーズ 5-4): Claude ジョブの承認待ち・未確認完了の検知。
+                    // 既存のデータPull/設定Pull分岐と isDirty 保護には一切触れない。
+                    // この分岐の例外は握りつぶしてログのみとし、同期本体を止めない。
+                    if (connected) {
+                        try {
+                            if (hb.claudeRevision > 0L && hb.claudeRevision != lastKnownClaudeRevision) {
+                                if (refreshClaudeJobStates(url, token)) {
+                                    lastKnownClaudeRevision = hb.claudeRevision
+                                }
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("PC_SYNC", "Claudeジョブ状態の取得に失敗: ${e.message}")
                         }
                     }
                 } else {
