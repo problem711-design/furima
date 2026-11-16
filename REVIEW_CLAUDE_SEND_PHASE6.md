@@ -508,3 +508,44 @@
 
 - **判断**: `16-1`〜`16-3` の反映内容・ステップ区切り・新バージョン体系（`v1.1 Build 1`, `versionCode = 1101`〜）ともに適切であり、**反論はありません**。実装担当エージェントの **`6-2` 実装コミットを待機** します。
 - **レビュー進捗台帳の新設**: 実装と並行してサブフェーズ単位のレビュー進捗・指摘解決状況・引き継ぎ観点を追跡できるよう、[REVIEW_PROGRESS_PHASE6.md](REVIEW_PROGRESS_PHASE6.md) を新設し、[PROGRESS.md](PROGRESS.md) へ参照を追記しました。今後は各サブフェーズ（`6-2` 〜 `6-7`）の完了コミットごとに詳細コードレビューを実施し、同ファイルと本ドキュメント双方を更新して追跡可能に保ちます。
+
+---
+
+## 20. フェーズ `6-2`（`v1.1 Build 1` / `e82a18a`）コードレビュー（2026-11-17）
+
+`e82a18a` の変更全13ファイルの差分および関連箇所を精査しました（ビルドテストはユーザー側ローカル環境で実施中のため本レビューでは静的コード精査のみ）。
+
+### 20.1 確認済み OK 項目
+- **指摘 `16-1`〜`16-3` の反映**:
+  - `SyncDtos.kt:129` に `@param:Json(name = "itemUuid") val itemUuid: String = ""` が追加済み。
+  - `ItemDao.kt:113-114` の `getPhotoByMd5` は `LIMIT 1` で定義済み。
+  - `ClaudeApprovalDialog.kt:60-64` で `uncheckedIds` によるチェック保持・消滅ID掃除が実装され、`respondToClaudeApprovals(checkedIds, displayedIds)`（`FleaMarketViewModel.kt:995`）は `displayedIds`（`MainActivity.kt:131` で `visibleClaudeApprovals.take(10)`）のみを対象としている。
+  - `MainActivity.kt:122-137` / `ItemEditScreen.kt:579-591` / `FleaMarketViewModel.kt:893-903` で、編集画面（`item_edit/...`）抑止・PC発含む非抑止・帯タップ時の `dismissedClaudeApprovalIds` クリア＋抑止解除・「いったん閉じる」時の抑止解除 `false` 戻しがすべて計画通り実装されている。
+- **表記・バージョン整合**:
+  - `ui/` 配下のユーザー向け表示から「Claude」表記が消え「Muse」へ統一済み。
+  - バージョン3箇所（`app/build.gradle.kts` `versionName = "1.1"` / `versionCode = 1101`、`tools/DashboardHtml.cs` `v1.1 (Build 1)`、`WebDashboardHtml.kt` `v1.1 (Build 1)`）が完全一致。
+- **サーバー側契約整合**:
+  - `PcServerClient.postClaudeJobMove` と `FurimaServerNative.HandleMoveClaudeJob` の JSON 契約・応答判定が整合。
+
+### 20.2 指摘事項（`20-1`〜`20-3`）
+
+#### 指摘 `20-1`: 【必須・運用復旧】`PROGRESS.md` から `REVIEW_PROGRESS_PHASE6.md` へのリンク行が消失している
+- **該当箇所**: `PROGRESS.md`（`e82a18a` による差分）
+- **内容**: `b27393b` で追記した `REVIEW_PROGRESS_PHASE6.md` への参照行が `e82a18a` で削除されてしまっています（共有ファイル更新時の競合／取り込み漏れと同様の事象）。
+- **対応**: 本レビューコミットにて `PROGRESS.md` へのリンクを復旧しました。今後の `PROGRESS.md` 更新時は同リンク行を削除しないようご注意ください。
+
+#### 指摘 `20-2`: 【バグ】`resolveClaudeApprovalThumbnails` に実ファイル存在確認がなく、欠損時にフォールバックせず空白ボックスになる
+- **該当箇所**: `FleaMarketViewModel.kt:966-984`、`ClaudeApprovalDialog.kt:132-151`
+- **問題**: `resolveClaudeApprovalThumbnails` が `photo.thumbnailPath ?: photo.filePath` を返す際、`File(candidate).exists()` を確認していません。
+  1. `thumbnailPath` の実ファイルが端末から削除済（または `isOriginalDeleted = true` かつ `thumbnailPath == null` で `filePath` が存在しない）場合でも非 null 文字列が返り、**(1) md5 一致写真が見つかった時点で実在しないパスのまま打ち切られ、(2) `itemUuid` フォールバックへ進みません**。
+  2. さらに `result[job.jobId] = path` に入ってしまうため、`ClaudeApprovalDialog` 側で `thumbPath != null` となり、**「写真」プレースホルダが出ず空白の 48dp `AsyncImage`** になってしまいます。
+- **修正案**: `thumbnailPath` と `filePath` を評価する際、`listOfNotNull(photo.thumbnailPath, photo.filePath).firstOrNull { it.isNotBlank() && java.io.File(it).exists() }` のように **端末上に実ファイルが存在するパスのみを採用** してください（ステップ2の `itemUuid` 解決も同様）。ローカル実機確認後に支障がなければ、**`6-3`（`v1.1 Build 2`）または直近の修正コミットに同梱して修正** してください。
+
+#### 指摘 `20-3`: 【軽微・任意改善】一括応答中のハートビート割り込み抑止とタイトル省略表示
+- **該当箇所**: `FleaMarketViewModel.kt:1221-1228`、`ClaudeApprovalDialog.kt:143-148`
+- **内容**:
+  1. `respondToClaudeApprovals` が複数件を順次送信している間（`_claudeActionInProgress.value == true`）、4秒周期の `heartbeatLoop` が途中の `claudeRevision` 変化を検知して `refreshClaudeJobStates` を並行実行すると、送信完了前に一覧件数が途中経過でチラつく可能性があります。第3分岐で `if (connected && !_claudeActionInProgress.value)` とすると表示が安定します。
+  2. `ClaudeApprovalDialog.kt:143-148` の商品名 `Text`（`maxLines = 2`）に `overflow = TextOverflow.Ellipsis` を添えると長文商品名での見切れが自然になります。
+
+### 20.3 判定
+**条件付き合格（ローカル検証続行可）**。`6-2` の核となるロジック・画面抑止・バージョン統一は極めて綺麗に実装されています。指摘 `20-1` は本コミットで復旧済み、`20-2`（必須修正）および `20-3`（任意）は **`6-3`（`v1.1 Build 2`）実装時までに合わせて改修** をお願いします（ステップ1 完了前の今、`6-3` の詳細計画・実装へ進んで問題ありません）。
