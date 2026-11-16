@@ -4,6 +4,8 @@
 現行バージョン：**`v1.0.0 (Build 7)`**（フェーズ 4-1 〜 4-4 全完了済み）
 策定日：**2026-11-16**（計画策定のみ。本書のコミット時点ではコード未変更）
 
+> **事前コードレビュー状態（2026-11-16）**：現行コードベースとの突合レビューを実施済みです。実装着手前に **`REVIEW_CLAUDE_SEND_PHASE5.md`** の指摘事項（`syncUuid` 解決・`ItemEditScreen` 編集バッファ整合・承認ダイアログ配置・5-1 設定同期漏れ箇所・`FileSystemWatcher` 競合・まとめ商品扱い等）の協議・反映を行ってください。
+
 > **進行・引き継ぎルール（必須）**
 > - 本計画は `PROGRESS.md` の開発・引き継ぎ基本原則（小規模逐次実装／最小限のファイル編集／フェーズ完了ごとの `PROGRESS.md` 記録／フェーズごとの Git コミット＆GitHub `main` プッシュ）に従う。
 > - バージョン更新時は `app/build.gradle.kts`・`tools/DashboardHtml.cs`・`app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt` の3箇所を必ず同時に統一更新する。
@@ -249,3 +251,15 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 - **削除する既存機能：なし。置き換える既存機能：なし。**
 - 後方互換のある変更のみ：設定JSONへの `promptTemplates` 追加／ハートビート・ステータス応答への `claudeRevision` 追加／PCギャラリーツールバーへのコントロール追加／スマホ編集画面への選択モード追加（既存のプレビュー単品削除は不変）／`tools/build-exe.bat` のコンパイル対象追加。
 - 対象外と明記するもの：スマホ緊急Web管理画面（`WebDashboardHtml.kt` / `LocalWebServer.kt`）への本機能の移植（バージョン表記のみ更新）。
+
+
+---
+
+## 9. 事前コードレビュー指摘・協議サマリー（詳細は `REVIEW_CLAUDE_SEND_PHASE5.md` を参照）
+
+2026-11-16 時点で現行コード（`1303035`）と照合した結果、着手前に確定・修正すべき主なポイントは以下の通り：
+1. **商品特定キー（5-2-3 / 5-3-3）**：スマホとPCで整数 `id` が一致しないケースがあるため、`POST /api/claude/jobs` に `itemUuid`（`syncUuid`）を追加して優先解決する。
+2. **編集画面の整合性（5-3）**：`ItemEditScreen` の `existingFilePaths` / `hasUnsavedChanges` と即時DB削除（`deletePhotosByIds`）の整合、および未保存変更あり時の「Museに送る」ガードを定義する。
+3. **承認／完了UIの配置（5-4-3 / 5-5-4）**：`ItemListScreen` 限定ではなく `MainActivity.kt`（`FleaMarketApp()`）の全体オーバーレイに配置する。
+4. **5-1 設定同期の実装漏れ対策**：`FurimaServerNative.cs` の `ParseDefaultSettingsConfig()`、`DefaultSettingsManager.kt`（手書きキー `prompt_templates_json`）、`SettingsStorageScreen.kt`（`persistSettingsNow()`）、`DashboardHtml.cs`（`fetchSettings` / `savePcSettingsPayload` / `pcSettings` 初期値）をすべて明記する。
+5. **5-5 結果返却と既存機構の整合**：`FileSystemWatcher` との競合回避、保存拡張子の統一（`DetectImageExtension` 優先）、`X-File-Name` サニタイズ、まとめ商品（`Bundle`）写真の返却先ルール、および PC ギャラリー選択のライブ更新時ずれ防止を確定する。
