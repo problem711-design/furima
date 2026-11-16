@@ -36,7 +36,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.0.0` (Build 6)** （フェーズ 4-1・4-2・4-3 完了）
+現在のバージョン：**`v1.0.0` (Build 7)** （フェーズ 4-1 〜 4-4 完了）
 
 ### これまでに完了した主要開発マイルストーン (詳細は `PROGRESS_ARCHIVE_PHASE2.md` を参照)
 - [x] **フェーズ 2.0 〜 2.7 (基幹同期・まとめ買い・ゾンビ親商品根絶・選択ガード)** 【完了】
@@ -97,10 +97,22 @@
 - [x] **フェーズ 4-3 (`v1.0.0 Build 6`) — 同期ステータス可視化 ＆ メモリ消費・アプリ安定性の抜本改善** 【完了】
   - `4-3a` 一覧画面ヘッダースリム化 ＆ リアルタイム同期ステータス・進捗％バッジ＆詳細ダイアログ
   - `4-3b` メモリ安定化 5本柱（保存IO完全移行＆ロック、16KBストリーミング送信、Coil上限設定、CameraX連写最適化＆`2048px/フル`切替記憶、サムネ`RGB_565`＋一時キャッシュ自動掃除＋`largeHeap`）
+- [x] **フェーズ 4-4 (`v1.0.0 Build 7`) — 低負荷フォルダ自動取込（AI一括書き戻し対応）＆ 画像ファイル名比較表示** 【完了】
+  - `4-4-1` `FileSystemWatcher` ＋ デバウンスバッチ取込 ＋ ロック外MD5計算 ＋ `photoStatCache`（終了時ハンドル完全解放）
+  - `4-4-2` `POST /api/items/{id}/photos/scan` ＋ ギャラリー「フォルダ取込」ボタン ＋ サムネ/ライトボックスの `fileName` 表示 ＆ 表示中ライブ更新
 
 ---
 
 ## 更新履歴 (Changelog)
+
+### 2026/11/15 フェーズ 4-4 完了 バージョン 1.0.0 (Build 7)
+- **低負荷フォルダ監視による画像自動取込 (`tools/FurimaServerNative.cs`)**：
+  - `FileSystemWatcher`（`syncDir` 配下監視、`InternalBufferSize = 65536`）と 400ms デバウンスバッチ処理を導入し、AI加工ツール等が `{itemId}_{title}` フォルダへ別名で書き戻した画像ファイルを出品数に依存せず低負荷で自動登録（`.tmp`・`_photo_trash`・ゴミ箱内商品は除外、終了時は `StopFolderAutoImportWatcher()` で完全解放）。
+  - ファイルロック中の読み取りリトライ・マジックバイト検証（JPEG/PNG/WebP/GIF/BMP）・`lock (lockObj)` 外での MD5 計算・バッチ単位での1回保存＆`BumpDataRevision()`・`photoStatCache`（サイズ＋更新日時キャッシュ）を実装。
+- **単体フォルダ取込 API ＆ PC管理画面の見比べ強化 (`tools/FurimaServerNative.cs`, `tools/DashboardHtml.cs`)**：
+  - `POST /api/items/{id}/photos/scan` を新設し、ギャラリー上部の「フォルダ取込」ボタンから特定商品の1フォルダのみ即座に再スキャン取込できる機能を追加。
+  - PC側 `/api/items` の `photos` に実ファイル名 `fileName` を付与し、ギャラリー内サムネイルカードおよび原寸ライトボックスにファイル名を表示。さらにバックグラウンド更新時（`fetchItemsOnly`）に開いているギャラリー／ライトボックスもライブ追従するよう改善。
+- **バージョン統一更新**：`app/build.gradle.kts` (`versionCode = 7`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 7)`** へ3箇所同時統一（※PC側バイナリ反映には Windows で `tools/build-exe.bat` 実行が必要）。
 
 ### 2026/11/15 フェーズ 4-3 完了 バージョン 1.0.0 (Build 6)
 - **一覧画面ヘッダースリム化 ＆ リアルタイム同期ステータス／進捗％可視化 (`PcServerClient.kt`, `FleaMarketViewModel.kt`, `ItemListScreen.kt`)**：

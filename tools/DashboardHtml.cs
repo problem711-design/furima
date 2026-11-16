@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 6)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 7)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -364,6 +364,9 @@ public static class DashboardHtml
                     </div>
                 </div>
                 <div class='flex items-center gap-2 shrink-0'>
+                    <button id='viewer-scan-folder-btn' type='button' class='bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg border border-emerald-400/60 transition flex items-center gap-1.5' title='フォルダに直接追加された新規画像を取り込み'>
+                        <i class='fa-solid fa-rotate'></i> フォルダ取込
+                    </button>
                     <button id='viewer-open-folder-btn' class='bg-indigo-700 hover:bg-indigo-600 text-white text-xs font-bold px-2.5 py-1.5 rounded-lg border border-indigo-500/60 transition flex items-center gap-1.5'>
                         <i class='fa-regular fa-folder-open text-amber-300'></i> PCフォルダで開く
                     </button>
@@ -431,6 +434,7 @@ public static class DashboardHtml
             <div class='flex items-center gap-2.5 overflow-hidden'>
                 <span id='lightbox-counter' class='text-xs font-mono font-bold bg-indigo-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
                 <span id='lightbox-title' class='text-xs sm:text-sm font-bold text-slate-100 truncate max-w-xs sm:max-w-md'></span>
+                <span id='lightbox-filename' class='hidden text-[11px] font-mono bg-slate-800 text-emerald-300 border border-slate-700 px-2 py-0.5 rounded truncate max-w-[200px]'></span>
             </div>
             <div class='flex items-center gap-2 shrink-0'>
                 <button type='button' onclick='copyCurrentLightboxPhoto()' class='bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
@@ -1548,6 +1552,29 @@ public static class DashboardHtml
                 allItems = await res.json();
                 updateStats();
                 renderItems();
+
+                const viewerModal = document.getElementById('photo-viewer-modal');
+                if (currentViewerItemId && viewerModal && !viewerModal.classList.contains('hidden')) {
+                    renderViewerPhotos();
+                }
+
+                const lightboxModal = document.getElementById('photo-lightbox-modal');
+                if (currentViewerItemId && lightboxModal && !lightboxModal.classList.contains('hidden')) {
+                    const currentItem = allItems.find(i => i.id === currentViewerItemId);
+                    if (!currentItem || !currentItem.photos || currentItem.photos.length === 0) {
+                        closePhotoLightbox();
+                    } else {
+                        const prevHash = (lightboxPhotos && lightboxPhotos[lightboxIndex]) ? lightboxPhotos[lightboxIndex].md5Hash : '';
+                        lightboxPhotos = currentItem.photos;
+                        if (prevHash) {
+                            const foundIdx = lightboxPhotos.findIndex(p => p.md5Hash === prevHash);
+                            if (foundIdx >= 0) lightboxIndex = foundIdx;
+                        }
+                        if (lightboxIndex >= lightboxPhotos.length) lightboxIndex = lightboxPhotos.length - 1;
+                        if (lightboxIndex < 0) lightboxIndex = 0;
+                        updateLightboxView();
+                    }
+                }
             } catch (e) {}
         }
 
@@ -2103,6 +2130,10 @@ public static class DashboardHtml
                 document.getElementById('viewer-subtitle').innerText = '商品写真のプレビュー・原寸送り戻し・1枚削除（写真ゴミ箱）が可能です';
             }
 
+            const scanBtn = document.getElementById('viewer-scan-folder-btn');
+            if (scanBtn) {
+                scanBtn.onclick = () => scanItemFolderPhotos(itemId);
+            }
             const folderBtn = document.getElementById('viewer-open-folder-btn');
             folderBtn.onclick = () => openFolder(itemId);
 
@@ -2262,8 +2293,42 @@ public static class DashboardHtml
             }
         }
 
+        async function scanItemFolderPhotos(itemId) {
+            const btn = document.getElementById('viewer-scan-folder-btn');
+            const origHtml = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = `<i class='fa-solid fa-spinner animate-spin'></i> 取込中...`;
+            }
+            try {
+                const res = await fetch('/api/items/' + itemId + '/photos/scan', {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (!res.ok) {
+                    showToast('フォルダ取込に失敗しました (Status: ' + res.status + ')');
+                    return;
+                }
+                const data = await res.json();
+                await fetchItems();
+                if (data && data.importedCount > 0) {
+                    showToast(data.importedCount + '枚の新規写真を取り込みました');
+                } else {
+                    showToast('新規の未登録画像はありませんでした');
+                }
+            } catch (e) {
+                showToast('フォルダ取込エラー: ' + e.message);
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = origHtml;
+                }
+            }
+        }
+
         function renderSinglePhotoCard(photo, index) {
             const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
+            const fileName = (photo.fileName || '').trim();
             const isChecked = selectedViewerPhotoIndices.has(index);
             return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between transition'>
                 <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openPhotoLightbox(${index})'>
@@ -2274,6 +2339,7 @@ public static class DashboardHtml
                         <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='toggleViewerPhotoSelect(${index}, event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
                     </label>
                 </div>
+                ${fileName ? `<div class='px-1.5 py-0.5 bg-slate-100/90 border-t border-slate-100 text-[9px] font-mono text-slate-600 truncate' title='${escapeHtml(fileName)}'>${escapeHtml(fileName)}</div>` : ''}
                 <div class='p-1.5 bg-slate-50 border-t border-slate-100 flex items-center gap-1 text-[10px]'>
                     <button type='button' onclick='copyPhotoBlob(""${url}"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-1 rounded font-bold transition flex items-center justify-center gap-1' title='クリップボードに画像をコピー'>
                         <i class='fa-regular fa-copy text-indigo-600'></i> 画像コピー
@@ -2315,6 +2381,18 @@ public static class DashboardHtml
 
             document.getElementById('lightbox-counter').innerText = (lightboxIndex + 1) + ' / ' + lightboxPhotos.length;
             document.getElementById('lightbox-title').innerText = titlePrefix + childSuffix;
+            const fnEl = document.getElementById('lightbox-filename');
+            if (fnEl) {
+                const fn = (photo.fileName || '').trim();
+                if (fn) {
+                    fnEl.innerText = fn;
+                    fnEl.title = fn;
+                    fnEl.classList.remove('hidden');
+                } else {
+                    fnEl.innerText = '';
+                    fnEl.classList.add('hidden');
+                }
+            }
             document.getElementById('lightbox-main-img').src = url;
             document.getElementById('lightbox-newtab-link').href = url;
             document.getElementById('lightbox-prev-btn').disabled = (lightboxIndex <= 0);

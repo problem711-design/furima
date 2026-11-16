@@ -1,7 +1,7 @@
 # 統合実装計画書（フェーズ 4）：重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱（案A） ➔ 同期ステータス％表示＆メモリ安定化
 
 対象：個人利用のフリマ出品・売上管理システム（Androidアプリ ＋ PC母艦サーバー ＋ スマホ緊急Web管理画面）
-現行バージョン：**`v1.0.0 (Build 6)`**（フェーズ 4-1・4-2・4-3 全完了済み）
+現行バージョン：**`v1.0.0 (Build 7)`**（フェーズ 4-1 〜 4-4 全完了済み）
 改定日：**2026-11-15**（優先順位再編成 ＆ 案A採用による統合版）
 
 > **進行・引き継ぎルール（必須）**
@@ -23,6 +23,9 @@
 - [x] **フェーズ 4-3 (`v1.0.0 Build 6`) — 同期ステータス可視化 ＆ メモリ消費・アプリ安定性の抜本改善** 【完了】
   - `4-3a` 一覧画面ヘッダースリム化 ＆ リアルタイム同期ステータス・進捗％バッジ＆詳細ダイアログ
   - `4-3b` メモリ安定化 ＆ OOM・ANR防止（5本柱：保存IO完全移行＆ロック、16KBストリーミング送信、Coil上限設定、CameraX連写負荷軽減＆`2048px/フル`切替記憶、サムネ`RGB_565`＋一時キャッシュ掃除＋`largeHeap`）
+- [x] **フェーズ 4-4 (`v1.0.0 Build 7`) — 低負荷フォルダ自動取込（AI一括書き戻し対応）＆ 画像ファイル名比較表示** 【完了】
+  - `FileSystemWatcher` ＋ デバウンスバッチ取込 ＋ ロック外MD5計算 ＋ `photoStatCache`（サイズ・更新日時キャッシュ）
+  - 単体フォルダ即時取込 API (`POST /api/items/{id}/photos/scan`) ＋ ギャラリー「フォルダ取込」ボタン ＋ サムネ/ライトボックス内ファイル名表示
 
 ---
 
@@ -126,3 +129,19 @@ PCブラウザ管理画面の写真ギャラリーを開いたとき限定で、
 - [x] **4-3b-6: バージョン統一更新 (`Build 6`) ＆ 最終ビルド・テスト・APK更新**
   - `app/build.gradle.kts` (`versionCode = 6`), `tools/DashboardHtml.cs`, `WebDashboardHtml.kt` を **`v1.0.0 (Build 6)`** へ統一更新。
   - `compile_applet` ＋ JVM ユニットテスト通過後、`flea_market_app.apk` / `public/flea_market_app.apk` を更新し `PROGRESS.md` 更新の上で GitHub `main` へプッシュ。
+
+---
+
+## 4. 【フェーズ 4-4】低負荷フォルダ自動取込（AI加工一括書き戻し対応）＆ ファイル名比較表示（Target：`v1.0.0 Build 7`）【完了】
+
+- [x] **4-4-1：待機負荷ゼロの `FileSystemWatcher` ＆ デバウンスバッチ自動取込 (`tools/FurimaServerNative.cs`)**
+  - `syncDir` 配下の `{itemId}_{title}` フォルダへの新規作成・リネーム・更新イベントを `FileSystemWatcher`（`InternalBufferSize = 65536`）で監視（`_photo_trash`・`.`/`~`/`.tmp` 等・ゴミ箱内商品は除外、終了時 `StopFolderAutoImportWatcher()` でハンドル完全解放）。
+  - AIツールの一括書き戻しでファイルロック中や0バイト途中の誤読込を防ぐため、`400ms` デバウンス＋共有オープンリトライ（最大12回）＋画像マジックバイト検証（JPEG/PNG/WebP/GIF/BMP）を実施。
+  - MD5計算は `lock (lockObj)` の外で行い、同一バッチ内の複数ファイルは `CommitAutoImportedPhotosBatch` で `itemsDb` 反映・`BumpDataRevision()`・`SaveItemsDbToDisk()` を1回だけ実行。
+  - `ScanAndIndexLocalPhotos()` に「ファイルパス ➔（サイズ, 更新日時, MD5）」の `photoStatCache` を導入し、未変更ファイルの再ハッシュI/Oを省略。バッファ溢れ時は軽量フォールバック差分スキャンを実行。
+- [x] **4-4-2：単体フォルダ即時取込 API ＋ PC画面ファイル名比較＆自動反映 (`tools/FurimaServerNative.cs`, `tools/DashboardHtml.cs`)**
+  - `POST /api/items/{id}/photos/scan` を新設し、指定商品の1フォルダのみを高速スキャンして未登録画像を取り込み可能に。
+  - PC側 `GET /api/items` 応答の `photos` 各要素へ `fileName` を付与（`items_data.json` やスマホ側通信は非破壊）。
+  - `DashboardHtml.cs` の写真ギャラリーモーダルに「フォルダ取込」ボタンを追加し、サムネイルカードおよび原寸ライトボックス上部へファイル名バッジを表示してスマホ原画とAI加工版を見比べやすく改善。さらにギャラリー／ライトボックス表示中の `fetchItemsOnly()` 自動追従に対応。
+- [x] **4-4-3：バージョン統一更新 (`Build 7`)**
+  - `app/build.gradle.kts` (`versionCode = 7`)、`tools/DashboardHtml.cs`、`WebDashboardHtml.kt` を **`v1.0.0 (Build 7)`** へ統一更新（PC反映には Windows で `tools/build-exe.bat` 実行が必要）。

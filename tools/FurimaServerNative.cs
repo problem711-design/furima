@@ -34,6 +34,31 @@ class FurimaServerNative
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
 
+    private class PhotoFileCacheEntry
+    {
+        public long length;
+        public long lastWriteUtcTicks;
+        public string md5;
+    }
+
+    private class PendingAutoImportPhoto
+    {
+        public string filePath;
+        public int itemId;
+        public string md5;
+        public long length;
+        public long lastWriteUtcTicks;
+    }
+
+    private static Dictionary<string, PhotoFileCacheEntry> photoStatCache = new Dictionary<string, PhotoFileCacheEntry>(StringComparer.OrdinalIgnoreCase);
+    private static FileSystemWatcher folderWatcher = null;
+    private static System.Threading.Timer watcherFlushTimer = null;
+    private static readonly object watcherQueueLock = new object();
+    private static readonly Dictionary<string, long> pendingWatchFiles = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+    private static readonly Dictionary<string, int> pendingWatchRetries = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+    private static int watcherFlushRunning = 0;
+    private static int watcherRescanRunning = 0;
+
     private class ServerLogWriter : TextWriter
     {
         private readonly object writeLock = new object();
@@ -317,6 +342,8 @@ class FurimaServerNative
             Console.WriteLine("商品メタデータ (items_data.json) をロード中...");
             LoadItemsDbFromDisk();
 
+            StartFolderAutoImportWatcher();
+
             HttpListener listener = null;
             int actualPort = desiredPort;
             string boundUrl = "";
@@ -407,6 +434,8 @@ class FurimaServerNative
     {
         isShuttingDown = true;
         if (Interlocked.Exchange(ref cleanupExecuted, 1) != 0) return;
+
+        StopFolderAutoImportWatcher();
 
         HttpListener l = activeListener;
         activeListener = null;
@@ -610,39 +639,556 @@ class FurimaServerNative
         catch { }
     }
 
+    private static bool IsSupportedImageExtension(string filePath)
+    {
+        if (string.IsNullOrEmpty(filePath)) return false;
+        string ext = Path.GetExtension(filePath).ToLower();
+        return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".webp" || ext == ".gif" || ext == ".bmp";
+    }
+
+    private static bool IsIgnoredAutoImportPath(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath) || string.IsNullOrEmpty(syncDir)) return true;
+        string photoTrashPrefix = Path.Combine(syncDir, "_photo_trash");
+        if (fullPath.StartsWith(photoTrashPrefix, StringComparison.OrdinalIgnoreCase)) return true;
+        string fileName = Path.GetFileName(fullPath);
+        if (string.IsNullOrEmpty(fileName)) return true;
+        if (fileName.StartsWith(".") || fileName.StartsWith("~")) return true;
+        string lowerName = fileName.ToLower();
+        if (lowerName.EndsWith(".tmp") || lowerName.EndsWith(".part") || lowerName.EndsWith(".crdownload")) return true;
+        return false;
+    }
+
+    private static bool TryExtractItemIdFromPhotoPath(string fullPath, out int itemId)
+    {
+        itemId = 0;
+        if (string.IsNullOrEmpty(fullPath) || string.IsNullOrEmpty(syncDir)) return false;
+        try
+        {
+            string normSync = Path.GetFullPath(syncDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string normFile = Path.GetFullPath(fullPath);
+            if (!normFile.StartsWith(normSync + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+            string rel = normFile.Substring(normSync.Length + 1);
+            int sepIdx = rel.IndexOfAny(new char[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar });
+            if (sepIdx <= 0) return false;
+            string topFolder = rel.Substring(0, sepIdx);
+            if (string.IsNullOrEmpty(topFolder) || topFolder.StartsWith("_")) return false;
+            int underIdx = topFolder.IndexOf('_');
+            string idPart = underIdx > 0 ? topFolder.Substring(0, underIdx) : topFolder;
+            int parsed;
+            if (int.TryParse(idPart, out parsed) && parsed > 0)
+            {
+                itemId = parsed;
+                return true;
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    private static bool IsValidImageHeader(byte[] bytes, int len)
+    {
+        if (bytes == null || len < 2) return false;
+        if (len >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF) return true; // JPEG
+        if (len >= 8 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 &&
+            bytes[4] == 0x0D && bytes[5] == 0x0A && bytes[6] == 0x1A && bytes[7] == 0x0A) return true; // PNG
+        if (len >= 12 && bytes[0] == 0x52 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x46 &&
+            bytes[8] == 0x57 && bytes[9] == 0x45 && bytes[10] == 0x42 && bytes[11] == 0x50) return true; // WEBP
+        if (len >= 6 && bytes[0] == 0x47 && bytes[1] == 0x49 && bytes[2] == 0x46 && bytes[3] == 0x38) return true; // GIF
+        if (bytes[0] == 0x42 && bytes[1] == 0x4D) return true; // BMP
+        return false;
+    }
+
+    private static string FindExistingItemFolder(int itemId)
+    {
+        if (itemId <= 0 || string.IsNullOrEmpty(syncDir) || !Directory.Exists(syncDir)) return null;
+        try
+        {
+            foreach (string d in Directory.GetDirectories(syncDir))
+            {
+                string name = Path.GetFileName(d);
+                if (name.StartsWith(itemId + "_") || name == itemId.ToString())
+                {
+                    return d;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
     private static void ScanAndIndexLocalPhotos()
     {
+        string targetDir;
+        Dictionary<string, PhotoFileCacheEntry> prevCache;
         lock (lockObj)
         {
-            hashToFilePathMap.Clear();
-            if (!Directory.Exists(syncDir)) return;
+            targetDir = syncDir;
+            prevCache = new Dictionary<string, PhotoFileCacheEntry>(photoStatCache, StringComparer.OrdinalIgnoreCase);
+        }
 
-            var allFiles = Directory.GetFiles(syncDir, "*.*", SearchOption.AllDirectories);
-            string photoTrashPrefix = Path.Combine(syncDir, "_photo_trash");
+        var nextMap = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var nextCache = new Dictionary<string, PhotoFileCacheEntry>(StringComparer.OrdinalIgnoreCase);
+
+        if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
+        {
+            string[] allFiles = null;
+            try
+            {
+                allFiles = Directory.GetFiles(targetDir, "*.*", SearchOption.AllDirectories);
+            }
+            catch
+            {
+                allFiles = new string[0];
+            }
+
             using (var md5 = MD5.Create())
             {
                 foreach (var file in allFiles)
                 {
-                    if (file.StartsWith(photoTrashPrefix, StringComparison.OrdinalIgnoreCase)) continue;
-                    string ext = Path.GetExtension(file).ToLower();
-                    if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp") continue;
+                    if (IsIgnoredAutoImportPath(file)) continue;
+                    if (!IsSupportedImageExtension(file)) continue;
                     try
                     {
-                        using (var stream = File.OpenRead(file))
+                        FileInfo fi = new FileInfo(file);
+                        if (!fi.Exists || fi.Length <= 0) continue;
+
+                        long len = fi.Length;
+                        long ticks = fi.LastWriteTimeUtc.Ticks;
+                        string hashStr = null;
+
+                        PhotoFileCacheEntry cached;
+                        if (prevCache.TryGetValue(file, out cached) &&
+                            cached != null &&
+                            cached.length == len &&
+                            cached.lastWriteUtcTicks == ticks &&
+                            !string.IsNullOrEmpty(cached.md5))
                         {
-                            byte[] hashBytes = md5.ComputeHash(stream);
-                            string hashStr = BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
-                            if (!hashToFilePathMap.ContainsKey(hashStr))
+                            hashStr = cached.md5;
+                        }
+                        else
+                        {
+                            using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
                             {
-                                hashToFilePathMap[hashStr] = file;
+                                byte[] hashBytes = md5.ComputeHash(stream);
+                                hashStr = BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(hashStr))
+                        {
+                            nextCache[file] = new PhotoFileCacheEntry
+                            {
+                                length = len,
+                                lastWriteUtcTicks = ticks,
+                                md5 = hashStr
+                            };
+                            if (!nextMap.ContainsKey(hashStr))
+                            {
+                                nextMap[hashStr] = file;
                             }
                         }
                     }
                     catch { }
                 }
             }
-            Console.WriteLine("インデックス完了: " + hashToFilePathMap.Count + "件のユニーク写真ハッシュをロードしました。");
         }
+
+        lock (lockObj)
+        {
+            hashToFilePathMap = nextMap;
+            photoStatCache = nextCache;
+        }
+        Console.WriteLine("インデックス完了: " + nextMap.Count + "件のユニーク写真ハッシュをロードしました。");
+    }
+
+    private static void StartFolderAutoImportWatcher()
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(syncDir) || !Directory.Exists(syncDir)) return;
+            StopFolderAutoImportWatcher();
+
+            FileSystemWatcher watcher = new FileSystemWatcher(syncDir);
+            watcher.IncludeSubdirectories = true;
+            watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size;
+            try { watcher.InternalBufferSize = 65536; } catch { }
+
+            watcher.Created += (s, e) => EnqueueWatchedFile(e.FullPath);
+            watcher.Changed += (s, e) => EnqueueWatchedFile(e.FullPath);
+            watcher.Renamed += (s, e) => EnqueueWatchedFile(e.FullPath);
+            watcher.Error += (s, e) =>
+            {
+                if (isShuttingDown) return;
+                Console.WriteLine("[自動取込] 監視バッファ警告を検知したため軽量差分スキャンを実行します。");
+                TriggerFallbackFolderRescan();
+            };
+
+            watcher.EnableRaisingEvents = true;
+            folderWatcher = watcher;
+            watcherFlushTimer = new System.Threading.Timer(OnWatcherTimerTick, null, 500, 500);
+            Console.WriteLine("[自動取込] フォルダ監視を開始しました: " + syncDir);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[自動取込] フォルダ監視の開始に失敗しました: " + ex.Message);
+        }
+    }
+
+    private static void StopFolderAutoImportWatcher()
+    {
+        System.Threading.Timer t = watcherFlushTimer;
+        watcherFlushTimer = null;
+        if (t != null)
+        {
+            try { t.Dispose(); } catch { }
+        }
+
+        FileSystemWatcher w = folderWatcher;
+        folderWatcher = null;
+        if (w != null)
+        {
+            try { w.EnableRaisingEvents = false; } catch { }
+            try { w.Dispose(); } catch { }
+        }
+
+        lock (watcherQueueLock)
+        {
+            pendingWatchFiles.Clear();
+            pendingWatchRetries.Clear();
+        }
+    }
+
+    private static void EnqueueWatchedFile(string fullPath)
+    {
+        if (isShuttingDown || string.IsNullOrEmpty(fullPath)) return;
+        if (IsIgnoredAutoImportPath(fullPath)) return;
+        if (!IsSupportedImageExtension(fullPath)) return;
+        int dummyId;
+        if (!TryExtractItemIdFromPhotoPath(fullPath, out dummyId)) return;
+
+        lock (watcherQueueLock)
+        {
+            pendingWatchFiles[fullPath] = DateTime.UtcNow.Ticks;
+        }
+    }
+
+    private static void OnWatcherTimerTick(object state)
+    {
+        if (isShuttingDown) return;
+        ProcessPendingWatchFiles();
+    }
+
+    private static void TriggerFallbackFolderRescan()
+    {
+        if (isShuttingDown) return;
+        if (Interlocked.CompareExchange(ref watcherRescanRunning, 1, 0) != 0) return;
+
+        ThreadPool.QueueUserWorkItem((o) =>
+        {
+            try
+            {
+                if (isShuttingDown) return;
+                List<string> newPaths = new List<string>();
+                string targetDir;
+                Dictionary<string, PhotoFileCacheEntry> cacheSnapshot;
+                lock (lockObj)
+                {
+                    targetDir = syncDir;
+                    cacheSnapshot = new Dictionary<string, PhotoFileCacheEntry>(photoStatCache, StringComparer.OrdinalIgnoreCase);
+                }
+
+                if (!string.IsNullOrEmpty(targetDir) && Directory.Exists(targetDir))
+                {
+                    foreach (string file in Directory.GetFiles(targetDir, "*.*", SearchOption.AllDirectories))
+                    {
+                        if (isShuttingDown) break;
+                        if (IsIgnoredAutoImportPath(file) || !IsSupportedImageExtension(file)) continue;
+                        int dummyId;
+                        if (!TryExtractItemIdFromPhotoPath(file, out dummyId)) continue;
+                        if (!cacheSnapshot.ContainsKey(file))
+                        {
+                            newPaths.Add(file);
+                        }
+                    }
+                }
+
+                if (newPaths.Count > 0)
+                {
+                    lock (watcherQueueLock)
+                    {
+                        long nowTicks = DateTime.UtcNow.Ticks - TimeSpan.FromMilliseconds(500).Ticks;
+                        foreach (string p in newPaths)
+                        {
+                            if (!pendingWatchFiles.ContainsKey(p))
+                            {
+                                pendingWatchFiles[p] = nowTicks;
+                            }
+                        }
+                    }
+                    ProcessPendingWatchFiles();
+                }
+            }
+            catch { }
+            finally
+            {
+                Interlocked.Exchange(ref watcherRescanRunning, 0);
+            }
+        });
+    }
+
+    private static void ProcessPendingWatchFiles()
+    {
+        if (isShuttingDown) return;
+        if (Interlocked.CompareExchange(ref watcherFlushRunning, 1, 0) != 0) return;
+
+        try
+        {
+            long readyCutoff = DateTime.UtcNow.Ticks - TimeSpan.FromMilliseconds(400).Ticks;
+            List<string> readyPaths = new List<string>();
+
+            lock (watcherQueueLock)
+            {
+                if (pendingWatchFiles.Count == 0) return;
+                foreach (var kv in pendingWatchFiles)
+                {
+                    if (kv.Value <= readyCutoff)
+                    {
+                        readyPaths.Add(kv.Key);
+                    }
+                }
+                foreach (string p in readyPaths)
+                {
+                    pendingWatchFiles.Remove(p);
+                }
+            }
+
+            if (readyPaths.Count == 0) return;
+
+            List<PendingAutoImportPhoto> validatedList = new List<PendingAutoImportPhoto>();
+            List<string> retryPaths = new List<string>();
+
+            using (var md5 = MD5.Create())
+            {
+                foreach (string filePath in readyPaths)
+                {
+                    if (isShuttingDown) break;
+                    if (!File.Exists(filePath) || IsIgnoredAutoImportPath(filePath) || !IsSupportedImageExtension(filePath))
+                    {
+                        lock (watcherQueueLock) { pendingWatchRetries.Remove(filePath); }
+                        continue;
+                    }
+
+                    int itemId;
+                    if (!TryExtractItemIdFromPhotoPath(filePath, out itemId))
+                    {
+                        lock (watcherQueueLock) { pendingWatchRetries.Remove(filePath); }
+                        continue;
+                    }
+
+                    try
+                    {
+                        FileInfo fi = new FileInfo(filePath);
+                        if (!fi.Exists || fi.Length <= 0)
+                        {
+                            retryPaths.Add(filePath);
+                            continue;
+                        }
+
+                        long len = fi.Length;
+                        long ticks = fi.LastWriteTimeUtc.Ticks;
+
+                        PhotoFileCacheEntry cachedEntry = null;
+                        lock (lockObj)
+                        {
+                            photoStatCache.TryGetValue(filePath, out cachedEntry);
+                        }
+                        if (cachedEntry != null && cachedEntry.length == len && cachedEntry.lastWriteUtcTicks == ticks && !string.IsNullOrEmpty(cachedEntry.md5))
+                        {
+                            validatedList.Add(new PendingAutoImportPhoto
+                            {
+                                filePath = filePath,
+                                itemId = itemId,
+                                md5 = cachedEntry.md5,
+                                length = len,
+                                lastWriteUtcTicks = ticks
+                            });
+                            lock (watcherQueueLock) { pendingWatchRetries.Remove(filePath); }
+                            continue;
+                        }
+
+                        byte[] header = new byte[16];
+                        int headerRead = 0;
+                        string hashStr = "";
+                        using (var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                        {
+                            headerRead = fs.Read(header, 0, header.Length);
+                            if (!IsValidImageHeader(header, headerRead))
+                            {
+                                lock (watcherQueueLock) { pendingWatchRetries.Remove(filePath); }
+                                continue;
+                            }
+                            fs.Position = 0;
+                            byte[] hashBytes = md5.ComputeHash(fs);
+                            hashStr = BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+                        }
+
+                        if (!string.IsNullOrEmpty(hashStr))
+                        {
+                            validatedList.Add(new PendingAutoImportPhoto
+                            {
+                                filePath = filePath,
+                                itemId = itemId,
+                                md5 = hashStr,
+                                length = len,
+                                lastWriteUtcTicks = ticks
+                            });
+                            lock (watcherQueueLock) { pendingWatchRetries.Remove(filePath); }
+                        }
+                    }
+                    catch (IOException)
+                    {
+                        retryPaths.Add(filePath);
+                    }
+                    catch (UnauthorizedAccessException)
+                    {
+                        retryPaths.Add(filePath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("[自動取込] ファイル検証エラー (" + Path.GetFileName(filePath) + "): " + ex.Message);
+                        lock (watcherQueueLock) { pendingWatchRetries.Remove(filePath); }
+                    }
+                }
+            }
+
+            if (retryPaths.Count > 0)
+            {
+                lock (watcherQueueLock)
+                {
+                    long nowTicks = DateTime.UtcNow.Ticks;
+                    foreach (string rp in retryPaths)
+                    {
+                        int count = 0;
+                        pendingWatchRetries.TryGetValue(rp, out count);
+                        if (count < 12)
+                        {
+                            pendingWatchRetries[rp] = count + 1;
+                            if (!pendingWatchFiles.ContainsKey(rp))
+                            {
+                                pendingWatchFiles[rp] = nowTicks;
+                            }
+                        }
+                        else
+                        {
+                            pendingWatchRetries.Remove(rp);
+                        }
+                    }
+                }
+            }
+
+            if (validatedList.Count > 0)
+            {
+                int importedCount = CommitAutoImportedPhotosBatch(validatedList);
+                if (importedCount > 0)
+                {
+                    Console.WriteLine("[自動取込] フォルダ監視から " + importedCount + " 枚の新規写真を取り込みました。");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[自動取込] バッチ処理エラー: " + ex.Message);
+        }
+        finally
+        {
+            Interlocked.Exchange(ref watcherFlushRunning, 0);
+        }
+    }
+
+    private static int CommitAutoImportedPhotosBatch(List<PendingAutoImportPhoto> entries)
+    {
+        if (entries == null || entries.Count == 0) return 0;
+
+        int importedCount = 0;
+        int indexedCount = 0;
+        int missingCount = 0;
+        long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        lock (lockObj)
+        {
+            foreach (var entry in entries)
+            {
+                if (entry == null || string.IsNullOrEmpty(entry.md5)) continue;
+
+                photoStatCache[entry.filePath] = new PhotoFileCacheEntry
+                {
+                    length = entry.length,
+                    lastWriteUtcTicks = entry.lastWriteUtcTicks,
+                    md5 = entry.md5
+                };
+                if (!hashToFilePathMap.ContainsKey(entry.md5) || !File.Exists(hashToFilePathMap[entry.md5]))
+                {
+                    hashToFilePathMap[entry.md5] = entry.filePath;
+                }
+
+                var item = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"], 0) == entry.itemId);
+                if (item == null || IsItemTrashed(item)) continue;
+
+                var photosList = item.ContainsKey("photos") && item["photos"] != null
+                    ? SyncStore.NormalizePhotosList(item["photos"])
+                    : new List<Dictionary<string, object>>();
+
+                bool exists = false;
+                foreach (var p in photosList)
+                {
+                    if (p == null) continue;
+                    string h = p.ContainsKey("md5Hash") && p["md5Hash"] != null ? p["md5Hash"].ToString().Trim() : "";
+                    if (string.Equals(h, entry.md5, StringComparison.OrdinalIgnoreCase))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+
+                if (!exists)
+                {
+                    photosList.Add(new Dictionary<string, object>
+                    {
+                        { "id", 0 },
+                        { "itemId", entry.itemId },
+                        { "photoUrl", "/api/photos/" + entry.md5 },
+                        { "md5Hash", entry.md5 },
+                        { "displayOrder", photosList.Count }
+                    });
+                    item["photos"] = photosList;
+                    item["updatedAt"] = nowMs;
+                    item["syncedToPhone"] = false;
+                    importedCount++;
+                }
+            }
+
+            if (importedCount > 0)
+            {
+                BumpDataRevision();
+            }
+            indexedCount = hashToFilePathMap.Count;
+            missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+        }
+
+        if (importedCount > 0)
+        {
+            SaveItemsDbToDisk();
+            if (qrForm != null && !isShuttingDown)
+            {
+                try { qrForm.UpdateStatusInfo(indexedCount, missingCount); } catch { }
+            }
+        }
+
+        return importedCount;
     }
 
     private static void LoadItemsDbFromDisk()
@@ -842,13 +1388,46 @@ class FurimaServerNative
                 string jsonResponse;
                 lock (lockObj)
                 {
-                    jsonResponse = JsonConvert.SerializeObject(itemsDb);
                     if (isPhoneClient)
                     {
+                        jsonResponse = JsonConvert.SerializeObject(itemsDb);
                         foreach (var item in itemsDb)
                         {
                             if (item != null) item["syncedToPhone"] = true;
                         }
+                    }
+                    else
+                    {
+                        var pcItems = new List<Dictionary<string, object>>(itemsDb.Count);
+                        foreach (var item in itemsDb)
+                        {
+                            if (item == null) continue;
+                            var copyItem = new Dictionary<string, object>(item);
+                            if (copyItem.ContainsKey("photos") && copyItem["photos"] != null)
+                            {
+                                var rawPhotos = SyncStore.NormalizePhotosList(copyItem["photos"]);
+                                var pcPhotos = new List<Dictionary<string, object>>(rawPhotos.Count);
+                                foreach (var p in rawPhotos)
+                                {
+                                    if (p == null) continue;
+                                    var pCopy = new Dictionary<string, object>(p);
+                                    string h = pCopy.ContainsKey("md5Hash") && pCopy["md5Hash"] != null
+                                        ? pCopy["md5Hash"].ToString().Trim().ToLower()
+                                        : "";
+                                    string fName = "";
+                                    string fPath;
+                                    if (!string.IsNullOrEmpty(h) && hashToFilePathMap.TryGetValue(h, out fPath) && !string.IsNullOrEmpty(fPath))
+                                    {
+                                        fName = Path.GetFileName(fPath);
+                                    }
+                                    pCopy["fileName"] = fName;
+                                    pcPhotos.Add(pCopy);
+                                }
+                                copyItem["photos"] = pcPhotos;
+                            }
+                            pcItems.Add(copyItem);
+                        }
+                        jsonResponse = JsonConvert.SerializeObject(pcItems);
                     }
                 }
                 if (isPhoneClient)
@@ -1004,6 +1583,10 @@ class FurimaServerNative
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/add") && req.HttpMethod == "POST")
             {
                 HandleAddPhoto(req, res, rawPath);
+            }
+            else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/scan") && req.HttpMethod == "POST")
+            {
+                HandleScanItemFolderPhotos(res, rawPath);
             }
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/photos/delete") && req.HttpMethod == "POST")
             {
@@ -3808,6 +4391,10 @@ class FurimaServerNative
             {
                 return "image/gif";
             }
+            if (bytes.Length >= 2 && bytes[0] == 0x42 && bytes[1] == 0x4D)
+            {
+                return "image/bmp";
+            }
         }
         return "image/jpeg";
     }
@@ -3818,7 +4405,126 @@ class FurimaServerNative
         if (mime == "image/png") return ".png";
         if (mime == "image/webp") return ".webp";
         if (mime == "image/gif") return ".gif";
+        if (mime == "image/bmp") return ".bmp";
         return ".jpg";
+    }
+
+    private static void HandleScanItemFolderPhotos(HttpListenerResponse res, string path)
+    {
+        try
+        {
+            string idStr = path.Substring("/api/items/".Length);
+            idStr = idStr.Substring(0, idStr.Length - "/photos/scan".Length).Trim();
+            int itemId;
+            if (!int.TryParse(idStr, out itemId) || itemId <= 0)
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid ID" } });
+                return;
+            }
+
+            string itemDir = null;
+            Dictionary<string, PhotoFileCacheEntry> cacheSnapshot;
+            lock (lockObj)
+            {
+                var item = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"], 0) == itemId);
+                if (item == null)
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Item not found" } });
+                    return;
+                }
+                itemDir = FindExistingItemFolder(itemId);
+                cacheSnapshot = new Dictionary<string, PhotoFileCacheEntry>(photoStatCache, StringComparer.OrdinalIgnoreCase);
+            }
+
+            if (string.IsNullOrEmpty(itemDir) || !Directory.Exists(itemDir))
+            {
+                SendJson(res, new Dictionary<string, object>
+                {
+                    { "status", "ok" },
+                    { "importedCount", 0 },
+                    { "dataRevision", GetDataRevision() }
+                });
+                return;
+            }
+
+            var scannedEntries = new List<PendingAutoImportPhoto>();
+            using (var md5 = MD5.Create())
+            {
+                foreach (string file in Directory.GetFiles(itemDir, "*.*", SearchOption.AllDirectories))
+                {
+                    if (IsIgnoredAutoImportPath(file) || !IsSupportedImageExtension(file)) continue;
+                    try
+                    {
+                        FileInfo fi = new FileInfo(file);
+                        if (!fi.Exists || fi.Length <= 0) continue;
+                        long len = fi.Length;
+                        long ticks = fi.LastWriteTimeUtc.Ticks;
+
+                        PhotoFileCacheEntry cached;
+                        if (cacheSnapshot.TryGetValue(file, out cached) &&
+                            cached != null && cached.length == len && cached.lastWriteUtcTicks == ticks &&
+                            !string.IsNullOrEmpty(cached.md5))
+                        {
+                            scannedEntries.Add(new PendingAutoImportPhoto
+                            {
+                                filePath = file,
+                                itemId = itemId,
+                                md5 = cached.md5,
+                                length = len,
+                                lastWriteUtcTicks = ticks
+                            });
+                            continue;
+                        }
+
+                        byte[] header = new byte[16];
+                        int headerRead = 0;
+                        string hashStr = "";
+                        using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                        {
+                            headerRead = fs.Read(header, 0, header.Length);
+                            if (!IsValidImageHeader(header, headerRead)) continue;
+                            fs.Position = 0;
+                            byte[] hashBytes = md5.ComputeHash(fs);
+                            hashStr = BitConverter.ToString(hashBytes).Replace("-", "").ToLower();
+                        }
+
+                        if (!string.IsNullOrEmpty(hashStr))
+                        {
+                            scannedEntries.Add(new PendingAutoImportPhoto
+                            {
+                                filePath = file,
+                                itemId = itemId,
+                                md5 = hashStr,
+                                length = len,
+                                lastWriteUtcTicks = ticks
+                            });
+                        }
+                    }
+                    catch { }
+                }
+            }
+
+            int importedCount = CommitAutoImportedPhotosBatch(scannedEntries);
+            if (importedCount > 0)
+            {
+                Console.WriteLine("[フォルダ取込] 商品ID " + itemId + " から " + importedCount + " 枚の新規写真を取り込みました。");
+            }
+
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "importedCount", importedCount },
+                { "dataRevision", GetDataRevision() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleScanItemFolderPhotos エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
     }
 
     private static void ServePhotoByHash(HttpListenerResponse res, string hash)
