@@ -307,6 +307,32 @@ class PcServerClient(
         }
     }
 
+    // Claude ジョブの完了確認 (ack) を送信する (フェーズ 5-5)。確認状態は全端末で共有される。
+    suspend fun postClaudeJobAck(
+        jobId: String,
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/ack").post(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string()
+                val parsed = if (!respStr.isNullOrBlank()) {
+                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                } else null
+                parsed?.status == "ok"
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "postClaudeJobAck 例外: ${e.message}", e)
+            false
+        }
+    }
+
     suspend fun fetchAndSyncServerSettings(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
         try {
             val cleanUrl = baseUrl.trimEnd('/')

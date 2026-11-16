@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.example.myapplication.ui.components.ClaudeApprovalDialog
+import com.example.myapplication.ui.components.ClaudeCompletionDialog
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -103,6 +104,18 @@ fun FleaMarketApp() {
             onApprove = { viewModel.respondToClaudeApproval(job.jobId, true) },
             onDeny = { viewModel.respondToClaudeApproval(job.jobId, false) }
         )
+    }
+
+    // フェーズ 5-5: 完了通知ダイアログ (承認ダイアログが無い時だけ表示。確認は全端末で共有される)
+    val unackedClaudeCompletions by viewModel.unackedClaudeCompletions.collectAsState()
+    if (pendingClaudeApproval == null) {
+        unackedClaudeCompletions.minByOrNull { it.createdAt }?.let { job ->
+            ClaudeCompletionDialog(
+                job = job,
+                remainingCount = unackedClaudeCompletions.size,
+                onAcknowledge = { viewModel.acknowledgeClaudeCompletion(job.jobId) }
+            )
+        }
     }
 
     NavHost(

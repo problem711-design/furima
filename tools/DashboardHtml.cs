@@ -157,7 +157,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 11)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.0.0 (Build 12)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -2351,21 +2351,42 @@ public static class DashboardHtml
                 const info = claudeJobStatusInfo(job.status);
                 const created = job.createdAt ? new Date(job.createdAt).toLocaleString('ja-JP') : '';
                 const canCancel = job.status === 'queued';
-                const ackMark = (job.status === 'done' || job.status === 'done_with_errors')
+                const isDone = job.status === 'done' || job.status === 'done_with_errors';
+                const unacked = isDone && !job.acknowledged;
+                const ackMark = isDone
                     ? (job.acknowledged ? `<span class='text-[10px] text-emerald-600 font-bold'>確認済み</span>` : `<span class='text-[10px] text-amber-600 font-bold'>未確認</span>`)
                     : '';
-                return `<div class='flex items-center justify-between gap-2 p-2.5 rounded-lg border border-slate-200 bg-white'>
+                const countsText = isDone
+                    ? ` / 成功 ${job.results ? job.results.length : 0}枚・失敗 ${job.errors ? job.errors.length : 0}枚`
+                    : '';
+                const rowCls = unacked
+                    ? 'border-amber-300 bg-amber-50'
+                    : 'border-slate-200 bg-white';
+                return `<div class='flex items-center justify-between gap-2 p-2.5 rounded-lg border ${rowCls}'>
                     <div class='min-w-0 flex-1'>
                         <div class='flex items-center gap-2 flex-wrap'>
                             <span class='text-[10px] font-bold px-1.5 py-0.5 rounded ${info.cls}'>${info.label}</span>
                             <span class='font-bold text-slate-800 truncate'>${escapeHtml(job.itemTitle || '(無題)')}</span>
                             ${ackMark}
                         </div>
-                        <p class='text-[11px] text-slate-500 mt-0.5'>写真 ${job.photos ? job.photos.length : 0}枚 / テンプレート「${escapeHtml(job.templateName || '')}」 / ${escapeHtml(job.origin === 'phone' ? 'スマホから' : 'PCから')} / ${escapeHtml(created)}</p>
+                        <p class='text-[11px] text-slate-500 mt-0.5'>写真 ${job.photos ? job.photos.length : 0}枚 / テンプレート「${escapeHtml(job.templateName || '')}」 / ${escapeHtml(job.origin === 'phone' ? 'スマホから' : 'PCから')} / ${escapeHtml(created)}${countsText}</p>
                     </div>
                     ${canCancel ? `<button type='button' onclick='cancelClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[11px] font-bold transition shrink-0'>取消</button>` : ''}
+                    ${unacked ? `<button type='button' onclick='ackClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-[11px] font-bold transition shrink-0'>確認</button>` : ''}
                 </div>`;
             }).join('');
+        }
+
+        async function ackClaudeJob(jobId) {
+            try {
+                const res = await fetch('/api/claude/jobs/' + jobId + '/ack', { method: 'POST', headers: getHeaders() });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '確認に失敗しました');
+                showToast('完了を確認しました（全端末で共有されます）');
+                await refreshClaudeJobsList();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
         }
 
         async function cancelClaudeJob(jobId) {

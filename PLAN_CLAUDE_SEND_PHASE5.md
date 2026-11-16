@@ -224,22 +224,22 @@ completedAt: long?, acknowledged: bool, acknowledgedAt: long?
 ## 5. 結果返却・完了通知・確認共有（Target: `v1.0.0 Build 12`）
 
 ### 実装タスクチェックリスト
-- [] **5-5-1: 結果返却API (`tools/FurimaServerNative.cs`)**
+- [x] **5-5-1: 結果返却API (`tools/FurimaServerNative.cs`)**
 - `POST /api/claude/jobs/{jobId}/results`：ジョブトークン必須。ヘッダ `X-Source-Md5`（元写真のMD5）と `X-File-Name`（希望ベース名）を受け、ボディの画像バイトを既存のマジックバイト検証に通す。保存名は **ベース名の優先順位「`job.photos[].fileName` → サニタイズ済み `X-File-Name` → フォルダ内実ファイル → フォールバック名」＋ `_ai` ＋ `DetectImageExtension(bytes)` の拡張子**とする（元ファイル名の拡張子は使わない＝Q4・レビュー指摘5-B/5-C）。同名があれば `_ai2`, `_ai3`…と連番。`X-File-Name` は `Path.GetFileName` ＋不正文字除去＋長さ制限でサニタイズし、自動取込の除外パスに該当しないことを確認する。受付サイズ上限（目安25MB）を設け、超過はエラーで返す（レビュー指摘10-3）。
 - **冪等性（レビュー指摘10-2）**：同一ジョブ・同一 `sourceMd5` の結果が既に `job.results` にある場合、再登録せず既存レコードを成功として返す（通信リトライによる `_ai2` 増殖を防ぐ）。
 - **`FileSystemWatcher` との競合回避（レビュー指摘5-A）**：書き込み前にロック外でマジックバイト検証とMD5計算を済ませ、ファイル書き込み直後にロック保護下で `photoStatCache`・`hashToFilePathMap`・`item["photos"]` を即時更新して、ウォッチャー側の再取込・再ハッシュ・二重の `BumpDataRevision()` を抑制する。
 - 登録はフォルダ取込スキャン（フェーズ 4-4）と同一の登録処理を再利用し、`items_data.json` へ写真を追加、`syncedToPhone = false` 相当の扱い＋ `BumpDataRevision()` でスマホ・PC双方へ伝播させる。ジョブの `results` へ `{sourceMd5, resultFileName, resultMd5}` を追記。
 - `POST /api/items/{id}/photos/add` は**使わない**（自動名のため。5-2 調査結果参照）。
-- [] **5-5-2: 完了・確認API**
+- [x] **5-5-2: 完了・確認API**
 - `POST /api/claude/jobs/{jobId}/complete`：ジョブトークン必須。全写真に結果またはエラーが記録されていることを確認し、`done`（全成功）／ `done_with_errors`（一部失敗）へ遷移、`completedAt` 記録、`BumpClaudeRevision()`。
 - `POST /api/claude/jobs/{jobId}/ack`：Bearer認証のみ（PC管理画面／スマホのどちらからでも可）。`acknowledged = true`、`acknowledgedAt` 記録、`BumpClaudeRevision()`。これにより両端末の未確認表示が同時に消える（確定事項7）。
-- [] **5-5-3: PC管理画面の完了表示 (`tools/DashboardHtml.cs`)**
+- [x] **5-5-3: PC管理画面の完了表示 (`tools/DashboardHtml.cs`)**
 - ジョブ一覧モーダルで完了ジョブを未確認の間ハイライトし、「確認」ボタン（→ ack API）を表示。`claudeRevision` ポーリングで自動更新。返却された写真は既存の `dataRevision` 追従でギャラリーへ自動反映される（追加実装なし）。
-- [] **5-5-4: スマホの完了表示**
+- [x] **5-5-4: スマホの完了表示**
 - 5-4-2 の `unackedClaudeCompletions` を使い、完了ダイアログ／バナー（同期ステータスダイアログの流儀に合わせる）で「商品名・成功/失敗枚数」を通知し、「確認」ボタンで ack を送る。写真そのものは既存データPullで自動的に届く（追加実装なし）。
 - Muse チャット側でも処理完了を報告する（運用。コード変更なし）。
 - **既知の反映遅延（レビュー指摘9・仕様メモ）**：対象商品に未同期のローカル写真が残っている間は、既存のマージガード（`hasUnpushedLocalPhoto`）によりスマホ側への `_ai` 写真取り込みが次の自動同期まで遅れることがある。異常ではないため、5-5-5 の検証では「全て同期済みの商品」を前提条件とする。
-- [] **5-5-5: バージョン統一更新 (`Build 12`) ＆ 検証**
+- [x] **5-5-5: バージョン統一更新 (`Build 12`) ＆ 検証**
 - 検証：承認→取得→生成（手動で1枚）→返却→同一フォルダに `_ai` 名で登録され、PCギャラリーとスマホの両方に現れること。完了通知が両端末に出て、片方で確認すると両方から消えること。元写真が実行前に削除されていた場合は当該写真だけエラー記録となり、ジョブ全体は `done_with_errors` で完了できること。
 
 ---

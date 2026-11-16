@@ -133,7 +133,22 @@ data class ClaudeJobDto(
     @param:Json(name = "status") val status: String = "",
     @param:Json(name = "createdAt") val createdAt: Long = 0L,
     @param:Json(name = "approvalRequestedAt") val approvalRequestedAt: Long = 0L,
-    @param:Json(name = "acknowledged") val acknowledged: Boolean = false
+    @param:Json(name = "acknowledged") val acknowledged: Boolean = false,
+    @param:Json(name = "results") val results: List<ClaudeJobResultDto> = emptyList(),
+    @param:Json(name = "errors") val errors: List<ClaudeJobErrorDto> = emptyList()
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeJobResultDto(
+    @param:Json(name = "sourceMd5") val sourceMd5: String = "",
+    @param:Json(name = "resultFileName") val resultFileName: String = "",
+    @param:Json(name = "resultMd5") val resultMd5: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeJobErrorDto(
+    @param:Json(name = "sourceMd5") val sourceMd5: String = "",
+    @param:Json(name = "message") val message: String = ""
 )
 
 @JsonClass(generateAdapter = true)

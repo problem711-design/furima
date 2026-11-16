@@ -917,6 +917,23 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // フェーズ 5-5: 完了ダイアログからの確認 (ack)。成功したら未確認リストから外し、最新状態へ整合させる。
+    fun acknowledgeClaudeCompletion(jobId: String) {
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = pcServerClient.postClaudeJobAck(jobId, url, token)
+            if (ok) {
+                _unackedClaudeCompletions.value = _unackedClaudeCompletions.value.filter { it.jobId != jobId }
+                try {
+                    refreshClaudeJobStates(url, token)
+                } catch (_: Exception) {
+                }
+            }
+        }
+    }
+
     private fun startHeartbeatLoop() {
         heartbeatJob?.cancel()
         heartbeatJob = viewModelScope.launch(Dispatchers.IO) {
