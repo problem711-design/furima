@@ -9,16 +9,16 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `6db610c`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `120ab55`）
 
-- **最後にコードレビューを完了したリモートコミット**: `6db610c`（`PLAN` §17: `6-3` 詳細計画）および `51957bb`（`6-2` `20-2`/`20-3`/ビルドエラー回収）
+- **最後にレビューを完了したリモートコミット**: `adbe39c`（`6-3` 窓口実装・実機疎通済）および `120ab55`（`PLAN` §19 案2 設計案）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
-  - 実装レビュー: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`, `51957bb` 回収分含む全指摘解消)**
-  - 事前詳細レビュー: **`6-2`（合意・実装済）・`6-3`（`PLAN` §17 / `REVIEW` §22・重大反論なし・補記 `22-1`〜`22-3`）**
+  - 実装レビュー: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` 前半窓口 (`v1.1 Build 2`, `adbe39c`)**
+  - 事前設計レビュー: **`6-3` 後半 案2（`PLAN` §19 / `REVIEW` §23・条件付き賛成、`23-1`・`23-2`・`v1.1 Build 3` 採番提示）**
 - **現在のステータス**:
-  - `6-2` (`v1.1 Build 1`) は指摘 `20-1`〜`20-3` をすべて回収済み。
-  - `6-3` (`v1.1 Build 2`) は事前計画レビュー完了（重大な反論なし）。**次のレビュー待機対象は `6-3` の実装コミット**。
+  - `6-3` 前半（公開カウンタ窓口 `GET /api/claude/revision`）のサーバー実装・実機疎通は確認完了。
+  - `6-3` 後半（案2: 送信元 IP 許可＋スマホ承認 `6-3-9`〜`6-3-12`）の事前設計レビュー（§23）完了。**次の待機対象は §23 への回答・修正または `6-3` 案2 実装コミット（推奨 `v1.1 Build 3`）**。
 
 ---
 
@@ -27,16 +27,15 @@
 | ステップ | サブフェーズ | バージョン | 事前詳細計画レビュー | 実装後コードレビュー | ビルド/静的検証 | 指摘状態 | 根拠コミット / 参照節 |
 |---|---|---|---|---|---|---|---|
 | 事前 | 大枠設計協議 (`PLAN` §0〜§10) | — | 完了 | — | — | 合意済 | `80a8ddb` / `REVIEW` §0〜§8 |
-| 準備 | **`6-1a`**（`queue`・送信時承認・失効戻し・`claudeRevision`永続化） | `v1.0.0 (Build 14)` | 完了 (`§10`) | 完了 (`§12`) | 完了 (`6d8fcf4` Gradle/Robolectric14件/JS/C#5) | 是正済 (`Build 16`) | `9826052`, `bce7b14`, `62bb8b2`, `13edee9` |
+| 準備 | **`6-1a`**（`queue`・送信時承認・失効戻し・`claudeRevision`永続化） | `v1.0.0 (Build 14)` | 完了 (`§10`) | 完了 (`§12`) | 完了 (`6d8fcf4`) | 是正済 (`Build 16`) | `9826052`, `bce7b14`, `62bb8b2`, `13edee9` |
 | 準備 | **`6-1b`**（ジョブトークン実行時延長） | `v1.0.0 (Build 15)` | 完了 (`§10`) | 完了 (`§12`) | 完了 (`6d8fcf4`) | 指摘なし | `9826052`, `6d8fcf4` |
-| 是正 | **§12 レビュー修正**（件数集計・セレクト無効化・ダイアログスクロール） | `v1.0.0 (Build 16)` | — | 完了 (`§16`) | 差分・ソース確認済（ローカルビルド前提） | 完了 | `62bb8b2`, `13edee9` / `REVIEW` §16 |
-| 修正 | **`Encoder.Quality` CS0104 修正＋新体系移行** | `v1.0.0 (Build 17)` | — | 完了 (`§19`) | ユーザー側 `build-exe.bat` 成功報告済 | 完了 | `9636ec1`, `3c9dd33` / `REVIEW` §17〜§19 |
-| **Step 1** | **`6-2`**（一括承認：最大10件・チェック式・サムネ・帯抑止） | **`v1.1 (Build 1)`** (`1101`) | 完了 (`§16.1` → `§14`) | **完了 (`§20`＋`§22.1`)** | ユーザー側ビルド検証中 (`51957bb`修正) | **全指摘解消済 (`51957bb`)** | `e82a18a`, `51957bb` / `REVIEW` §20〜§22 |
-| **Step 1** | **`6-3`**（合図窓口 `/api/claude/revision` ＋ Muse側巡回 10:00〜22:00） | **`v1.1 (Build 2)`** (`1102`) | **完了 (`§22.2`・反論なし)** | **未着手（実装待ち）** | 未 | 補記 `22-1`〜`22-3` | `6db610c` / `PLAN` §17 / `REVIEW` §22 |
-| **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING` 導入）※単独 | `v1.2 (Build 3)` (`1203`) | 未（詳細化待ち） | 未着手 | 未 | — | `PLAN` §9.3, §16 |
-| **Step 3** | **`6-5`**（加工ラベル：サムネ属性ラベル＋寿命管理） | `v1.3 (Build 4)` (`1304`) | 未（詳細化待ち） | 未着手 | 未 | — | `PLAN` §9.3, §16 |
-| **Step 3** | **`6-6`**（ジョブ一覧改善：依頼中/待機中切替・出品カード連携） | `v1.3 (Build 5)` (`1305`) | 未（詳細化待ち） | 未着手 | 未 | — | `PLAN` §9.3, §16 |
-| **Step 3** | **`6-7`**（右カラム再編・ミューズカラム新設・接続ステータス移動） | `v1.3 (Build 6)` (`1306`) | 未（詳細化待ち） | 未着手 | 未 | — | `PLAN` §9.3, §16 |
+| 是正 | **§12 レビュー修正** | `v1.0.0 (Build 16)` | — | 完了 (`§16`) | 確認済 | 完了 | `62bb8b2`, `13edee9` |
+| 修正 | **`Encoder.Quality` 修正＋新体系移行** | `v1.0.0 (Build 17)` | — | 完了 (`§19`) | 成功報告済 | 完了 | `9636ec1`, `3c9dd33` |
+| **Step 1** | **`6-2`**（一括承認：最大10件・チェック式・サムネ・帯抑止） | **`v1.1 (Build 1)`** (`1101`) | 完了 (`§16.1`) | 完了 (`§20`＋`§22.1`) | 成功報告済 | **全指摘解消済** | `e82a18a`, `51957bb` |
+| **Step 1** | **`6-3` 前半**（公開窓口 `GET /api/claude/revision`＋監視スクリプト） | **`v1.1 (Build 2)`** (`1102`) | 完了 (`§22.2`) | **完了 (`§23`確認)** | 実機疎通確認済 (`120ab55`) | `22-1`〜`22-2` 反映済 | `6db610c`, `adbe39c`, `5097143`, `120ab55` |
+| **Step 1** | **`6-3` 後半（案2）**（許可 Tailscale IP 免除 `6-3-9`〜`6-3-12`） | **`v1.1 (Build 3)`** (`1103` 提案) | **完了 (`§23`・条件付き賛成)** | **未着手（実装待ち）** | 未 | **`23-1`・`23-2` 要反映** | `120ab55` / `PLAN` §19 / `REVIEW` §23 |
+| **Step 2** | **`6-4`**（出品ステータス拡張：`DRAFT_DONE` / `SHIPPING`）※単独 | `v1.2 (Build 4)` (繰下案) | 未（詳細化待ち） | 未着手 | 未 | — | `PLAN` §9.3, §16 |
+| **Step 3** | **`6-5`〜`6-7`**（加工ラベル・ジョブ一覧・右カラム再編） | `v1.3 (Build 5〜7)` (繰下案) | 未（詳細化待ち） | 未着手 | 未 | — | `PLAN` §9.3, §16 |
 
 ---
 
@@ -44,15 +43,13 @@
 
 | ID | 対象 | 区分 | 内容要約 | 計画書反映 | 実装反映・確認状態 |
 |---|---|---|---|---|---|
-| `10-1`〜`10-5` | `6-1a`/`6-1b` | 事前設計 | `move` 許可条件統一、`CreateJob` 原子化、`dismiss-error` 冪等、状態ラベルマトリクス、延長呼出位置 | 反映済 (`PLAN` §12) | **解消・確認済** (`bce7b14`, `6d8fcf4`) |
-| `12-1`〜`12-3` | `Build 14` | 実装修正 | 件数集計共通化、`#viewer-claude-queue` 無効連動、`ClaudeSendDialog` スクロール | — | **解消・確認済** (`62bb8b2`, `REVIEW` §16) |
-| `16-1`〜`16-3` | `6-2` Android | 事前設計 | `itemUuid` 追加、`uncheckedIds`＋`displayedIds`限定、帯タップ／閉じる干渉、DAO `LIMIT 1` | 反映済 (`PLAN` §14) | **解消・確認済** (`e82a18a`, `REVIEW` §20) |
-| `20-1` | `6-2` 文書 | ドキュメント | `PROGRESS.md` から `REVIEW_PROGRESS_PHASE6.md` リンク消失 | — | **解消・確認済** (`1294100`, `51957bb`維持) |
-| `20-2` | `6-2` Android | バグ修正 | `resolveClaudeApprovalThumbnails` での `File.exists()` 実在確認 | — | **解消・確認済** (`51957bb`, `REVIEW` §22.1) |
-| `20-3` | `6-2` Android | 改善 | `_claudeActionInProgress` 中ハートビート第3分岐抑止、タイトル `TextOverflow.Ellipsis` | — | **解消・確認済** (`51957bb`, `REVIEW` §22.1) |
-| `22-1` | `6-3` Muse | 事前補記 | bash 時間判定の8進数回避（`%-H`/`10#$H`）＋応答値の正整数検証 | — | **実装時確認 (`6-3`待ち)** |
-| `22-2` | `6-3` Muse | 事前補記 | 巡回ジョブ0件空振り時は無言終了（通知しない）、1件失効でも他ジョブ継続 | — | **実装時確認 (`6-3`待ち)** |
-| `22-3` | `6-3` 記録 | 運用・文書 | `PROGRESS.md` 検証記録（秘匿情報除外）＋冒頭旧表記整理（任意） | — | **実装時確認 (`6-3`待ち)** |
+| `10-1`〜`10-5` | `6-1a`/`6-1b` | 事前設計 | `move` 許可条件統一、`CreateJob` 原子化 等 | 反映済 (`PLAN` §12) | **解消・確認済** (`bce7b14`, `6d8fcf4`) |
+| `12-1`〜`12-3` | `Build 14` | 実装修正 | 件数集計、`#viewer-claude-queue`、`ClaudeSendDialog` スクロール | — | **解消・確認済** (`62bb8b2`) |
+| `16-1`〜`16-3` | `6-2` Android | 事前設計 | `itemUuid` 追加、`uncheckedIds`＋`displayedIds`限定、帯タップ／閉じる干渉 等 | 反映済 (`PLAN` §14) | **解消・確認済** (`e82a18a`) |
+| `20-1`〜`20-3` | `6-2` Android | バグ/改善 | 台帳リンク復旧、`File.exists()` 実在確認、ハートビート抑制、タイトル省略 | — | **解消・確認済** (`1294100`, `51957bb`) |
+| `22-1`〜`22-2` | `6-3` 前半 | 事前補記 | bash 8進数回避（`date +%-H`）、正整数検証、0件無言終了、1件失効時継続 | 反映済 (`PLAN` §18.1) | **スクリプト側反映済 (`adbe39c`)** |
+| **`23-1`** | `6-3` 案2 | **セキュリティ必須** | `AuthenticateRequest` 厳格パス一致（`/` 残余不可）、`IsIPv4MappedToIPv6` 正規化、無効IP（Loopback/0.0.0.0/CIDR）拒否、`X-Forwarded-For` 不使用 | — | **反映/実装待ち (`6-3-10`)** |
+| **`23-2`** | `6-3` 案2 | **重大バグ防止** | 許可アドレスをスマホ同期対象の `DefaultSettingsConfig` ではなく **`StoreConfig`（`store.json` トップレベル）＋専用 Bearer 必須 API** で保持 | — | **反映/実装待ち (`6-3-9`)** |
 
 ---
 
@@ -62,21 +59,21 @@
 1. **スコープ境界（`PLAN` §0 / §6）**: `LocalWebServer.kt` / `WebDashboardHtml.kt`（スマホ緊急WebUI）の既存セキュリティ・差分ハッシュ問題はユーザー許可によりフェーズ 6 スコープ外。**バージョン表記 `v1.x (Build N)` の3箇所同時更新チェック以外の指摘は絶対に出さない**こと。
 2. **共有ファイル競合防止**: 追記・push 前に必ず `git fetch origin && git log HEAD..origin/main` で最新を取り込むこと。
 3. **選択的ステージング厳守**: `tools/build-exe.bat` に CRLF 差分が出続けるため `git add -A` 禁止。必ずファイル指定で `git add` すること。
-4. **C# 5 互換維持**: `tools/*.cs` は `.NET Framework v4.0.30319\csc.exe` ビルドのため、補間文字列 `$""`・null条件演算子 `?.`・`nameof(...)` 等の混入がないか常に確認すること（`DashboardHtml.cs` の JS リテラル内文字列は除く）。
-5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切り（Step 1 = `6-3` 後、Step 2 = `6-4` 後、Step 3 = `6-7` 後）を中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
+4. **C# 5 互換維持**: `tools/*.cs` は `.NET Framework v4.0.30319\csc.exe` ビルドのため、補間文字列 `$""`・null条件演算子 `?.`・`nameof(...)` 等の混入がないか常に確認すること（`DashboardHtml.cs` の JS リテラル内文字列は除く）。`IPAddress.IsIPv4MappedToIPv6` / `MapToIPv4()` のビルド可否も注意。
+5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 
-### 4.1 次の最優先レビュー対象: `6-3`（`v1.1 Build 2` / `versionCode = 1102`）実装到着時
-1. **`FurimaServerNative.cs:1333` `AuthenticateRequest`**: `req.HttpMethod == "GET" && string.Equals(path, "/api/claude/revision", StringComparison.Ordinal)` の**完全一致**のみ許可されているか（`POST` や `/api/claude/revision/` や `/api/claude/revision2` が 401 になるか）。
-2. **`FurimaServerNative.cs` `HandleRequest` / ハンドラ**:
-   - `rawPath != "/api/server/heartbeat" && rawPath != "/api/claude/revision"` でログ出力抑制されているか。
-   - 応答が `{ "claudeRevision": GetClaudeRevision() }` のみ（他フィールド・トークン・ジョブ情報なし）か。
-   - **`lastHeartbeat` を絶対に更新していないか**、C# 5 互換構文になっているか。
-3. **バージョン3箇所統一**: `app/build.gradle.kts` (`versionName = "1.1"`, `versionCode = 1102`)、`tools/DashboardHtml.cs` (`v1.1 (Build 2)`)、`WebDashboardHtml.kt` (`v1.1 (Build 2)`)、`PROGRESS.md` 更新（あわせて `REVIEW_PROGRESS_PHASE6.md` リンク維持確認）。
+### 4.1 次の最優先レビュー対象: `6-3` 案2（`6-3-9`〜`6-3-12` / 推奨 `v1.1 Build 3`）
+1. **`SyncStore.cs`（指摘 `23-2`）**: `trustedMuseIp` が `DefaultSettingsConfig` ではなく **`StoreConfig` トップレベル** に保持され、`SaveDefaultSettings` により上書き・消去されないか。
+2. **`FurimaServerNative.cs`**:
+   - 専用設定 API（例: `GET / PUT /api/server/trusted-muse-ip`）が **Bearer/Loopback 認証必須**（Muse からの免除対象外）で、`IPAddress.TryParse` により単一 IPv4（かつ非 Loopback・非 Unspecified `0.0.0.0`）に正規化保存されるか。
+   - `AuthenticateRequest`（指摘 `23-1`）で許可 IP 判定が `IsIPv4MappedToIPv6` を考慮し `X-Forwarded-For` 等を見ないこと、空設定時は無条件不許可であること、免除対象が計画 §19.2 の 6 エンドポイント（`GET /api/claude/jobs`, `GET /api/claude/jobs/{id}`（`/`なし）, `GET .../photos/{md5}`, `POST .../results|errors|complete`）に厳密限定されていること。
+3. **`DashboardHtml.cs`**: 設定UIが `PUT /api/settings` ではなく専用 API へ保存し、「Muse 端末側の Tailscale IP」であることが誤解なく書かれているか。抽出 JS の `node --check` と verbatim `""` バランス確認。
+4. **バージョン3箇所統一**: 推奨 **`v1.1 (Build 3)` / `versionCode = 1103`** が 3 箇所へ反映され、`PROGRESS.md` のリンクが維持されているか。
 
 ### 4.2 今後のサブフェーズ事前／実装レビュー重点ポイント
-- **`6-4` (`v1.2 Build 3` 単独ステップ)**:
-  - `DRAFT_DONE`・`SHIPPING` 追加に伴う Android/PC 全層のステータス分岐網羅（特に既存の `else -> "出品中"` フォールバックを残さず `when` 網羅／明示マッピングにすること）。
-  - `{SOLD, SHIPPING}` 両方で `soldPrice` / `soldAt` 保持・売上集計・CSV 出力の整合（売却日確定と発送準備中の扱い確認）、`getItemSortPriority` 順位、`DashboardHtml.cs` `<header>` 折り返し崩れ・まとめ親子整合。
-- **`6-5`〜`6-7` (`v1.3 Build 4〜6`)**:
+- **`6-4` (`v1.2 Build 4` 単独ステップ)**:
+  - `DRAFT_DONE`・`SHIPPING` 追加に伴う Android/PC 全層のステータス分岐網羅（既存の `else -> "出品中"` フォールバック廃止）。
+  - `{SOLD, SHIPPING}` 両方で `soldPrice` / `soldAt` 保持・売上集計・CSV 出力の整合、`getItemSortPriority` 順位、`DashboardHtml.cs` `<header>` 折り返し崩れ・まとめ親子整合。
+- **`6-5`〜`6-7` (`v1.3 Build 5〜7`)**:
   - `6-5`/`6-6`: `errorDismissed` 集計と30日削除条件の整合、待機タブ/依頼中タブ・編集モーダル「この商品のジョブを見る」連携。
-  - `6-7`: `DashboardHtml.cs:85` `<aside>` の独立スクロール（`lg:sticky lg:top-14 lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto`）、および `DashboardHtml.cs:1601` `updateStatusBannerFromData` が `#stat-connection-status.className` を上書きするため `<header>`（濃紺背景 `bg-indigo-700`）移動時に明色ピル背景等へ修正されているか。
+  - `6-7`: `DashboardHtml.cs:85` `<aside>` の独立スクロール、および `updateStatusBannerFromData` の `#stat-connection-status` 明色ピル背景化。

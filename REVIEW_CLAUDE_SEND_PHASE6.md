@@ -601,3 +601,44 @@
 
 #### 補記 `22-3`: リポジトリ管理上の整理（任意）
 - `6-3-4`〜`6-3-7` は Muse 環境側の設定となるため、本リポジトリの完了記録（`PROGRESS.md`）には変更コミット（`FurimaServerNative.cs`＋バージョン3箇所 `v1.1 Build 2` / `1102`）とあわせて `dry_run` / Secure Vault 取得確認の結果（秘密情報自体は記録しない）を残してください。あわせて `PROGRESS.md` 冒頭の古い表記（`6-2=Build 18〜`）は次回更新時に整理すると引き継ぎが明快になります。
+
+---
+
+## 23. フェーズ `6-3` 案2（許可アドレス＋スマホ承認）設計案（`PLAN` §19 / `120ab55`）レビュー（2026-11-17）
+
+`adbe39c`（`6-3-1`〜`6-3-3` 実装および `GET /api/claude/revision` 実機疎通確認）と、`120ab55`（`PLAN` §19 案2の設計案・確認依頼3点）を確認しました。
+
+### 23.1 総合意見：**案2 の採用に賛成（ただし以下の設計ガードを必須条件とする）**
+Secure Vault が Tailscale IP を受け付けられず、平文ファイルへサーバー全体の合鍵 `authToken` を保存できない制約のもとで、**「Tailscale の暗号学的送信元 IP 識別＋スマホ承認（ジョブトークン30分限定）」** に切り替える判断は現実的かつ安全面でも合理的です。  
+むしろ従来の「Muse にサーバー全体の `Bearer authToken` を持たせる設計」に比べ、Muse に全商品データの変更/削除・設定変更・ジョブ作成/承認/取消の権限を渡さないため、**誤操作・侵害時の影響範囲（ブラストレディウス）は従来案より小さく**なります。
+
+---
+
+### 23.2 確認依頼（§19.3 の 1〜3）への回答と必須指摘
+
+#### 1. 免除エンドポイントと詳細での `jobToken` 開示（§19.3-1）【条件付き容認】
+- **見解**: `GET /api/claude/jobs`、詳細 `GET /api/claude/jobs/{id}`（`approved`/`processing` 時のみ `jobToken` 開示）、および実行系 4 本（写真 GET / `results` / `errors` / `complete`）を Bearer 層のみ免除する構成は **容認可能** です。
+  - 実行系 4 本はすべて `ApplyTokenExpiry` と `X-Claude-Job-Token` 検証（`FurimaServerNative.cs:5098, 5370, 5621, 5743`）を通るため、スマホ承認前にトークンが発行・利用されることはありません。
+  - また手動（`manual`）ジョブも今後は Bearer なしで実行することになるため、詳細での `jobToken` 開示を含める設計で筋が通っています。
+- **必須ガード `23-1`（`AuthenticateRequest` の厳格一致と IP 正規化）**:
+  1. **詳細パスの厳格一致**: `HandleRequest` 側（`FurimaServerNative.cs:1718`）が `StartsWith("/api/claude/jobs/")` で受けているため、`AuthenticateRequest` 側も同じ緩い判定にすると将来の追加パスまで丸抜けになります。`GET /api/claude/jobs`（完全一致）と `GET /api/claude/jobs/{jobId}`（`/api/claude/jobs/` 以降の残余が空でなく `/` を含まない）**だけ**を許可し、`photos`/`results`/`errors`/`complete` もそれぞれ固有サフィックス＋メソッドで厳密一致させてください。
+  2. **IPv4-mapped IPv6 と偽装対策**:
+     - `http://+:8080/` 待受け環境では `req.RemoteEndPoint.Address` が `::ffff:100.x.y.z`（IPv4-mapped IPv6）で渡ることがあるため、`IsIPv4MappedToIPv6` の場合は `MapToIPv4()` で正規化してから `IPAddress.Equals` で比較してください（文字列一致だけだと接続拒否になる恐れがあります）。
+     - `X-Forwarded-For` 等の HTTP ヘッダは **絶対に使用せず**、`req.RemoteEndPoint.Address` のみで判定してください。
+     - 許可アドレスの検証では単一 IP のみ受理し（ワイルドカード・CIDR・複数指定を不可）、`IPAddress.IsLoopback` や `IPAddress.Any`（`0.0.0.0` / `::`）等の無効・危険アドレスは拒否してください（設定画面にも「**PC のアドレスではなく、Muse 端末側の Tailscale IP**」である旨を明記すると設定ミスを防げます）。
+
+#### 2. 【重大指摘 `23-2`】許可アドレスの保存先を `DefaultSettingsConfig` にしてはいけない（§19.3-2）
+- **問題**: 現行設計（`SyncStore.cs:24-66`、`FurimaServerNative.cs:2094-2111` `HandleSync`、`3268` `HandleUpdateSettings`）では、**`DefaultSettingsConfig`（`store.json` の `defaultSettings`）はスマホとの双方向同期で丸ごと上書きされます**。
+  - もし許可アドレスを `DefaultSettingsConfig` に置くと、**スマホ側で基本設定やテンプレートを編集して同期した瞬間に `SyncStore.SaveDefaultSettings(incomingCfg)` が実行され、PC 側で設定した許可アドレスが空に消去されます**。また信頼境界ポリシーをスマホ同期ペイロードへ混ぜるべきではありません。
+- **修正案（必須）**:
+  1. 許可アドレス（例: `trustedMuseIp`）は `DefaultSettingsConfig` ではなく、**`StoreConfig`（`SyncStore.cs:59-66` の `store.json` トップレベル、`authToken` と同じサーバー専用領域）** に追加し、`SaveDefaultSettings` によって上書きされないようにする（`GetTrustedMuseIp()` / `SetTrustedMuseIp(string ip)` を `SyncStore` に新設）。
+  2. PC 管理画面（`DashboardHtml.cs`）では設定モーダル内に編集欄を設けてもよいが、保存 API は `PUT /api/settings` ではなく **サーバー専用の認証必須エンドポイント（例: `GET / PUT /api/server/trusted-muse-ip`、必ず Bearer/Loopback 認証を要求し Muse 側免除対象外）** へ分離すること。これによりスマホ同期での消失・無用な `settingsRevision` 加算・外部からの改ざんをすべて防止できます。
+
+#### 3. 採番（§19.3-3）【`v1.1 (Build 3)` / `versionCode = 1103` 推奨】
+- **見解**: 既に `v1.1 (Build 2)` としてバイナリ（`5097143`）がコミット済みであり、今回 `FurimaServerNative.cs` / `SyncStore.cs` / `DashboardHtml.cs` を変更して `furima-server.exe` を再ビルドするため、同じ `Build 2` を再利用するとバイナリ上の識別ができなくなります。
+- `PROGRESS.md` 基本原則 6 に従い、案2 の実装分は **ステップ1内の追加ビルド `v1.1 (Build 3)`（`versionCode = 1103`、3箇所統一）** として採番し、以後の予定を 1 つ繰り下げる（ステップ2 `6-4` = **`v1.2 Build 4`** (`1204`)、ステップ3 `6-5`〜`6-7` = **`v1.3 Build 5〜7`** (`1305`〜`1307`)）形が最も明瞭で履歴と整合します。
+
+---
+
+### 23.3 結論
+上記 **指摘 `23-1`（厳格パス一致＋IP正規化/危険IP拒否）**・**`23-2`（`StoreConfig` トップレベル保存＋専用API分離）**・**採番 `v1.1 (Build 3)`** を `PLAN §19` に取り込んだうえで、`6-3-9`〜`6-3-12` の実装へ進んでください（計画再修正後の再レビューでも、これらをそのまま反映した実装コミット後のレビューでも構いません）。

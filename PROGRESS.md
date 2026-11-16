@@ -11,7 +11,7 @@
 > - **現行実装計画書 (フェーズ 4 / 重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱[案A] ➔ 同期ステータス％表示＆メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
 > - **現行実装計画書 (フェーズ 5 / 「Museに送る」一括画像加工連携)**: [PLAN_CLAUDE_SEND_PHASE5.md](PLAN_CLAUDE_SEND_PHASE5.md)（2026-11-16 策定・**協議済み（計画書 §10 に協議結果を記録）** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE5.md](REVIEW_CLAUDE_SEND_PHASE5.md)）
 > - **次期実装計画書 (フェーズ 6 / 「Museに送る」運用自動化・見える化・出品ステータス拡張)**: [PLAN_CLAUDE_SEND_PHASE6.md](PLAN_CLAUDE_SEND_PHASE6.md)（2026-11-16 策定・**大枠完全合意（計画書 §9・§10・§12）。旧体系では 6-1a／6-1b を Build 14・15、§12 修正を Build 16、ビルドエラー修正を Build 17 として実施。その後ユーザー指示で新体系へ移行: ステップ1（6-2・6-3）= v1.1、ステップ2（6-4）= v1.2、ステップ3（6-5〜6-7）= v1.3、Build はサブフェーズごとに 1 から付番。現在は 6-3 を v1.1 Build 2 で実装中** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE6.md](REVIEW_CLAUDE_SEND_PHASE6.md)）
-> - **フェーズ 6 コードレビュー進捗・引き継ぎ台帳 (サブフェーズ単位追跡用)**: [REVIEW_PROGRESS_PHASE6.md](REVIEW_PROGRESS_PHASE6.md)（レビュー済み範囲: `6-1a`〜`6-2 (v1.1 Build 1)` 全指摘回収済、`6-3` 詳細計画確認済（重大反論なし）・実装待機中）
+> - **フェーズ 6 コードレビュー進捗・引き継ぎ台帳 (サブフェーズ単位追跡用)**: [REVIEW_PROGRESS_PHASE6.md](REVIEW_PROGRESS_PHASE6.md)（レビュー済み範囲: `6-1a`〜`6-3` 前半窓口(`v1.1 Build 2`)確認済、`6-3` 案2(`PLAN` §19) 設計レビュー完了・条件付き賛成）
 
 ---
 
