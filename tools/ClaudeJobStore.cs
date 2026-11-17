@@ -478,6 +478,14 @@ public static class ClaudeJobStore
     // mutate 適用後、同一商品の旧エラーのうち全て supersede 済みとなったものを自動解消する。
     public static ClaudeJob MutateJobWithErrorSupersede(string jobId, Func<ClaudeJob, bool> mutate)
     {
+        return MutateJobWithErrorSupersede(jobId, mutate, null);
+    }
+
+    // フェーズ 6-6 是正 (Build 10 / §41.2・§42): bundleUuids が与えられた場合、自動解消の判定範囲を
+    // まとめ UUID 集合全体へ広げ、PC 管理画面のラベル判定 (まとめ集合) と一致させる。
+    // bundleUuids が null の場合は従来どおり対象ジョブ自身の商品のみを範囲とする。
+    public static ClaudeJob MutateJobWithErrorSupersede(string jobId, Func<ClaudeJob, bool> mutate, System.Collections.Generic.ICollection<string> bundleUuids)
+    {
         if (string.IsNullOrEmpty(jobId) || mutate == null) return null;
         lock (_jobLock)
         {
@@ -490,23 +498,29 @@ public static class ClaudeJobStore
             if (target == null) return null;
             if (mutate(target))
             {
-                AutoDismissSupersededErrorsLocked(target.itemUuid);
+                AutoDismissSupersededErrorsLocked(bundleUuids, target.itemUuid);
                 SaveJobsLocked();
             }
             return CloneJob(target);
         }
     }
 
-    // 同一商品の全ての成功ジョブを対象に、旧ジョブの全エラーが supersede 済みか判定する。
+    // 判定範囲 (uuidSet) 内の全ての成功ジョブを対象に、旧ジョブの全エラーが supersede 済みか判定する。
     // supersede 条件 (計画 §27.1.1): okJob.completedAt > errTime かつ results に小文字一致の sourceMd5。
     // 分割再加工 (前ジョブで M1 成功・今回ジョブで M2 成功) でも全エラー解消になれば解消済みにする。
-    private static void AutoDismissSupersededErrorsLocked(string itemUuid)
+    private static void AutoDismissSupersededErrorsLocked(System.Collections.Generic.ICollection<string> bundleUuids, string fallbackItemUuid)
     {
-        if (string.IsNullOrEmpty(itemUuid)) return;
+        var uuidSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (bundleUuids != null)
+        {
+            foreach (var u in bundleUuids) { if (!string.IsNullOrEmpty(u)) uuidSet.Add(u); }
+        }
+        if (!string.IsNullOrEmpty(fallbackItemUuid)) uuidSet.Add(fallbackItemUuid);
+        if (uuidSet.Count == 0) return;
         var okJobs = new List<ClaudeJob>();
         foreach (var j in _jobList)
         {
-            if (j != null && string.Equals(j.itemUuid, itemUuid, StringComparison.OrdinalIgnoreCase)
+            if (j != null && j.itemUuid != null && uuidSet.Contains(j.itemUuid)
                 && (j.status == "done" || j.status == "done_with_errors") && j.completedAt > 0)
             {
                 okJobs.Add(j);
@@ -516,7 +530,7 @@ public static class ClaudeJobStore
         foreach (var errJob in _jobList)
         {
             if (errJob == null || errJob.status != "done_with_errors" || errJob.errorDismissed) continue;
-            if (!string.Equals(errJob.itemUuid, itemUuid, StringComparison.OrdinalIgnoreCase)) continue;
+            if (errJob.itemUuid == null || !uuidSet.Contains(errJob.itemUuid)) continue;
             if (errJob.errors == null || errJob.errors.Count == 0) continue;
             long errTime = errJob.completedAt > 0 ? errJob.completedAt : errJob.createdAt;
             bool allSuperseded = true;

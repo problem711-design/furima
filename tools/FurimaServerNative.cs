@@ -6078,6 +6078,79 @@ class FurimaServerNative
         }
     }
 
+    // フェーズ 6-6 是正 (Build 10 / §41.2・§42): 対象商品のまとめ UUID 集合を、最新の商品データから算出する。
+    // 最上位の親まで辿り、その子孫 (mergedParentId 連鎖) と、写真の childItemId が指す商品 (とその子孫) を固定点まで集める。
+    // 対象商品自身の UUID は必ず含める。商品が見つからない場合は対象 UUID のみを返す。
+    private static List<string> CollectBundleUuidSetForItemUuid(string itemUuid)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrEmpty(itemUuid)) return result;
+        result.Add(itemUuid);
+        lock (lockObj)
+        {
+            var byId = new Dictionary<int, Dictionary<string, object>>();
+            var byUuid = new Dictionary<string, Dictionary<string, object>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var it in itemsDb)
+            {
+                if (it == null) continue;
+                int id = it.ContainsKey("id") ? ParseIntSafe(it["id"], 0) : 0;
+                if (id > 0) byId[id] = it;
+                string uuid = it.ContainsKey("syncUuid") && it["syncUuid"] != null ? it["syncUuid"].ToString().Trim() : "";
+                if (!string.IsNullOrEmpty(uuid)) byUuid[uuid] = it;
+            }
+            Dictionary<string, object> target;
+            if (!byUuid.TryGetValue(itemUuid.Trim(), out target)) return result;
+            // 最上位の親まで辿る (循環ガード付き)
+            var top = target;
+            var guard = new HashSet<int>();
+            while (true)
+            {
+                int pid = top.ContainsKey("mergedParentId") ? ParseIntSafe(top["mergedParentId"], 0) : 0;
+                if (pid <= 0) break;
+                int topId = top.ContainsKey("id") ? ParseIntSafe(top["id"], 0) : 0;
+                if (topId > 0 && !guard.Add(topId)) break;
+                Dictionary<string, object> parent;
+                if (!byId.TryGetValue(pid, out parent) || parent == top) break;
+                top = parent;
+            }
+            // 子孫と childItemId 参照を固定点まで集める
+            var collected = new HashSet<Dictionary<string, object>>();
+            collected.Add(top);
+            bool grew = true;
+            while (grew)
+            {
+                grew = false;
+                foreach (var it in itemsDb)
+                {
+                    if (it == null || collected.Contains(it)) continue;
+                    int pid = it.ContainsKey("mergedParentId") ? ParseIntSafe(it["mergedParentId"], 0) : 0;
+                    if (pid > 0 && byId.ContainsKey(pid) && collected.Contains(byId[pid])) { collected.Add(it); grew = true; }
+                }
+                var snapshot = new List<Dictionary<string, object>>(collected);
+                foreach (var host in snapshot)
+                {
+                    if (!host.ContainsKey("photos") || host["photos"] == null) continue;
+                    var photosList = SyncStore.NormalizePhotosList(host["photos"]);
+                    foreach (var ph in photosList)
+                    {
+                        if (ph == null || !ph.ContainsKey("childItemId")) continue;
+                        int cid = ParseIntSafe(ph["childItemId"], 0);
+                        if (cid > 0 && byId.ContainsKey(cid) && !collected.Contains(byId[cid])) { collected.Add(byId[cid]); grew = true; }
+                    }
+                }
+            }
+            var uuidSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            uuidSet.Add(itemUuid);
+            foreach (var it in collected)
+            {
+                string uuid = it.ContainsKey("syncUuid") && it["syncUuid"] != null ? it["syncUuid"].ToString().Trim() : "";
+                if (!string.IsNullOrEmpty(uuid)) uuidSet.Add(uuid);
+            }
+            result = new List<string>(uuidSet);
+        }
+        return result;
+    }
+
     private static void HandleCompleteClaudeJobLocked(HttpListenerRequest req, HttpListenerResponse res, string jobId)
     {
         var job = ClaudeJobStore.GetJob(jobId);
@@ -6116,6 +6189,8 @@ class FurimaServerNative
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         string newStatus = (job.errors != null && job.errors.Count > 0) ? "done_with_errors" : "done";
+        // フェーズ 6-6 是正 (Build 10 / §41.2): 自動解消の範囲をまとめ UUID 集合に広げる (画面判定と一致させる)
+        var bundleUuids = CollectBundleUuidSetForItemUuid(job.itemUuid);
         ClaudeJobStore.MutateJobWithErrorSupersede(jobId, j =>
         {
             j.status = newStatus;
@@ -6123,7 +6198,7 @@ class FurimaServerNative
             j.jobToken = null;
             j.jobTokenExpiresAt = 0;
             return true;
-        });
+        }, bundleUuids);
         BumpClaudeRevision();
         job = ClaudeJobStore.GetJob(jobId);
         SendJson(res, new Dictionary<string, object>

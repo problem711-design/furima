@@ -155,7 +155,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 9)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 10)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -540,6 +540,7 @@ public static class DashboardHtml
             <div class='px-4 pt-3 flex items-center gap-2'>
                 <button type='button' id='claude-jobs-tab-active' onclick='switchClaudeJobsTab(""active"")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>依頼中</button>
                 <button type='button' id='claude-jobs-tab-waiting' onclick='switchClaudeJobsTab(""waiting"")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>待機中</button>
+                <button type='button' id='claude-jobs-tab-history' onclick='switchClaudeJobsTab(""history"")' class='px-3 py-1.5 text-xs font-bold rounded-lg transition'>履歴</button>
             </div>
             <div id='claude-jobs-list' class='p-4 flex-1 overflow-y-auto custom-scroll space-y-2'>
                 <!-- JSで動的描画 -->
@@ -2550,7 +2551,8 @@ public static class DashboardHtml
         }
 
         function countActiveClaudeJobs() {
-            return claudeJobsCache.filter(j => ['queued', 'approval_pending', 'approved', 'processing'].includes(j.status) && !(j.status === 'queued' && j.queue === 'waiting')).length;
+            // 件数はタブ分類 (claudeJobTab) の 'active' 集計そのもの (計画 §27.2 改定: 述語の一本化)
+            return claudeJobsCache.filter(j => claudeJobTab(j) === 'active').length;
         }
 
         function refreshClaudeJobsCount() {
@@ -2576,12 +2578,15 @@ public static class DashboardHtml
             if (el) el.innerText = countActiveClaudeJobs();
         }
 
-        // フェーズ 6-6: ジョブ一覧のタブ分類 (待機中 = 待機キュー + エラー未解消の完了ジョブ。§27.2)
+        // フェーズ 6-6 是正 (Build 10 / §39-3・§42・§43): ジョブ一覧のタブ分類は単一関数に一本化する (計画 §27.2 改定)。
+        // タブ所属・タブ件数・ヘッダーバッジはすべてこの関数の集計から導き、述語の二重定義による乖離を防ぐ。
         let claudeJobsTab = 'active';
 
-        function isClaudeWaitingJob(job) {
-            return (job.queue === 'waiting' && job.status === 'queued') ||
-                (job.status === 'done_with_errors' && !job.errorDismissed);
+        function claudeJobTab(job) {
+            if ((job.status === 'queued' && job.queue === 'waiting') ||
+                (job.status === 'done_with_errors' && !job.errorDismissed)) return 'waiting';
+            if (['queued', 'approval_pending', 'approved', 'processing'].includes(job.status)) return 'active';
+            return 'history';
         }
 
         function isClaudeErrorJob(job) {
@@ -2593,21 +2598,27 @@ public static class DashboardHtml
             renderClaudeJobsList();
         }
 
-        // ジョブ行から対象商品のカードへ移動する (まとめ子は親カードへ)
-        function jumpToClaudeJobItem(itemId) {
-            if (!itemId) return;
-            let item = allItems.find(i => i.id === itemId);
+        // ジョブ行から対象商品のカードへ移動する (§39-2 是正: 特定は ID → UUID の順で親たどりより前に行い、
+        // 最上位の親まで辿り、ゴミ箱内なら TRASH ビューへ切り替える)
+        function jumpToClaudeJobItem(itemId, itemUuid) {
+            let item = null;
+            if (itemId) item = allItems.find(i => i.id === itemId);
+            if (!item && itemUuid) item = allItems.find(i => (i.syncUuid || '').toLowerCase() === String(itemUuid).toLowerCase());
             if (!item) { showToast('商品が見つかりません'); return; }
-            if ((item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) && item.mergedParentId) {
+            const seenIds = new Set();
+            while ((item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) && item.mergedParentId) {
+                if (seenIds.has(item.id)) break;
+                seenIds.add(item.id);
                 const parent = allItems.find(i => i.id === item.mergedParentId);
-                if (parent) item = parent;
+                if (!parent || parent.id === item.id) break;
+                item = parent;
             }
             closeClaudeJobsModal();
             let el = document.querySelector('[data-item-card-id=""' + item.id + '""]');
             if (!el) {
                 const searchInput = document.getElementById('search-input');
                 if (searchInput) searchInput.value = '';
-                setFilter('ALL');
+                setFilter(isItemTrashed(item) ? 'TRASH' : 'ALL');
                 el = document.querySelector('[data-item-card-id=""' + item.id + '""]');
             }
             if (!el) { showToast('商品カードを表示できませんでした'); return; }
@@ -2616,12 +2627,24 @@ public static class DashboardHtml
             setTimeout(() => el.classList.remove('ring-4', 'ring-violet-400'), 2200);
         }
 
-        async function dismissClaudeJobError(jobId) {
+        // エラー解消 (§39-4 是正: 待機中タブでは解消に一本化し、未確認なら解消成功後に確認 (ack) も連動させる)
+        async function dismissClaudeJobError(jobId, needsAck) {
             try {
                 const res = await fetch('/api/claude/jobs/' + jobId + '/dismiss-error', { method: 'POST', headers: getHeaders() });
                 const data = await res.json();
                 if (!res.ok || data.status === 'error') throw new Error(data.message || '解消に失敗しました');
-                showToast('エラーを解消済みにしました');
+                if (needsAck) {
+                    try {
+                        const ackRes = await fetch('/api/claude/jobs/' + jobId + '/ack', { method: 'POST', headers: getHeaders() });
+                        const ackData = await ackRes.json();
+                        if (!ackRes.ok || ackData.status === 'error') throw new Error('ack failed');
+                        showToast('エラーを解消し、確認も完了しました');
+                    } catch (ackErr) {
+                        showToast('エラーを解消しました（確認は未完了です）');
+                    }
+                } else {
+                    showToast('エラーを解消済みにしました');
+                }
                 await refreshClaudeJobsList();
                 refreshClaudeJobsCount();
             } catch (e) {
@@ -2632,27 +2655,38 @@ public static class DashboardHtml
         function renderClaudeJobsList() {
             const container = document.getElementById('claude-jobs-list');
             if (!container) return;
-            const waitingJobs = (claudeJobsCache || []).filter(isClaudeWaitingJob);
-            const activeJobs = (claudeJobsCache || []).filter(j => !isClaudeWaitingJob(j));
-            const tabA = document.getElementById('claude-jobs-tab-active');
-            const tabW = document.getElementById('claude-jobs-tab-waiting');
-            if (tabA) {
-                tabA.innerText = '依頼中 (' + activeJobs.length + ')';
-                tabA.className = 'px-3 py-1.5 text-xs font-bold rounded-lg transition ' + (claudeJobsTab === 'active' ? 'bg-violet-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
-            }
-            if (tabW) {
-                tabW.innerText = '待機中 (' + waitingJobs.length + ')';
-                tabW.className = 'px-3 py-1.5 text-xs font-bold rounded-lg transition ' + (claudeJobsTab === 'waiting' ? 'bg-violet-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
-            }
-            const jobs = (claudeJobsTab === 'waiting' ? waitingJobs : activeJobs).slice();
+            const activeJobs = (claudeJobsCache || []).filter(j => claudeJobTab(j) === 'active');
+            const waitingJobs = (claudeJobsCache || []).filter(j => claudeJobTab(j) === 'waiting');
+            const historyJobs = (claudeJobsCache || []).filter(j => claudeJobTab(j) === 'history');
+            const tabDefs = [
+                ['active', 'claude-jobs-tab-active', '依頼中', activeJobs.length],
+                ['waiting', 'claude-jobs-tab-waiting', '待機中', waitingJobs.length],
+                ['history', 'claude-jobs-tab-history', '履歴', historyJobs.length]
+            ];
+            tabDefs.forEach(([key, elId, label, count]) => {
+                const tabEl = document.getElementById(elId);
+                if (tabEl) {
+                    tabEl.innerText = label + ' (' + count + ')';
+                    tabEl.className = 'px-3 py-1.5 text-xs font-bold rounded-lg transition ' + (claudeJobsTab === key ? 'bg-violet-700 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200');
+                }
+            });
+            let jobs;
             if (claudeJobsTab === 'waiting') {
-                // エラージョブを先頭に固定表示する
+                jobs = waitingJobs.slice();
+                // エラージョブを先頭に固定表示する (安定ソートで、その中と待機キュー内は古い順を維持)
                 jobs.sort((a, b) => (isClaudeErrorJob(b) ? 1 : 0) - (isClaudeErrorJob(a) ? 1 : 0));
+            } else if (claudeJobsTab === 'history') {
+                jobs = historyJobs.slice().reverse(); // 履歴は新しい順
+            } else {
+                jobs = activeJobs.slice();
             }
             if (jobs.length === 0) {
-                container.innerHTML = claudeJobsTab === 'waiting'
-                    ? `<p class='text-xs text-slate-400 text-center py-6'>待機中のジョブはありません。</p>`
-                    : `<p class='text-xs text-slate-400 text-center py-6'>表示できるジョブがありません。ギャラリーで写真を選択し「Museに送る」を押してください。</p>`;
+                const emptyMsg = claudeJobsTab === 'waiting'
+                    ? '待機中のジョブはありません。'
+                    : (claudeJobsTab === 'history'
+                        ? '履歴に表示できるジョブはありません。'
+                        : '表示できるジョブがありません。ギャラリーで写真を選択し「Museに送る」を押してください。');
+                container.innerHTML = `<p class='text-xs text-slate-400 text-center py-6'>${emptyMsg}</p>`;
                 return;
             }
             container.innerHTML = jobs.map(job => {
@@ -2689,7 +2723,7 @@ public static class DashboardHtml
                         <div class='flex items-center gap-2 flex-wrap'>
                             <span class='text-[10px] font-bold px-1.5 py-0.5 rounded ${info.cls}'>${info.label}</span>
                             ${queueBadge}
-                            <span class='font-bold text-slate-800 truncate cursor-pointer hover:underline' title='商品カードへ移動' onclick='jumpToClaudeJobItem(${job.itemId || 0})'>${escapeHtml(job.itemTitle || '(無題)')}</span>
+                            <span class='font-bold text-slate-800 truncate cursor-pointer hover:underline' title='商品カードへ移動' onclick='jumpToClaudeJobItem(${job.itemId || 0}, ""${job.itemUuid || ''}"")'>${escapeHtml(job.itemTitle || '(無題)')}</span>
                             ${ackMark}
                         </div>
                         <p class='text-[11px] text-slate-500 mt-0.5'>写真 ${job.photos ? job.photos.length : 0}枚 / テンプレート「${escapeHtml(job.templateName || '')}」 / ${escapeHtml(job.origin === 'phone' ? 'スマホから' : 'PCから')} / ${escapeHtml(created)}${countsText}</p>
@@ -2697,8 +2731,8 @@ public static class DashboardHtml
                     </div>
                     ${moveBtns}
                     ${canCancel ? `<button type='button' onclick='cancelClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded text-[11px] font-bold transition shrink-0'>取消</button>` : ''}
-                    ${unacked ? `<button type='button' onclick='ackClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-[11px] font-bold transition shrink-0'>確認</button>` : ''}
-                    ${errorJob ? `<button type='button' onclick='dismissClaudeJobError(""${job.jobId}"")' class='px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] font-bold transition shrink-0'>エラーを解消</button>` : ''}
+                    ${unacked && !errorJob ? `<button type='button' onclick='ackClaudeJob(""${job.jobId}"")' class='px-2 py-1 bg-violet-600 hover:bg-violet-500 text-white rounded text-[11px] font-bold transition shrink-0'>確認</button>` : ''}
+                    ${errorJob ? `<button type='button' onclick='dismissClaudeJobError(""${job.jobId}"", ${unacked})' class='px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[11px] font-bold transition shrink-0'>エラーを解消</button>` : ''}
                 </div>`;
             }).join('');
         }
