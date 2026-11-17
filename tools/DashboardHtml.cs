@@ -180,7 +180,7 @@ public static class DashboardHtml
                             <p id='claude-col-error' class='text-base font-black text-rose-900'>0件</p>
                         </button>
                     </div>
-                    <button onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                    <button type='button' onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-list-check text-xs'></i> ジョブ一覧を開く
                     </button>
                 </div>
@@ -2884,7 +2884,7 @@ public static class DashboardHtml
                 showToast(queue === 'waiting'
                     ? '待機リストへ送りました（' + targets.length + '枚）'
                     : 'Museジョブを作成しました（' + targets.length + '枚・' + queueLabel + '）スマホの承認をお待ちください');
-                openClaudeJobsModal();
+                openClaudeJobsModal(queue === 'waiting' ? ""waiting"" : ""active"");
             } catch (e) {
                 showToast('エラー: ' + e.message);
             }
