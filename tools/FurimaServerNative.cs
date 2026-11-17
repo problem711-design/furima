@@ -1715,6 +1715,16 @@ class FurimaServerNative
             }
             else if (rawPath == "/api/server/status")
             {
+                // フェーズ 6-7 是正 (Build 12 / 46-4): 失効の遅延評価をステータス応答でも行い、
+                // PC 管理画面の常時表示 (承認待ち・待機中) がスマホ未接続でも実態と一致するようにする。
+                // 変更があれば各評価ヘルパーが claudeRevision を進めるため、この応答の claudeRevision に
+                // 反映され、ダッシュボードのポーリングが遷移を検知してジョブを再取得する。
+                // (一覧取得 HandleGetClaudeJobs と同じ評価。lockObj は保持せずに実行する)
+                foreach (var sweepJob in ClaudeJobStore.GetJobs(null))
+                {
+                    ApplyApprovalPendingExpiry(sweepJob);
+                    ApplyTokenExpiry(sweepJob);
+                }
                 bool isConnected = (DateTime.Now - lastHeartbeat).TotalSeconds < 25;
                 int missingCount;
                 int trashCount = 0;

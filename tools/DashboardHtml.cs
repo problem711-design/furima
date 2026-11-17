@@ -84,7 +84,7 @@ public static class DashboardHtml
             </div>
 
             <!-- 右側: 固定コントロールパネル (売上分析拡充) -->
-            <aside class='w-full lg:w-64 shrink-0 lg:sticky lg:top-14 lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto custom-scroll space-y-3'>
+            <aside class='w-full lg:w-64 shrink-0 lg:sticky lg:top-[4.5rem] lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto custom-scroll space-y-3'>
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
                         <i class='fa-solid fa-chart-pie text-indigo-500'></i> 実績・売上分析
@@ -163,22 +163,22 @@ public static class DashboardHtml
                         <i class='fa-solid fa-wand-magic-sparkles text-violet-500'></i> Muse 連携
                     </h2>
                     <div class='grid grid-cols-2 gap-2'>
-                        <div class='bg-violet-50/70 p-2 rounded border border-violet-100'>
+                        <button type='button' onclick='openClaudeJobsModal(""active"")' class='bg-violet-50/70 p-2 rounded border border-violet-100 text-left hover:bg-violet-100/70 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>処理中</p>
                             <p id='claude-col-processing' class='text-base font-black text-violet-900'>0件</p>
-                        </div>
-                        <div class='bg-amber-50/70 p-2 rounded border border-amber-100'>
+                        </button>
+                        <button type='button' onclick='openClaudeJobsModal(""active"")' class='bg-amber-50/70 p-2 rounded border border-amber-100 text-left hover:bg-amber-100/70 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>承認待ち</p>
                             <p id='claude-col-approval' class='text-base font-black text-amber-900'>0件</p>
-                        </div>
-                        <div class='bg-slate-50 p-2 rounded border border-slate-100'>
+                        </button>
+                        <button type='button' onclick='openClaudeJobsModal(""waiting"")' class='bg-slate-50 p-2 rounded border border-slate-100 text-left hover:bg-slate-100 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>待機中</p>
                             <p id='claude-col-waiting' class='text-base font-black text-slate-800'>0件</p>
-                        </div>
-                        <div class='bg-rose-50/70 p-2 rounded border border-rose-100'>
+                        </button>
+                        <button type='button' onclick='openClaudeJobsModal(""waiting"")' class='bg-rose-50/70 p-2 rounded border border-rose-100 text-left hover:bg-rose-100/70 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>エラー</p>
                             <p id='claude-col-error' class='text-base font-black text-rose-900'>0件</p>
-                        </div>
+                        </button>
                     </div>
                     <button onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-list-check text-xs'></i> ジョブ一覧を開く
@@ -199,7 +199,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 11)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 12)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -1747,16 +1747,17 @@ public static class DashboardHtml
                     fetchSettings();
                 }
                 const srvLabelSeenRev = typeof statusData.labelSeenRevision === 'number' ? statusData.labelSeenRevision : null;
-                if (srvLabelSeenRev !== null && srvLabelSeenRev !== lastKnownLabelSeenRevision) {
-                    fetchClaudeJobs();
-                }
                 const srvClaudeRev = typeof statusData.claudeRevision === 'number' ? statusData.claudeRevision : null;
-                if (srvClaudeRev !== null && srvClaudeRev !== lastKnownClaudeRevision) {
-                    lastKnownClaudeRevision = srvClaudeRev;
-                    refreshClaudeJobsCount();
+                const jobsChanged = (srvLabelSeenRev !== null && srvLabelSeenRev !== lastKnownLabelSeenRevision)
+                    || (srvClaudeRev !== null && srvClaudeRev !== lastKnownClaudeRevision);
+                if (jobsChanged) {
+                    // 1 ティックにつきジョブ取得は最大 1 回に統合する (46-2)。リビジョンの先行確定はせず、
+                    // fetchClaudeJobs の成功時にのみ確定させるため、失敗した場合は次ティックで再試行される。
                     const jobsModal = document.getElementById('claude-jobs-modal');
                     if (jobsModal && !jobsModal.classList.contains('hidden')) {
-                        refreshClaudeJobsList();
+                        await refreshClaudeJobsList();
+                    } else {
+                        await refreshClaudeJobsCount();
                     }
                 }
                 if (srvDataRev === null || srvDataRev !== lastKnownDataRevision) {
@@ -1779,7 +1780,8 @@ public static class DashboardHtml
                     updateStatusBannerFromData(statusData);
                     if (typeof statusData.dataRevision === 'number') lastKnownDataRevision = statusData.dataRevision;
                     if (typeof statusData.settingsRevision === 'number') lastKnownSettingsRevision = statusData.settingsRevision;
-                    if (typeof statusData.claudeRevision === 'number') lastKnownClaudeRevision = statusData.claudeRevision;
+                    // claudeRevision はここでは先行確定しない (46-2)。末尾の refreshClaudeJobsCount が
+                    // 取得成功時に fetchClaudeJobs 内で確定させる。
                 }
             } catch (e) {}
 
@@ -2558,13 +2560,18 @@ public static class DashboardHtml
             }
         }
 
+        let claudeJobsFetchSeq = 0;
         async function fetchClaudeJobs() {
             const seqAtStart = claudeSeenSeq;
+            const fetchSeq = ++claudeJobsFetchSeq;
             try {
                 const res = await fetch('/api/claude/jobs', { headers: getHeaders() });
-                if (!res.ok) return;
+                if (!res.ok) return false;
                 const data = await res.json();
+                // 後発の取得が始まっている場合、遅れて届いた古い応答はキャッシュへ反映しない (46-2 世代ガード)
+                if (fetchSeq !== claudeJobsFetchSeq) return false;
                 claudeJobsCache = Array.isArray(data.jobs) ? data.jobs : [];
+                // リビジョンの確定は取得成功時にのみここで行う (呼び出し側での先行代入はしない / 46-2)
                 if (typeof data.claudeRevision === 'number') lastKnownClaudeRevision = data.claudeRevision;
                 // 取得中に自端末の既読化が走っていない場合のみ、サーバーの既読状態を基準として採用する。
                 // サーバー側カウンタが下がった場合でも取り逃がさない (37-1 と同種の対策 / 34-4-1)
@@ -2575,16 +2582,20 @@ public static class DashboardHtml
                 renderItems();
                 if (currentViewerItemId) renderViewerPhotos();
                 updateClaudeColumn();
-            } catch (e) {}
+                return true;
+            } catch (e) { return false; }
         }
 
         // フェーズ 6-7: 右カラムのミューズカラムの件数を、取得済みジョブから更新する (計画 §27.3)
+        // 4 タイルは相互排他 (46-1 是正): 処理中 = 依頼中タブのうち承認待ちを除いたもの
+        // (巡回・手動キュー + 承認済み + 処理中)、承認待ち = approval_pending、
+        // 待機中 = 待機キューのみ、エラー = 未解消エラーのみ。履歴のジョブはどのタイルにも入らない。
         function updateClaudeColumn() {
             const jobs = claudeJobsCache || [];
             const setText = (id, n) => { const el = document.getElementById(id); if (el) el.innerText = n + '件'; };
-            setText('claude-col-processing', jobs.filter(j => j.status === 'approved' || j.status === 'processing').length);
+            setText('claude-col-processing', jobs.filter(j => claudeJobTab(j) === 'active' && j.status !== 'approval_pending').length);
             setText('claude-col-approval', jobs.filter(j => j.status === 'approval_pending').length);
-            setText('claude-col-waiting', jobs.filter(j => claudeJobTab(j) === 'waiting').length);
+            setText('claude-col-waiting', jobs.filter(j => j.status === 'queued' && j.queue === 'waiting').length);
             setText('claude-col-error', jobs.filter(isClaudeErrorJob).length);
         }
 
@@ -2593,15 +2604,22 @@ public static class DashboardHtml
             return claudeJobsCache.filter(j => claudeJobTab(j) === 'active').length;
         }
 
-        function refreshClaudeJobsCount() {
-            fetchClaudeJobs().then(() => {
-                const el = document.getElementById('viewer-claude-jobs-count');
-                if (el) el.innerText = countActiveClaudeJobs();
-            });
+        function applyClaudeJobsBadge() {
+            const el = document.getElementById('viewer-claude-jobs-count');
+            if (el) el.innerText = countActiveClaudeJobs();
         }
 
-        async function openClaudeJobsModal() {
+        async function refreshClaudeJobsCount() {
+            // 取得失敗時は旧キャッシュで UI を上書きしない (46-2)
+            const ok = await fetchClaudeJobs();
+            if (ok) applyClaudeJobsBadge();
+        }
+
+        async function openClaudeJobsModal(initialTab) {
+            // 開くタブを明示する (未指定・不正値の場合は依頼中)。前回のタブ状態は持ち越さない (46-3)
+            claudeJobsTab = (initialTab === 'waiting' || initialTab === 'history' || initialTab === 'active') ? initialTab : 'active';
             document.getElementById('claude-jobs-modal').classList.remove('hidden');
+            renderClaudeJobsList(); // キャッシュから即時描画し、裏で最新を取得する (46-3)
             await refreshClaudeJobsList();
         }
 
@@ -2610,10 +2628,9 @@ public static class DashboardHtml
         }
 
         async function refreshClaudeJobsList() {
-            await fetchClaudeJobs();
+            const ok = await fetchClaudeJobs();
+            if (ok) applyClaudeJobsBadge();
             renderClaudeJobsList();
-            const el = document.getElementById('viewer-claude-jobs-count');
-            if (el) el.innerText = countActiveClaudeJobs();
         }
 
         // フェーズ 6-6 是正 (Build 10 / §39-3・§42・§43): ジョブ一覧のタブ分類は単一関数に一本化する (計画 §27.2 改定)。
@@ -2684,7 +2701,6 @@ public static class DashboardHtml
                     showToast('エラーを解消済みにしました');
                 }
                 await refreshClaudeJobsList();
-                refreshClaudeJobsCount();
             } catch (e) {
                 showToast('エラー: ' + e.message);
             }
@@ -2788,7 +2804,6 @@ public static class DashboardHtml
                 if (!res.ok || data.status === 'error') throw new Error(data.message || '移動に失敗しました');
                 showToast(queue === 'waiting' ? '待機リストへ移しました' : '送信しました（スマホに承認リクエストが届きます）');
                 await refreshClaudeJobsList();
-                refreshClaudeJobsCount();
             } catch (e) {
                 showToast('エラー: ' + e.message);
             }
