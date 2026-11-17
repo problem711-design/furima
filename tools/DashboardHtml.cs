@@ -143,30 +143,6 @@ public static class DashboardHtml
 
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
-                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真情報
-                    </h2>
-                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
-                        <span class='text-slate-600 font-medium'>取込済み写真</span>
-                        <span id='stat-photo-index-count' class='font-bold text-slate-800 font-mono'>0枚</span>
-                    </div>
-                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
-                        <span class='text-slate-600 font-medium'>保存フォルダ容量</span>
-                        <span id='stat-storage-size' class='text-xs font-black text-slate-800'>...</span>
-                    </div>
-                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
-                        <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 10)</span>
-                    </div>
-                    <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
-                        <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
-                    </button>
-                    <button onclick='openPhotoTrashModal()' class='w-full bg-rose-600 hover:bg-rose-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
-                        <i class='fa-solid fa-trash-can-arrow-up text-xs'></i> 写真ゴミ箱 (<span id='sidebar-photo-trash-count'>0</span>)
-                    </button>
-                </div>
-
-                <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
-                    <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
                         <i class='fa-solid fa-sliders text-indigo-500'></i> コントロール
                     </h2>
                     <button onclick='openAddModal()' class='w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
@@ -182,6 +158,57 @@ public static class DashboardHtml
                         <i class='fa-solid fa-rotate-right text-xs'></i> データ手動更新
                     </button>
                 </div>
+                <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
+                    <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
+                        <i class='fa-solid fa-wand-magic-sparkles text-violet-500'></i> Muse 連携
+                    </h2>
+                    <div class='grid grid-cols-2 gap-2'>
+                        <div class='bg-violet-50/70 p-2 rounded border border-violet-100'>
+                            <p class='text-[10px] font-medium text-slate-500'>処理中</p>
+                            <p id='claude-col-processing' class='text-base font-black text-violet-900'>0件</p>
+                        </div>
+                        <div class='bg-amber-50/70 p-2 rounded border border-amber-100'>
+                            <p class='text-[10px] font-medium text-slate-500'>承認待ち</p>
+                            <p id='claude-col-approval' class='text-base font-black text-amber-900'>0件</p>
+                        </div>
+                        <div class='bg-slate-50 p-2 rounded border border-slate-100'>
+                            <p class='text-[10px] font-medium text-slate-500'>待機中</p>
+                            <p id='claude-col-waiting' class='text-base font-black text-slate-800'>0件</p>
+                        </div>
+                        <div class='bg-rose-50/70 p-2 rounded border border-rose-100'>
+                            <p class='text-[10px] font-medium text-slate-500'>エラー</p>
+                            <p id='claude-col-error' class='text-base font-black text-rose-900'>0件</p>
+                        </div>
+                    </div>
+                    <button onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-list-check text-xs'></i> ジョブ一覧を開く
+                    </button>
+                </div>
+
+                <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
+                    <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
+                        <i class='fa-solid fa-hard-drive text-indigo-500'></i> PC容量 & 写真情報
+                    </h2>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>取込済み写真</span>
+                        <span id='stat-photo-index-count' class='font-bold text-slate-800 font-mono'>0枚</span>
+                    </div>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>保存フォルダ容量</span>
+                        <span id='stat-storage-size' class='text-xs font-black text-slate-800'>...</span>
+                    </div>
+                    <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
+                        <span class='text-slate-600 font-medium'>バージョン</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 11)</span>
+                    </div>
+                    <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
+                    </button>
+                    <button onclick='openPhotoTrashModal()' class='w-full bg-rose-600 hover:bg-rose-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-trash-can-arrow-up text-xs'></i> 写真ゴミ箱 (<span id='sidebar-photo-trash-count'>0</span>)
+                    </button>
+                </div>
+
             </aside>
         </div>
     </main>
@@ -2547,7 +2574,18 @@ public static class DashboardHtml
                 }
                 renderItems();
                 if (currentViewerItemId) renderViewerPhotos();
+                updateClaudeColumn();
             } catch (e) {}
+        }
+
+        // フェーズ 6-7: 右カラムのミューズカラムの件数を、取得済みジョブから更新する (計画 §27.3)
+        function updateClaudeColumn() {
+            const jobs = claudeJobsCache || [];
+            const setText = (id, n) => { const el = document.getElementById(id); if (el) el.innerText = n + '件'; };
+            setText('claude-col-processing', jobs.filter(j => j.status === 'approved' || j.status === 'processing').length);
+            setText('claude-col-approval', jobs.filter(j => j.status === 'approval_pending').length);
+            setText('claude-col-waiting', jobs.filter(j => claudeJobTab(j) === 'waiting').length);
+            setText('claude-col-error', jobs.filter(isClaudeErrorJob).length);
         }
 
         function countActiveClaudeJobs() {
@@ -2671,14 +2709,16 @@ public static class DashboardHtml
                 }
             });
             let jobs;
+            // 並び順はサーバー返却順に依存せず createdAt 基準で決める (44-1): 依頼中・待機中は古い順、履歴は新しい順
+            const byCreatedAsc = (a, b) => (a.createdAt || 0) - (b.createdAt || 0);
             if (claudeJobsTab === 'waiting') {
-                jobs = waitingJobs.slice();
+                jobs = waitingJobs.slice().sort(byCreatedAsc);
                 // エラージョブを先頭に固定表示する (安定ソートで、その中と待機キュー内は古い順を維持)
                 jobs.sort((a, b) => (isClaudeErrorJob(b) ? 1 : 0) - (isClaudeErrorJob(a) ? 1 : 0));
             } else if (claudeJobsTab === 'history') {
-                jobs = historyJobs.slice().reverse(); // 履歴は新しい順
+                jobs = historyJobs.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
             } else {
-                jobs = activeJobs.slice();
+                jobs = activeJobs.slice().sort(byCreatedAsc);
             }
             if (jobs.length === 0) {
                 const emptyMsg = claudeJobsTab === 'waiting'
