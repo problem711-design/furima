@@ -881,6 +881,69 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     val labelVisitSnapshot: StateFlow<Map<String, Long>> = _labelVisitSnapshot.asStateFlow()
 
     // フェーズ 6-5 是正 (Build 13 / 49-1): 閲覧中商品のまとめ UUID 集合 (自分＋子孫・原表記)
+    // フェーズ 6-9 (Build 14): 出品リスト用の商品単位ラベル集約。写真単位の導出 (claudePhotoLabelKey) の上に構築し、
+    // リスト表示では閲覧スナップショットを使わず常に最新の既読時刻のみで評価する (§40.2 / §41.2 / 55-5)。
+    data class ClaudeItemLabelSummary(val key: String, val count: Int)
+
+    private val _claudeLabelTick = MutableStateFlow(0L)
+
+    // 3 日窓の自然消滅に追随するため、一覧画面への復帰時に現在時刻で集約を再導出させる (§41.2)
+    fun refreshClaudeItemLabels() {
+        _claudeLabelTick.value = System.currentTimeMillis()
+    }
+
+    val claudeItemLabelSummaries: StateFlow<Map<Int, ClaudeItemLabelSummary>> =
+        combine(
+            repository.getAllItemsWithPhotos(),
+            _claudeJobsForLabels,
+            _claudeLabelSeenAt,
+            _claudeLabelTick
+        ) { allItems, jobs, seenAt, _ ->
+            buildClaudeItemLabelSummaries(allItems, jobs, seenAt)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap())
+
+    private fun buildClaudeItemLabelSummaries(
+        allItems: List<ItemWithPhotos>,
+        jobs: List<com.example.myapplication.data.server.ClaudeJobDto>,
+        seenAt: Map<String, Long>
+    ): Map<Int, ClaudeItemLabelSummary> {
+        val priority = listOf("error", "processing", "approval", "waiting", "done")
+        val childrenByParent = allItems.filter { it.item.mergedParentId != null }
+            .groupBy { it.item.mergedParentId!! }
+        val result = mutableMapOf<Int, ClaudeItemLabelSummary>()
+        for (top in allItems) {
+            if (top.item.mergedParentId != null) continue
+            // まとめ UUID 集合 (自分+子孫) をメモリ上の親子関係から BFS で解決する (resolveBundleUuids と同じ範囲)
+            val bundleItems = mutableListOf(top)
+            val visited = mutableSetOf(top.item.id)
+            var frontier = listOf(top.item.id)
+            while (frontier.isNotEmpty()) {
+                val next = mutableListOf<Int>()
+                for (pid in frontier) {
+                    for (child in childrenByParent[pid].orEmpty()) {
+                        if (!visited.add(child.item.id)) continue
+                        bundleItems.add(child)
+                        next.add(child.item.id)
+                    }
+                }
+                frontier = next
+            }
+            val bundleUuids = bundleItems.map { it.item.syncUuid }.filter { it.isNotBlank() }
+            val counts = mutableMapOf<String, Int>()
+            for (itemWithPhotos in bundleItems) {
+                for (photo in itemWithPhotos.photos) {
+                    val md5 = photo.md5Hash
+                    if (md5.isBlank()) continue
+                    val key = claudePhotoLabelKey(top.item.syncUuid, bundleUuids, md5, jobs, seenAt, emptyMap()) ?: continue
+                    counts[key] = (counts[key] ?: 0) + 1
+                }
+            }
+            val best = priority.firstOrNull { counts.containsKey(it) } ?: continue
+            result[top.item.id] = ClaudeItemLabelSummary(best, counts[best] ?: 0)
+        }
+        return result
+    }
+
     private val _labelBundleUuids = MutableStateFlow<List<String>>(emptyList())
     val labelBundleUuids: StateFlow<List<String>> = _labelBundleUuids.asStateFlow()
 

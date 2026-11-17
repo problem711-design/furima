@@ -145,6 +145,7 @@ class FleaMarketRepository(private val context: Context) {
     }
 
     fun getAllActiveItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getAllActiveItemsWithPhotos()
+    fun getAllItemsWithPhotos(): Flow<List<ItemWithPhotos>> = dao.getAllItemsWithPhotos()
 
     suspend fun getActiveItemsWithPhotosDirect(): List<ItemWithPhotos> = dao.getActiveItemsWithPhotosDirect()
 

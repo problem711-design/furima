@@ -474,13 +474,13 @@ fun ItemEditScreen(
             existingFilePaths.forEach { path ->
                 val entity = loadedPhotosByPath[path]
                 if (entity != null) {
-                    add(entity.toPreviewPhotoItem())
+                    add(entity.toPreviewPhotoItem().copy(photoKey = "path:$path"))
                 } else {
-                    add(PreviewPhotoItem(model = File(path), hasLocalOriginal = true))
+                    add(PreviewPhotoItem(model = File(path), hasLocalOriginal = true, photoKey = "path:$path"))
                 }
             }
             newImageUris.forEach { uri ->
-                add(PreviewPhotoItem(model = uri, hasLocalOriginal = true))
+                add(PreviewPhotoItem(model = uri, hasLocalOriginal = true, photoKey = "uri:$uri"))
             }
         }
         if (previewItems.isNotEmpty()) {
@@ -491,16 +491,36 @@ fun ItemEditScreen(
                 onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },
                 onFetchOriginal = { hash -> viewModel.fetchOriginalPhotoCacheFile(hash) },
                 confirmBeforeDelete = false,
+                // フェーズ 6-9 (Build 14): プレビューとグリッドで Muse 送信用の選択状態を共有する
+                selectionKeys = selectedPhotoKeys.toSet(),
+                onToggleSelection = { key ->
+                    // プレビューで最初の 1 枚を ON にしたらグリッド側の選択モードも立てる (§41.2)
+                    if (!selectedPhotoKeys.contains(key)) photoSelectionMode = true
+                    togglePhotoSelection(key)
+                },
+                selectedCount = selectedPhotoCount,
+                onSendToClaude = {
+                    previewStartIndex = null
+                    showClaudeSendDialog = true
+                },
                 onDeletePhoto = { deleteIdx ->
+                    var removedKey: String? = null
                     if (deleteIdx in existingFilePaths.indices) {
                         val removedPath = existingFilePaths.removeAt(deleteIdx)
                         lastDeletedPreviewPhoto = DeletedEditPhoto.Existing(deleteIdx, removedPath)
+                        removedKey = "path:$removedPath"
                     } else {
                         val newIdx = deleteIdx - existingFilePaths.size
                         if (newIdx in newImageUris.indices) {
                             val removedUri = newImageUris.removeAt(newIdx)
                             lastDeletedPreviewPhoto = DeletedEditPhoto.NewUri(newIdx, removedUri)
+                            removedKey = "uri:$removedUri"
                         }
+                    }
+                    // フェーズ 6-9 (Build 14): プレビューで削除した写真は選択からも外す (元に戻しても選択は戻らない)
+                    if (removedKey != null) {
+                        selectedPhotoKeys.remove(removedKey)
+                        if (selectedPhotoKeys.isEmpty()) photoSelectionMode = false
                     }
                     if (existingFilePaths.isEmpty() && newImageUris.isEmpty()) {
                         previewStartIndex = null
@@ -814,6 +834,9 @@ fun ItemEditScreen(
                                             if (!selectedPhotoKeys.contains(photoKey)) {
                                                 selectedPhotoKeys.add(photoKey)
                                             }
+                                        } else {
+                                            // フェーズ 6-9 (Build 14): 選択モード中は長押しでプレビューを開く (§41.2 / 55-3)
+                                            previewStartIndex = index
                                         }
                                     }
                                 )
@@ -921,6 +944,9 @@ fun ItemEditScreen(
                                             if (!selectedPhotoKeys.contains(photoKey)) {
                                                 selectedPhotoKeys.add(photoKey)
                                             }
+                                        } else {
+                                            // フェーズ 6-9 (Build 14): 選択モード中は長押しでプレビューを開く (§41.2 / 55-3)
+                                            previewStartIndex = existingFilePaths.size + index
                                         }
                                     }
                                 )

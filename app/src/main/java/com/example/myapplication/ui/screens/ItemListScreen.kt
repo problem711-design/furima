@@ -69,6 +69,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -138,6 +139,7 @@ fun ItemListScreen(
     val unsyncedItemsCount by viewModel.unsyncedItemsCount.collectAsState()
     val pcServerUrl by viewModel.pcServerUrl.collectAsState()
     val lastSyncSuccessAt by viewModel.lastSyncSuccessAt.collectAsState()
+    val claudeItemLabels by viewModel.claudeItemLabelSummaries.collectAsState()
 
     var showSortMenu by remember { mutableStateOf(false) }
     var showMergeDialog by remember { mutableStateOf(false) }
@@ -152,6 +154,16 @@ fun ItemListScreen(
     // 検索語やフィルターが変わったら表示件数をリセット
     LaunchedEffect(searchQuery, statusFilter, sortOption) {
         displayLimit = 20
+    }
+
+    // フェーズ 6-9 (Build 14): 一覧への復帰時に Muse ラベル集約を現在時刻で再導出する (3 日窓の自然消滅への追随)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) viewModel.refreshClaudeItemLabels()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val visibleItems = remember(filteredItems, displayLimit) {
@@ -625,6 +637,7 @@ fun ItemListScreen(
                             val isSelected = selectedItemIds.contains(itemWithPhotos.item.id)
                             CompactItemCard(
                                 itemWithPhotos = itemWithPhotos,
+                                claudeLabel = claudeItemLabels[itemWithPhotos.item.id],
                                 defaultFeePercent = defaultSettings.defaultFeeRatePercent,
                                 defaultShipping = defaultSettings.defaultShippingCost,
                                 defaultExpense = defaultSettings.defaultExpenseCost,
@@ -777,6 +790,7 @@ fun ItemListScreen(
 @Composable
 fun CompactItemCard(
     itemWithPhotos: ItemWithPhotos,
+    claudeLabel: FleaMarketViewModel.ClaudeItemLabelSummary? = null,
     defaultFeePercent: Int,
     defaultShipping: Int,
     defaultExpense: Int,
@@ -924,6 +938,25 @@ fun CompactItemCard(
                                 fontWeight = FontWeight.Bold
                             )
                         }
+                    }
+                }
+
+                // フェーズ 6-9 (Build 14): Muse ラベルの商品単位集約チップ (優先順位と件数表記は PC と同一)
+                if (claudeLabel != null) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(4.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(claudeLabelColor(claudeLabel.key))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = claudeLabelText(claudeLabel.key) + if ((claudeLabel.key == "error" || claudeLabel.key == "done") && claudeLabel.count > 1) " ×${claudeLabel.count}" else "",
+                            color = if (claudeLabel.key == "approval") Color.Black else Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
 

@@ -8,6 +8,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -37,6 +38,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Hd
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -82,7 +85,9 @@ import java.io.File
 data class PreviewPhotoItem(
     val model: Any?,
     val md5Hash: String = "",
-    val hasLocalOriginal: Boolean = true
+    val hasLocalOriginal: Boolean = true,
+    // フェーズ 6-9 (Build 14): グリッド側の選択状態と共有するための選択キー (呼び出し側が付与。未付与なら選択 UI は出ない)
+    val photoKey: String = ""
 )
 
 fun PhotoEntity.toPreviewPhotoItem(): PreviewPhotoItem {
@@ -109,6 +114,11 @@ fun PhotoPreviewDialog(
     confirmBeforeDelete: Boolean = false,
     onDeletePhoto: ((Int) -> Unit)? = null,
     onUndoDelete: (() -> Unit)? = null,
+    // フェーズ 6-9 (Build 14): Muse 送信用の共有選択 (任意。渡された場合だけチェックボックスと送信ボタンを出す)
+    selectionKeys: Set<String>? = null,
+    onToggleSelection: ((String) -> Unit)? = null,
+    selectedCount: Int = 0,
+    onSendToClaude: (() -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     if (photos.isEmpty()) {
@@ -342,6 +352,51 @@ fun PhotoPreviewDialog(
                                 contentDescription = "閉じる",
                                 tint = Color.White
                             )
+                        }
+                    }
+                }
+
+                // フェーズ 6-9 (Build 14): 現在表示中の写真の Muse 送信用チェック + 選択中の一括送信ボタン
+                if (selectionKeys != null && onToggleSelection != null && activePhoto.photoKey.isNotBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { onToggleSelection(activePhoto.photoKey) }
+                                .padding(end = 8.dp)
+                        ) {
+                            Checkbox(
+                                checked = selectionKeys.contains(activePhoto.photoKey),
+                                onCheckedChange = { onToggleSelection(activePhoto.photoKey) },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = MaterialTheme.colorScheme.primary,
+                                    uncheckedColor = Color.White,
+                                    checkmarkColor = Color.White
+                                ),
+                                modifier = Modifier.testTag("photo_preview_select_checkbox")
+                            )
+                            Text(
+                                text = "Muse に送る写真に含める",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        if (onSendToClaude != null && selectedCount > 0) {
+                            Button(
+                                onClick = onSendToClaude,
+                                shape = RoundedCornerShape(20.dp),
+                                modifier = Modifier
+                                    .height(40.dp)
+                                    .testTag("photo_preview_send_claude_button")
+                            ) {
+                                Text("選択中 ${selectedCount}枚を Muse に送る", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
