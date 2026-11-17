@@ -1009,6 +1009,8 @@
 - §36.1 出品リストのラベル: `app/src/main/java/com/example/myapplication/ui/screens/ItemListScreen.kt`（カードへのチップ重ね）、`app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`（商品単位の集約。写真単位の導出 `claudePhotoLabelKey` と Build 13 のまとめ UUID 集合を再利用する）。
 - 注意: リスト表示で既読化しないこと（§36.1）。ジョブデータの取得は既存のラベル用取得に相乗りし、リスト表示のために追加の通信を増やさない。
 
+- 同梱する小修正（2026-11-18 ユーザー発見）: スマホの設定画面のバージョン表記が「バージョン 1.3 (Build 1313)」と内部コード（versionCode = major×1000＋minor×100＋build）をそのまま表示している。表示箇所は `SettingsStorageScreen.kt` の 1 箇所のみで、PC 管理画面とスマホ内蔵 Web 画面は「v1.3 (Build 13)」と正しい。versionCode から build 成分（下 2 桁）を取り出して表示するよう直す。
+
 ### バッチ 3【小〜中／PC＋Android＋サーバー小】§37.1＋§37.4 6-10 相当 → `v1.3 Build 15`
 - §37.1 ラベルの実態連動: `tools/DashboardHtml.cs`（ラベル導出とミューズカラムの 5 分割）、`app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`（ラベル導出）、`app/src/main/java/com/example/myapplication/ui/screens/ItemDetailScreen.kt`・`ItemEditScreen.kt`（開始待ちチップの表示）。
   - **依存注意（最重要）**: ラベル導出は PC（JS）と Android の 2 実装に重複している。本バッチで両方を同時に変えないと、PC とスマホで同じ写真のラベルが食い違う。§27.1／§47.1 の定義は §37.1 が置き換える（旧定義に基づく他の参照箇所が無いか、着手時に全文検索で確認する）。
