@@ -1097,3 +1097,136 @@
 | 8 | 手動／`done`（完了 1 日前） | 既読 | なし | （終端・対象外） |
 | 9 | `done_with_errors`（未解決エラーあり）＋ `processing` が別ジョブで並存 | - | エラー | エラー（未解決分） |
 | 10 | まとめ親の写真に子商品のジョブ（`processing`） | - | 加工中 | 加工中 |
+
+## 42. バッチ 1 切り替え前レビュー用パッケージ（手順文全文・監視スクリプト）（2026-11-18）
+§57.4 の合意に基づくバッチ 1 の実装物。C5 のハードゲートにより、**本節のレビュー合格までは本番フックへ切り替えない**。切り替えは (1) 本スクリプトを `~/hooks/scripts/claude_revision_watch.sh` へ上書き、(2) フックのワーカー手順を §42.1 の全文へ差し替え、(3) ドライランで判定を確認、の順で行う。切り替え後の実地確認は「手動ジョブ 1 件を承認して処理されること」と「待機中ジョブだけでは起床しないこと」で行う。
+- 状態保存規則（§57.3-1 への対応）: リビジョン基準値はジョブ取得と起床判定の完了後にだけ進める。時間帯ビットは純粋なローカル時刻の記録として通常ポーリングで毎回更新するが、時間帯入り契機でジョブ取得に失敗した回は更新せず、次回ポーリングで同じ契機を再試行する。旧状態ファイル（数値のみ）からは、リビジョンを引き継ぎ時間帯ビットを 0 として移行する（移行直後に時間帯内であれば時間帯入り判定が一度走り、滞留ジョブを拾う）。
+- 既知の作動予定: 現在、異常系フォールバック対象（`manual` かつ `queued`）のジョブが 1 件実在する（2026-11-16 の試行時の残り、サンキャッチャー5）。切り替え後の最初の起床で承認待ちへ移るが、実行はユーザーの承認なしには始まらない（10 分で失効し待機へ戻る）。不要なら事前に PC のジョブ画面で取り消しておくこと。
+
+### 42.1 ワーカー手順文（全文）
+```
+フリマ管理サーバーの Muse ジョブを処理するワーカーです。監視スクリプトが「今すぐ処理できるジョブがある」ことを確認してからあなたを起こしています。起床時の payload に含まれる actionable 件数は目安であり、必ず自分で一覧を取得し直し、現在の状態で判断してください。
+
+接続方法:
+- サーバーのベース URL は http://100.87.157.47:8080 です。あなたの送信元アドレスは許可済みのため、ジョブ関係のエンドポイントは Bearer トークンなしで呼べます。
+- シェルから呼ぶ場合はプロキシ経由にしてください: curl --proxy "${HTTPS_PROXY%:*}:3130" --proxytunnel （POST では特に必須です。これがないと 411 になります）。
+
+処理対象と順序:
+1. GET /api/claude/jobs で一覧を取得します。接続できない・認証で弾かれる等の理由で処理を開始できない場合は、その旨をメイン チャットへ通知して終了してください（失敗通知の例外）。
+2. 次の順で処理します:
+   a. status == "processing" のジョブ（キュー不問）: 既に始まっているジョブの完走を最優先します。巡回ジョブでも 22:00 を過ぎていれば完了まで続行します。
+   b. queue == "manual" かつ status == "approved" のジョブ（createdAt の古い順）: 時間帯を問わず処理します。
+   c. queue == "patrol" かつ status == "approved" のジョブ（createdAt の古い順）: 10:00〜22:00（JST）の間だけ新規に開始します。処理の途中で 22:00 を過ぎたら、処理中のジョブは完走させますが、新しい巡回ジョブは開始しません。
+   d. 対象が 0 件なら、通知せず無言で終了してください（状態が変わって対象が消えていることは失敗ではありません）。
+3. 異常系フォールバック: queue が "patrol" または "manual" なのに status == "queued" のジョブがあれば、POST /api/claude/jobs/{jobId}/request-approval で承認待ちへ移すだけに留め、実行はしません（承認はユーザーがスマホで行います）。通常は作成・移動の時点でサーバーが承認待ちにするため、この状態は異常系データに限られます。逆に queue == "waiting" のジョブには絶対に触らないでください。承認が失効したジョブは待機キューへ落ちており、再リクエストはユーザーの操作でのみ行われます。ワーカーが自動で再リクエストすることはありません。
+
+各ジョブの処理:
+4. GET /api/claude/jobs/{jobId} で詳細を取得し、jobToken を受け取ります。
+5. 写真ごとに: 既に job.results に含まれる sourceMd5 は生成しません。GET /api/claude/jobs/{jobId}/photos/{md5}（ヘッダ X-Claude-Job-Token）で取得し、ファイル名は必ず .jpg で保存してから、ジョブの promptText を使って元画像から新規に画像生成します。
+6. 生成結果は JPG にして POST /api/claude/jobs/{jobId}/results（ヘッダ X-Claude-Job-Token、X-Source-Md5、X-File-Name）で返却します。生成や返却に失敗した写真は POST /api/claude/jobs/{jobId}/errors でエラーを記録します。
+7. 全写真を処理したら POST /api/claude/jobs/{jobId}/complete で完了させます。
+
+打ち切りと失敗の扱い:
+8. ジョブへの呼び出しが状態・トークンの不一致で拒否された場合（取り消し済み・失効・状態変化。400/403/409）は、そのジョブは静かに打ち切ってください。エラー記録も再試行もせず、次のジョブへ進みます。
+9. 1 件のジョブが失敗したりトークンが失効したりしても、全体を止めず、残りのジョブの処理を続けてください。
+10. 完了報告はチャットへ送らないでください。例外は「処理を開始できなかった場合」と「その回の対象ジョブがすべて失敗した場合」だけです。その場合のみ、失敗の要点をメイン チャットへ通知してください。
+
+execute summary には、処理したジョブ数・成功/失敗の内訳だけを簡潔に残してください。
+```
+
+### 42.2 監視スクリプト（全文）
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+source "$HATCH_HOOK_RUNTIME"
+
+STATE_FILE="$HOME/hooks/state/claude_revision_watch.last"
+mkdir -p "$(dirname "$STATE_FILE")"
+
+# バッチ1 (計画 §41.1/§42): 時間帯ゲートで一律に眠る方式をやめ、起床前にジョブ実在を判定する。
+# 状態ファイル: 1行目 = last_seen_revision、2行目 = 前回ポーリングが時間帯内だったか (0/1)。
+# 状態の保存規則 (レビュー §57.3-1): リビジョン基準値は「ジョブ取得と起床判定が完了した後」にだけ進める。
+# 時間帯ビットは純粋なローカル時刻の記録であり通常ポーリングでは毎回更新するが、
+# 時間帯入り契機のジョブ取得に失敗した回は更新しない (次回ポーリングで同じ契機を再試行する)。
+
+fetch() {
+  # $1 = path。プロキシ経由 (3130 + proxytunnel) をまず試し、ダメなら直結を試す (現行踏襲)。
+  local path="$1" resp=""
+  if [ -n "${HTTPS_PROXY:-}" ]; then
+    resp=$(curl --fail --silent --show-error --max-time 10 --proxy "${HTTPS_PROXY%:*}:3130" --proxytunnel "http://100.87.157.47:8080$path" 2>/dev/null || true)
+  fi
+  if [ -z "$resp" ]; then
+    resp=$(curl --fail --silent --show-error --max-time 10 "http://100.87.157.47:8080$path" 2>/dev/null || true)
+  fi
+  printf '%s' "$resp"
+}
+
+save_state() {
+  # $1 = revision, $2 = in_window
+  if [ "${HATCH_HOOK_DRY_RUN:-0}" != "1" ]; then
+    printf '%s\n%s\n' "$1" "$2" > "$STATE_FILE"
+  fi
+}
+
+HOUR=$(TZ=Asia/Tokyo date +%-H)
+INWIN=0
+if [ "$HOUR" -ge 10 ] && [ "$HOUR" -lt 22 ]; then INWIN=1; fi
+
+RESP=$(fetch "/api/claude/revision")
+REV=$(printf '%s' "$RESP" | jq -r '.claudeRevision // empty' 2>/dev/null || true)
+if ! [[ "$REV" =~ ^[0-9]+$ ]]; then
+  log "revision fetch inconclusive" '{}'
+  silent "revision fetch inconclusive" '{}'
+  exit 0
+fi
+
+PREV_REV=""
+PREV_INWIN=""
+if [ -f "$STATE_FILE" ]; then
+  PREV_REV=$(sed -n '1p' "$STATE_FILE" || true)
+  PREV_INWIN=$(sed -n '2p' "$STATE_FILE" || true)
+fi
+# 旧形式 (数値のみ) や欠落は時間帯外として扱い、時間帯内なら移行直後に時間帯入り判定を一度走らせる。
+if [ "$PREV_INWIN" != "0" ] && [ "$PREV_INWIN" != "1" ]; then PREV_INWIN=0; fi
+
+TRIGGER=""
+if [ -z "$PREV_REV" ]; then
+  TRIGGER="first"
+elif [ "$REV" != "$PREV_REV" ]; then
+  TRIGGER="revision"
+elif [ "$PREV_INWIN" = "0" ] && [ "$INWIN" = "1" ]; then
+  TRIGGER="window-entry"
+fi
+
+if [ -z "$TRIGGER" ]; then
+  # 契機なし: リビジョンは同値のため、時間帯ビットだけを更新して silent。
+  save_state "$REV" "$INWIN"
+  silent "no trigger" "{\"claudeRevision\":$REV}"
+  exit 0
+fi
+
+JOBS=$(fetch "/api/claude/jobs")
+COUNTS=$(printf '%s' "$JOBS" | jq -c --argjson inwin "$INWIN" '
+  (.jobs // []) as $j
+  | {
+      manual: ([$j[] | select(.queue == "manual" and (.status == "approved" or .status == "processing"))] | length),
+      patrol_processing: ([$j[] | select(.queue == "patrol" and .status == "processing")] | length),
+      patrol_approved: ([$j[] | select(.queue == "patrol" and .status == "approved" and $inwin == 1)] | length),
+      fallback_queued: ([$j[] | select(.queue != "waiting" and .status == "queued")] | length)
+    }' 2>/dev/null || true)
+if [ -z "$COUNTS" ]; then
+  # ジョブ取得に失敗したら状態を一切進めず silent (次回ポーリングで同じ契機を再試行する)。
+  log "jobs fetch inconclusive" '{}'
+  silent "jobs fetch inconclusive" '{}'
+  exit 0
+fi
+
+TOTAL=$(printf '%s' "$COUNTS" | jq -r '.manual + .patrol_processing + .patrol_approved + .fallback_queued')
+# 判定が完了したので状態を進める (起こす場合も起こさない場合も)。
+save_state "$REV" "$INWIN"
+if [ "$TOTAL" -gt 0 ]; then
+  wake "actionable Muse jobs exist ($TRIGGER)" "{\"claudeRevision\":$REV,\"trigger\":\"$TRIGGER\",\"actionable\":$COUNTS}"
+else
+  silent "no actionable jobs ($TRIGGER)" "{\"claudeRevision\":$REV}"
+fi
+```
