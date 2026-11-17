@@ -1609,3 +1609,67 @@ Build 8 の実装コミット **`6036425`**（13 ファイル変更）・バイ�
 
 ### 47.6 次ステップ
 - Build 12 のビルド確認と実装後レビューをお願いしたい。合格すればステップ 3 完了レビューの再審査となり、フェーズ 6 の完了が確定する。
+---
+
+## 48. コードレビュー担当：Build 12（`ed660f4`）再レビューおよびステップ 3 完了レビュー（2026-11-17）
+
+§46 却下に対する是正コミット **`ed660f4`**（8 ファイル変更、`v1.3 Build 12 / 1312`）の差分全量と関連箇所を精査し、静的検証を独立に再実施した。
+
+### 48.1 46-1〜46-4 および観察対応の履行確認 — 全件合格
+- **46-1（二重計上解消）＆ §47.1 補正の採否**:
+  - **§47.1 の分割定義を採用する。** `updateClaudeColumn()`（`DashboardHtml.cs` L2593-2600）で `processing = claudeJobTab(j) === 'active' && j.status !== 'approval_pending'`、`approval = j.status === 'approval_pending'`、`waiting = j.status === 'queued' && j.queue === 'waiting'`、`error = isClaudeErrorJob(j)` と定義されており、4 タイルは完全に相互排他（1 ジョブ＝最大 1 タイル）かつ `処理中 + 承認待ち = 依頼中タブ件数（＝バッジ）`、`待機中 + エラー = 待機中タブ件数` が構造的に保証される。`PLAN` §27.3 への述語式明記も同梱確認済み。
+  - なお「巡回・手動キュー (`queued && queue !== 'waiting'`)」について、現行の `CreateJob` / `HandleMoveClaudeJob` では巡回・手動時に即 `approval_pending` へ入る（主として 6-1a 以前のデータや中間状態由来）ものの、仮に発生した場合でも取りこぼさず 4 タイル合算とタブ合算を完全一致させる点で本定義は妥当。
+- **46-2（更新停止と重複フェッチ解消）**:
+  - `fetchItems()`（L1783-1785）と `pollServerRevisions()`（L1751-1762）から `lastKnownClaudeRevision` の先行代入が撤去され、`fetchClaudeJobs()`（L2575）の成功時にのみ確定するよう一本化された。
+  - `claudeJobsFetchSeq` による世代ガード（L2563-2572）が入り、遅れて届いた古い応答によるキャッシュ・リビジョン上書きを遮断している。
+  - ポーリングは `jobsChanged`（`labelSeenRevision` または `claudeRevision` の変化）で 1 ティック最大 1 回の取得に統合され（モーダル表示中は `refreshClaudeJobsList()`、非表示時は `refreshClaudeJobsCount()`）、`applyClaudeJobsBadge()` は取得成功時（`ok === true`）のみ呼ばれる。`dismissClaudeJobError()`（L2703）・`moveClaudeJob()`（L2806）の冗長な 2 回目取得も削除確認済み。
+- **46-3（タイル導線とモーダル描画）**:
+  - 4 タイルすべてが `<button type='button' onclick='openClaudeJobsModal("active"|"waiting")'>`（L166-181）となり、該当タブを直接開ける。
+  - `openClaudeJobsModal(initialTab)`（L2618-2624）は引数を検証して `claudeJobsTab` を明示確定し（未指定時は `active` で前回タブを持ち越さない）、モーダル表示直後にキャッシュから `renderClaudeJobsList()` を同期実行してから `await refreshClaudeJobsList()` するため、未装飾タブや空リストのちらつきも解消されている。
+- **46-4（承認失効の常時表示反映）**:
+  - `FurimaServerNative.HandleServerStatus()`（L1718-1727）で、`lockObj` 取得前に `ClaudeJobStore.GetJobs(null)` を走査し `ApplyApprovalPendingExpiry` ＋ `ApplyTokenExpiry` を評価している。`MutateJob` 内（`_jobLock` 下）で状態を二重チェックしているため並行リクエストと競合せず、失効時に `claudeRevision` が加算されて同じ `/api/server/status` 応答で返るため、スマホ未接続の PC 放置でもポーリング 1 回でミューズカラムが更新されることを確認した。
+- **観察 1（右カラム上端）**: `<aside>` が `lg:top-[4.5rem]`（L87）へ揃えられ、`lg:max-h-[calc(100vh-4.5rem)]` と整合したことを確認。
+
+### 48.2 静的検証・バージョン整合
+- **3 箇所バージョン統一**: `app/build.gradle.kts`（`versionCode = 1312`, `versionName = "1.3"`）、`DashboardHtml.cs`（L202: `v1.3 (Build 12)`）、`WebDashboardHtml.kt`（L28: `v1.3 (Build 12)`）の 3 箇所が完全一致。
+- **独立静的検査（`ed660f4` 上で再実行）**: `DashboardHtml.cs` bare quote **0 件**、抽出 JS（179,131 文字）の `node --check` **`rc=0`**、`getElementById` 欠損 ID **`0 件`**、`tools/*.cs` C# 6+ 構文混入 **0 件**。
+
+### 48.3 軽微な将来メモ（本判定は妨げない）
+- `DashboardHtml.cs` L183 の「ジョブ一覧を開く」ボタンの `type='button'` 補記（4 タイルボタン側には付与済み・`<form>` 外のため実害なし）、およびビューアから `queue === 'waiting'` で送信した直後の `openClaudeJobsModal()` に `'waiting'` を渡す改善は今後の小改善候補。
+- `HandleServerStatus` の全ジョブ走査は 30 日保持件数が増えた場合に毎回 `CloneJob` + ソートが走るが、個人利用規模では軽微（必要になったらストア側に複製なしスイープ関数を切ればよい）。
+
+### 48.4 判定
+- **Build 12（`ed660f4`）の再レビューおよびステップ 3（6-5〜6-7）のコードレビューは 合格 とする。**
+- ただし `ed660f4` 時点では `furima-server.exe` / APK バイナリは Build 11 のままであり、C# 実コンパイル・APK ビルドはレビュー側では実行できない。**ユーザー側ローカル環境で Build 12 の PC サーバー（`furima-server.exe`）および APK のビルド・動作確認が取れた時点で `6-7` およびフェーズ 6 全体を完了と確定すること。**
+---
+
+## 48. コードレビュー担当：Build 12（`ed660f4`）再レビューおよびステップ 3 完了レビュー（2026-11-17）
+
+§46 却下に対する是正コミット **`ed660f4`**（8 ファイル変更、`v1.3 Build 12 / 1312`）の差分全量と関連箇所を精査し、静的検証を独立に再実施した。
+
+### 48.1 46-1〜46-4 および観察対応の履行確認 — 全件合格
+- **46-1（二重計上解消）＆ §47.1 補正の採否**:
+  - **§47.1 の分割定義を採用する。** `updateClaudeColumn()`（`DashboardHtml.cs` L2593-2600）で `processing = claudeJobTab(j) === 'active' && j.status !== 'approval_pending'`、`approval = j.status === 'approval_pending'`、`waiting = j.status === 'queued' && j.queue === 'waiting'`、`error = isClaudeErrorJob(j)` と定義されており、4 タイルは完全に相互排他（1 ジョブ＝最大 1 タイル）かつ `処理中 + 承認待ち = 依頼中タブ件数（＝バッジ）`、`待機中 + エラー = 待機中タブ件数` が構造的に保証される。`PLAN` §27.3 への述語式明記も同梱確認済み。
+  - なお「巡回・手動キュー (`queued && queue !== 'waiting'`)」について、現行の `CreateJob` / `HandleMoveClaudeJob` では巡回・手動時に即 `approval_pending` へ入る（主として 6-1a 以前のデータや中間状態由来）ものの、仮に発生した場合でも取りこぼさず 4 タイル合算とタブ合算を完全一致させる点で本定義は妥当。
+- **46-2（更新停止と重複フェッチ解消）**:
+  - `fetchItems()`（L1783-1785）と `pollServerRevisions()`（L1751-1762）から `lastKnownClaudeRevision` の先行代入が撤去され、`fetchClaudeJobs()`（L2575）の成功時にのみ確定するよう一本化された。
+  - `claudeJobsFetchSeq` による世代ガード（L2563-2572）が入り、遅れて届いた古い応答によるキャッシュ・リビジョン上書きを遮断している。
+  - ポーリングは `jobsChanged`（`labelSeenRevision` または `claudeRevision` の変化）で 1 ティック最大 1 回の取得に統合され（モーダル表示中は `refreshClaudeJobsList()`、非表示時は `refreshClaudeJobsCount()`）、`applyClaudeJobsBadge()` は取得成功時（`ok === true`）のみ呼ばれる。`dismissClaudeJobError()`（L2703）・`moveClaudeJob()`（L2806）の冗長な 2 回目取得も削除確認済み。
+- **46-3（タイル導線とモーダル描画）**:
+  - 4 タイルすべてが `<button type='button' onclick='openClaudeJobsModal("active"|"waiting")'>`（L166-181）となり、該当タブを直接開ける。
+  - `openClaudeJobsModal(initialTab)`（L2618-2624）は引数を検証して `claudeJobsTab` を明示確定し（未指定時は `active` で前回タブを持ち越さない）、モーダル表示直後にキャッシュから `renderClaudeJobsList()` を同期実行してから `await refreshClaudeJobsList()` するため、未装飾タブや空リストのちらつきも解消されている。
+- **46-4（承認失効の常時表示反映）**:
+  - `FurimaServerNative.HandleServerStatus()`（L1718-1727）で、`lockObj` 取得前に `ClaudeJobStore.GetJobs(null)` を走査し `ApplyApprovalPendingExpiry` ＋ `ApplyTokenExpiry` を評価している。`MutateJob` 内（`_jobLock` 下）で状態を二重チェックしているため並行リクエストと競合せず、失効時に `claudeRevision` が加算されて同じ `/api/server/status` 応答で返るため、スマホ未接続の PC 放置でもポーリング 1 回でミューズカラムが更新されることを確認した。
+- **観察 1（右カラム上端）**: `<aside>` が `lg:top-[4.5rem]`（L87）へ揃えられ、`lg:max-h-[calc(100vh-4.5rem)]` と整合したことを確認。
+
+### 48.2 静的検証・バージョン整合
+- **3 箇所バージョン統一**: `app/build.gradle.kts`（`versionCode = 1312`, `versionName = "1.3"`）、`DashboardHtml.cs`（L202: `v1.3 (Build 12)`）、`WebDashboardHtml.kt`（L28: `v1.3 (Build 12)`）の 3 箇所が完全一致。
+- **独立静的検査（`ed660f4` 上で再実行）**: `DashboardHtml.cs` bare quote **0 件**、抽出 JS（179,131 文字）の `node --check` **`rc=0`**、`getElementById` 欠損 ID **`0 件`**、`tools/*.cs` C# 6+ 構文混入 **0 件**。
+
+### 48.3 軽微な将来メモ（本判定は妨げない）
+- `DashboardHtml.cs` L183 の「ジョブ一覧を開く」ボタンの `type='button'` 補記（4 タイルボタン側には付与済み・`<form>` 外のため実害なし）、およびビューアから `queue === 'waiting'` で送信した直後の `openClaudeJobsModal()` に `'waiting'` を渡す改善は今後の小改善候補。
+- `HandleServerStatus` の全ジョブ走査は 30 日保持件数が増えた場合に毎回 `CloneJob` + ソートが走るが、個人利用規模では軽微（必要になったらストア側に複製なしスイープ関数を切ればよい）。
+
+### 48.4 判定
+- **Build 12（`ed660f4`）の再レビューおよびステップ 3（6-5〜6-7）のコードレビューは 合格 とする。**
+- ただし `ed660f4` 時点では `furima-server.exe` / APK バイナリは Build 11 のままであり、C# 実コンパイル・APK ビルドはレビュー側では実行できない。**ユーザー側ローカル環境で Build 12 の PC サーバー（`furima-server.exe`）および APK のビルド・動作確認が取れた時点で `6-7` およびフェーズ 6 全体を完了と確定すること。**
