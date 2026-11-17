@@ -1641,35 +1641,85 @@ Build 8 の実装コミット **`6036425`**（13 ファイル変更）・バイ�
 ### 48.4 判定
 - **Build 12（`ed660f4`）の再レビューおよびステップ 3（6-5〜6-7）のコードレビューは 合格 とする。**
 - ただし `ed660f4` 時点では `furima-server.exe` / APK バイナリは Build 11 のままであり、C# 実コンパイル・APK ビルドはレビュー側では実行できない。**ユーザー側ローカル環境で Build 12 の PC サーバー（`furima-server.exe`）および APK のビルド・動作確認が取れた時点で `6-7` およびフェーズ 6 全体を完了と確定すること。**
+
 ---
 
-## 48. コードレビュー担当：Build 12（`ed660f4`）再レビューおよびステップ 3 完了レビュー（2026-11-17）
+## 49. コードレビュー担当：コミット `9760fee` 検証およびフェーズ 6 全体（6-1〜6-7）徹底横断監査（2026-11-17）
 
-§46 却下に対する是正コミット **`ed660f4`**（8 ファイル変更、`v1.3 Build 12 / 1312`）の差分全量と関連箇所を精査し、静的検証を独立に再実施した。
+`ed660f4`（Build 12）に対する小改善コミット **`9760fee`** の検証とあわせ、フェーズ 6 全体（`6-1a`〜`6-7`）を実装担当との中間合意済領域・クライアント横断境界・並行実行境界まで踏み込んで再監査した。
 
-### 48.1 46-1〜46-4 および観察対応の履行確認 — 全件合格
-- **46-1（二重計上解消）＆ §47.1 補正の採否**:
-  - **§47.1 の分割定義を採用する。** `updateClaudeColumn()`（`DashboardHtml.cs` L2593-2600）で `processing = claudeJobTab(j) === 'active' && j.status !== 'approval_pending'`、`approval = j.status === 'approval_pending'`、`waiting = j.status === 'queued' && j.queue === 'waiting'`、`error = isClaudeErrorJob(j)` と定義されており、4 タイルは完全に相互排他（1 ジョブ＝最大 1 タイル）かつ `処理中 + 承認待ち = 依頼中タブ件数（＝バッジ）`、`待機中 + エラー = 待機中タブ件数` が構造的に保証される。`PLAN` §27.3 への述語式明記も同梱確認済み。
-  - なお「巡回・手動キュー (`queued && queue !== 'waiting'`)」について、現行の `CreateJob` / `HandleMoveClaudeJob` では巡回・手動時に即 `approval_pending` へ入る（主として 6-1a 以前のデータや中間状態由来）ものの、仮に発生した場合でも取りこぼさず 4 タイル合算とタブ合算を完全一致させる点で本定義は妥当。
-- **46-2（更新停止と重複フェッチ解消）**:
-  - `fetchItems()`（L1783-1785）と `pollServerRevisions()`（L1751-1762）から `lastKnownClaudeRevision` の先行代入が撤去され、`fetchClaudeJobs()`（L2575）の成功時にのみ確定するよう一本化された。
-  - `claudeJobsFetchSeq` による世代ガード（L2563-2572）が入り、遅れて届いた古い応答によるキャッシュ・リビジョン上書きを遮断している。
-  - ポーリングは `jobsChanged`（`labelSeenRevision` または `claudeRevision` の変化）で 1 ティック最大 1 回の取得に統合され（モーダル表示中は `refreshClaudeJobsList()`、非表示時は `refreshClaudeJobsCount()`）、`applyClaudeJobsBadge()` は取得成功時（`ok === true`）のみ呼ばれる。`dismissClaudeJobError()`（L2703）・`moveClaudeJob()`（L2806）の冗長な 2 回目取得も削除確認済み。
-- **46-3（タイル導線とモーダル描画）**:
-  - 4 タイルすべてが `<button type='button' onclick='openClaudeJobsModal("active"|"waiting")'>`（L166-181）となり、該当タブを直接開ける。
-  - `openClaudeJobsModal(initialTab)`（L2618-2624）は引数を検証して `claudeJobsTab` を明示確定し（未指定時は `active` で前回タブを持ち越さない）、モーダル表示直後にキャッシュから `renderClaudeJobsList()` を同期実行してから `await refreshClaudeJobsList()` するため、未装飾タブや空リストのちらつきも解消されている。
-- **46-4（承認失効の常時表示反映）**:
-  - `FurimaServerNative.HandleServerStatus()`（L1718-1727）で、`lockObj` 取得前に `ClaudeJobStore.GetJobs(null)` を走査し `ApplyApprovalPendingExpiry` ＋ `ApplyTokenExpiry` を評価している。`MutateJob` 内（`_jobLock` 下）で状態を二重チェックしているため並行リクエストと競合せず、失効時に `claudeRevision` が加算されて同じ `/api/server/status` 応答で返るため、スマホ未接続の PC 放置でもポーリング 1 回でミューズカラムが更新されることを確認した。
-- **観察 1（右カラム上端）**: `<aside>` が `lg:top-[4.5rem]`（L87）へ揃えられ、`lg:max-h-[calc(100vh-4.5rem)]` と整合したことを確認。
+（※ スコープ境界厳守: `PLAN` §0 / §6 に従い、`LocalWebServer.kt` / `WebDashboardHtml.kt` の既存セキュリティ・設計事項は対象外とし、3 箇所バージョン表記およびステータス表示名一致のみを確認した。また売却 30 日経過写真整理の `SOLD` のみ対象は §30.4-4 既定仕様として妥当とみなした。）
 
-### 48.2 静的検証・バージョン整合
-- **3 箇所バージョン統一**: `app/build.gradle.kts`（`versionCode = 1312`, `versionName = "1.3"`）、`DashboardHtml.cs`（L202: `v1.3 (Build 12)`）、`WebDashboardHtml.kt`（L28: `v1.3 (Build 12)`）の 3 箇所が完全一致。
-- **独立静的検査（`ed660f4` 上で再実行）**: `DashboardHtml.cs` bare quote **0 件**、抽出 JS（179,131 文字）の `node --check` **`rc=0`**、`getElementById` 欠損 ID **`0 件`**、`tools/*.cs` C# 6+ 構文混入 **0 件**。
+### 49.1 コミット `9760fee`（§48.3 メモ反映）の検証 — 実装自体は妥当
+- `tools/DashboardHtml.cs` L183: `<button type='button' onclick='openClaudeJobsModal()' ...>` が付与されたことを確認。
+- `tools/DashboardHtml.cs` L2887: `sendViewerPhotosToClaude()` 成功時に `openClaudeJobsModal(queue === 'waiting' ? ""waiting"" : ""active"");` を渡しており、C# verbatim 文字列内の二重クォート規則を遵守していることを確認（抽出 JS 179,173 bytes の `node --check` 終了コード `0`、bare quote `0` 件）。
+- なお `REVIEW_CLAUDE_SEND_PHASE6.md` 末尾（`87f3c7b`）に §48 節が 2 重に貼られていたため、§49 追記時に重複分を整理した。
 
-### 48.3 軽微な将来メモ（本判定は妨げない）
-- `DashboardHtml.cs` L183 の「ジョブ一覧を開く」ボタンの `type='button'` 補記（4 タイルボタン側には付与済み・`<form>` 外のため実害なし）、およびビューアから `queue === 'waiting'` で送信した直後の `openClaudeJobsModal()` に `'waiting'` を渡す改善は今後の小改善候補。
-- `HandleServerStatus` の全ジョブ走査は 30 日保持件数が増えた場合に毎回 `CloneJob` + ソートが走るが、個人利用規模では軽微（必要になったらストア側に複製なしスイープ関数を切ればよい）。
+### 49.2 フェーズ 6 全体横断監査で新たに検出した実害・不具合（`49-1`〜`49-5`）
 
-### 48.4 判定
-- **Build 12（`ed660f4`）の再レビューおよびステップ 3（6-5〜6-7）のコードレビューは 合格 とする。**
-- ただし `ed660f4` 時点では `furima-server.exe` / APK バイナリは Build 11 のままであり、C# 実コンパイル・APK ビルドはレビュー側では実行できない。**ユーザー側ローカル環境で Build 12 の PC サーバー（`furima-server.exe`）および APK のビルド・動作確認が取れた時点で `6-7` およびフェーズ 6 全体を完了と確定すること。**
+#### **`49-1`【高・6-5 Android】まとめ親商品で Muse ラベルが全消失＆子ジョブの「加工済み」が Android 閲覧で既読化されない**
+- **該当箇所**:
+  - `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt` (`L1017-1109`: `claudePhotoLabelKey`, `beginLabelVisit`, `markClaudeLabelSeen`)
+  - `app/src/main/java/com/example/myapplication/ui/screens/ItemDetailScreen.kt` (`L138-140`, `L713-721`)
+  - `app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt` (`L220-222`, `L834-842`)
+- **原因**:
+  - 仕様上、まとめ親からの送信は禁止されているため（`FurimaServerNative.cs` L4962-4966）、まとめ前に送られたジョブおよび子商品から送られたジョブはすべて `job.itemUuid = 子商品.syncUuid` で作成される。一方、まとめ親の `photos` には子写真の `md5Hash` が引き継がれる（`FleaMarketRepository.kt` L497-508、`FurimaServerNative.cs` L3757-3760）。
+  - PC 管理画面（`DashboardHtml.cs` L2443-2544 `collectBundleUuidSet`）とサーバー（`FurimaServerNative.cs` L6094-6162 `CollectBundleUuidSetForItemUuid`）は親＋再帰子 UUID 集合で導出・既読送信しているが、Android 側は `claudePhotoLabelKey()` が `it.itemUuid.lowercase() == uuid`（単一 UUID）しか照合せず、`beginLabelVisit` / `markClaudeLabelSeen` も `postClaudeLabelSeen(listOf(itemUuid), ...)` と親 UUID しか送っていない（API 自体は複数 `itemUuids` 対応済みで、`ItemDao.kt` L122-123 `getMergedChildItems` も既に存在するにもかかわらず未使用）。
+  - さらに `labelVisitSnapshot` が「閲覧中商品の単一 UUID → seenAt」しか保持していないため、親を開いた後に親 UUID で引いても子ジョブ毎の `seenAtMap[job.itemUuid]` 基準の「加工済み」スナップショットと一致しない。
+- **実害**: Android の商品詳細・編集画面でまとめ親商品を開いても、子写真に紐づく `エラー` / `加工中` / `承認待ち` / `待機中` / `加工済み` チップが**一切表示されない**。また Android でまとめ親を確認しても子商品の `加工済み` がサーバーへ既読記録されず、PC 側に `加工済み` が残り続ける（`PLAN §27.1.1`「全クライアント共通」「全端末で消える」および `§34-1` に反する）。
+- **要求修正**: Android でも `ItemEntity` / `ItemDao.getMergedChildItems`（多段対応の BFS）等からまとめ対象 UUID 集合（自分＋子孫）を解決し、`claudePhotoLabelKey` で全集合のジョブと **各 `job.itemUuid` ごとの `seenAt`**（スナップショットマップ `Map<String, Long>` 優先、PC `viewerSessionSeenMap` 同型）を参照すること。`beginLabelVisit` / `markClaudeLabelSeen` も UUID 集合でスナップショット保存および `POST /api/claude/labels/seen` 一括送信を行うこと。
+
+#### **`49-2`【高・6-1a / 6-1b / 6-7 サーバー】`FurimaServerNative.cs` ジョブ状態遷移の Check-Then-Act 競合（`_jobLock` 内再検証欠落）と `ApplyTokenExpiry` の supersede 漏れ**
+- **該当箇所**: `tools/FurimaServerNative.cs`
+  - `ApplyApprovalPendingExpiry` (`L5146-5167`)
+  - `ApplyTokenExpiry` (`L5173-5233`)
+  - `HandleRequestClaudeApproval` (`L5235-5282`)
+  - `HandleClaudeApproval` (`L5284-5361`)
+  - `HandleMoveClaudeJob` (`L6263-6342`)
+  - `HandleServerStatus` (`L1723-1727`)
+- **原因 1（ロック外判定＋ロック内再検証なし）**:
+  - `ApplyApprovalPendingExpiry`（L5150-5164）は `(now - job.approvalRequestedAt) > 10分` をロック外で判定した後、`MutateJob` 内（`_jobLock` 下）では `j.status == "approval_pending"` しか見ず **期限超過の再計算を行っていない**。直前に `Move(patrol/manual)` や `RequestApproval` で新しい `approvalRequestedAt` に更新された直後のジョブも、`approval_pending` のままだと即座に期限切れ (`waiting`) へ落とされる。
+  - `ApplyTokenExpiry`（L5176-5228）も同様にロック外で `now > jobTokenExpiresAt` を判定し、`MutateJob` 内では `j.status == "approved" || j.status == "processing"` しか確認しない。特に Build 12（`ed660f4`）以降は 3 秒ごとの `/api/server/status` ポーリング（L1723-1727）が `claudeResultWriteLock` を取らずに `ApplyTokenExpiry` を全件スイープするため、`HandleGetClaudeJobPhoto` / `HandlePostClaudeJobResult` / `HandlePostClaudeJobError` による `ExtendClaudeJobToken`（+30分延長）と競合し、延長直後の処理中ジョブを誤失効させる恐れがある。
+  - `HandleClaudeApproval`（L5313-5344）はロック外で `job.status == "approval_pending"` を確認した後、`MutateJob` 内では **`j.status` を一切確認せず** `approved`（＋有効 `jobToken` 発行）または `denied` を上書きする。スマホの承認操作と PC 側の「取消（`cancelled`）」「待機へ（`queued`）」「10分失効」が交錯した場合、取消済み・待機戻し済みのジョブに有効トークンが発行されて復活する。
+  - `HandleMoveClaudeJob`（L6305-6326）と `HandleRequestClaudeApproval`（L5249-5266）も `MutateJob` 内で直前状態を再検証していない（例: スマホ承認で `approved` に変わった瞬間の「待機へ」押下で、`approved` ジョブを `queued/waiting` へ上書き巻き戻しでき、しかも `jobToken` もクリアされない）。
+- **原因 2（`ApplyTokenExpiry` の自動エラー解消漏れ）**:
+  - `ApplyTokenExpiry`（L5180）は一部成功後に期限切れで `done_with_errors` または `done`（全写真成功後に完了呼び出し前に期限切れになった場合 L5221）へ終端する際、`MutateJobWithErrorSupersede(..., CollectBundleUuidSetForItemUuid(job.itemUuid))` ではなく通常の `MutateJob` を呼んでいるため、同写真に対する過去の `done_with_errors` が自動解消（`errorDismissed = true`）されず、ミューズカラムや待機中タブに古いエラーが残留する（`HandleCompleteClaudeJobLocked` L6203-6211 と非対称）。
+- **要求修正**:
+  1. 上記 5 関数すべてで `MutateJob` / `MutateJobWithErrorSupersede` コールバック内（`_jobLock` 保持中）に**時刻・ステータス・`queue` の前提再検証**を入れ、条件不成立時は `return false`（HTTP ハンドラ側も `changed` フラグを見て競合時 `409` 等を返す）こと。
+  2. `ApplyTokenExpiry` の一部着手後終端（`!untouched`）では `MutateJobWithErrorSupersede(..., CollectBundleUuidSetForItemUuid(job.itemUuid))` を使用すること（さらに失効時に `approval_pending` / `approved` / `processing` が競合する場合は `claudeResultWriteLock` とロック順序ガード B の整合も整理すること）。
+
+#### **`49-3`【高・6-1〜6-7 ダッシュボード】`checkIsBundle()` のタイトル文字列ヒューリスティックによる Muse 送信不能＋通常商品誤消去**
+- **該当箇所**: `tools/DashboardHtml.cs`（`L2125-2134` `checkIsBundle`）、および呼び出し元の `renderItems`（`L2211, L2243, L2300`）、`openPhotoViewer`（`L2333`）、`updateViewerSelectionBar`（`L2394-2399`）、`sendViewerPhotosToClaude`（`L2841`）、関連サーバー `tools/FurimaServerNative.cs`（`L3860-3950` `HandleUnmergeItem`）
+- **原因**:
+  - `checkIsBundle(item)` は構造フラグ（`mergedChildCount > 0`, `bundleLevel > 0`, `photos[].childItemId > 0`）に加えて、L2131 で `title.includes('まとめ買い') || title.includes('まとめセット')` だけでまとめ商品とみなしている。
+  - 一方、サーバー（`FurimaServerNative.cs` L4962 `mergedChildCount > 0`）と Android（`ItemListScreen.kt` L802、`ItemEditScreen.kt` L763）はタイトル文字列では判定していない。
+- **実害**:
+  1. 商品タイトルに「まとめ買い割引」「ネクタイ まとめセット」等を含む**通常の単体商品**を開くと、ビューアで「まとめ商品は個別の子商品から送信してください」と警告が出て**Muse 送信 UI が完全無効化**される（子商品が存在しないため送る手段がなくなる）。
+  2. さらにカード上に「まとめ (2点)」「解除」ボタン（L2243, L2300）が誤表示され、「解除」を押すと `HandleUnmergeItem`（`FurimaServerNative.cs` L3879-3950）が**復元する子商品 0 件のまま親商品扱いして `syncUuid` を完全削除リストに登録し、商品フォルダと `itemsDb` レコードを永久削除する**（通常商品のデータ消失バグ）。
+- **要求修正**:
+  - `DashboardHtml.cs` `checkIsBundle()` からタイトル文字列判定（L2131。必要なら構造フィールド欠損のレガシー互換用に限定しても部分一致 `includes` は撤廃）を除去し、サーバー・Android と同じく `mergedChildCount > 0 || bundleLevel > 0 || photos.some(p => p.childItemId > 0)` 基準へ統一すること。またサーバー `HandleUnmergeItem` も、`mergedChildCount <= 0` かつ `restoredCount == 0` の非まとめ商品に対しては削除を実行せず `400` エラーを返すフェイルセーフを入れること。
+
+#### **`49-4`【中・6-4 サーバー】`HandleMergeItems` の利益下限クランプ漏れ＆商品ステータス入力バリデーション欠如**
+- **該当箇所**: `tools/FurimaServerNative.cs`（`L3770` `HandleMergeItems`、および `L2556/2563` `HandleUpdateItem`、`L3158` `HandleBatchUpdateItems`、`L3375` `HandleCreateItem`、`L3694` `HandleMergeItems`）
+- **原因と実害**:
+  1. `HandleMergeItems`（L3770）の `int profit = totalSoldPrice - newShippingCost - (totalSoldPrice * newFeeRatePercent / 100) - newExpenseCost;` だけ `Math.Max(0, ...)` が抜けており、価格より送料・経費が高い場合に負の利益が保存される（`DashboardHtml.cs` L3486、サーバー他ハンドラ L2582/L3226/L3391、Android 算出ロジックはすべて `0` 下限）。
+  2. サーバー側アイテム作成・更新・一括更新・まとめ作成 API が、`status` に `{ "DRAFT", "DRAFT_DONE", "LISTED", "SHIPPING", "SOLD" }` 以外の値（例: `"MERGED"` や任意文字列）を受け入れてしまう。さらに `HandleUpdateItem`（L2563）はゴミ箱内アイテムや `MERGED` 子商品の直接更新を拒否していないため、不整合状態を作れる。
+- **要求修正**: `HandleMergeItems` に `Math.Max(0, ...)` を追加し、作成/更新/一括更新/まとめ作成の許容ステータスを 5 種ホワイトリストで検証すること。
+
+#### **`49-5`【軽微・6-4 / 運用】JS 一括価格%減算の端数丸め差異 ＋ 実バイナリ更新待ち**
+- **該当箇所**: `tools/DashboardHtml.cs` (`L2065` `updateBatchEditPreview`)、およびバイナリ群
+- **内容**:
+  - `updateBatchEditPreview` の `DELTA_PERCENT` 計算は `Math.floor((oldPrice * val) / 100)` を使っているため、値下げ（負数）時に端数が出ると `-1.5 -> -2`（切り下げ）となる一方、C#（`FurimaServerNative.cs` L3194）と Kotlin（`FleaMarketRepository.kt` L681）の整数除算は 0 方向切り捨て（`-1.5 -> -1`、`Math.trunc` 相当）となりプレビューが 1 円ズレる場合がある。`Math.trunc((oldPrice * val) / 100)` で統一すると一致する。
+  - リポジトリ内の `tools/furima-server.exe`・`flea_market_app.apk`・`public/flea_market_app.apk` は現時点（`9760fee`）で Build 11 のままのため、上記是正後に Build 13 としてソースとバイナリを揃えて最終ビルド確認する必要がある。
+
+### 49.3 フェーズ 6 横断で「合格」を確認できた主要領域
+- **認証・公開境界（6-3 / §24 是正）**: `HasForwardedHeaders` によるプロキシ偽装遮断、`GET /` のループバック限定、`TryNormalizeTrustedIp` による厳密な IP 一致＋`IsTrustedClaudeExemptPath/Request` の許可リスト限定、一覧/作成応答からの `jobToken` 非露出は堅牢に機能している。
+- **トークン実行・画像処理・直列化（6-1a / 6-1b / 6-3）**: `TryBuildClaudeDeliveryCopy`（EXIF 回転・2048px/5MB 制限）、結果 25MB 上限＋マジックバイト検証＋衝突回避 `_ai` 命名、`claudeResultWriteLock` 下の結果・エラー・完了・取消直列化は正しく維持されている。
+- **一括承認（6-2）**: 表示中 10 件限定送信・失敗時中断＆ダイアログ保持再試行・確認（ack）と独立 Watch ループ（`claudeRefreshMutex`）は整合している。
+- **ステータス拡張（6-4）**: 5 ステータス＋`IsSoldFamily {SOLD, SHIPPING}`、CSV エクスポート、3 クライアント表記統一、一括復元・更新時の子表示名連動は合格水準（`49-4` 除く）。
+- **ジョブ一覧・ミューズカラム（6-6 / 6-7 `46-1`〜`46-4` + `9760fee`）**: 3 タブ分類一本化、最上位親ジャンプ、エラー解消＋ack 連動、4 タイル相互排他、リビジョン先行確定撤去＋世代ガード＋1 ティック 1 回取得、Build 12 3 箇所バージョン統一は確認済み。
+
+### 49.4 最終判定
+- **コミット `9760fee` の 2 点の改善は問題なし。**
+- **ただしフェーズ 6 全体としては、上記 `49-1`〜`49-4`（特に高優先 `49-1`・`49-2`・`49-3`）が未是正のため、フェーズ 6 完了確定は 否（要修正） とする。**
+- 実装担当は `49-1`〜`49-4`（および可能なら `49-5`）の是正パッチを実装し、再レビュー合格後に Build 13（または最終 Build）のローカル実ビルド確認へ進むこと。

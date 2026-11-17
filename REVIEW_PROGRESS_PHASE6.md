@@ -9,18 +9,20 @@
 
 ---
 
-## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `ed660f4`）
+## 1. 現在地（最終更新: 2026-11-17 / 基準コミット `9760fee`）
 
 - **最後にレビューを完了したリモートコミット**:
   - `323708e`（`v1.3 Build 8` フェーズ `6-5` 是正確認・合格 / `REVIEW` §39.2）
   - `4b32730` / `c0866a5` / `487ee7f`（`v1.3 Build 10` フェーズ `6-6` 是正・合格・ユーザービルド確認完了 / `REVIEW` §44）
-  - `ed660f4`（`v1.3 Build 12` フェーズ `6-7` §46 是正 → **再レビュー合格** / `REVIEW` §48）
+  - `ed660f4`（`v1.3 Build 12` フェーズ `6-7` §46 是正 → 再レビュー合格 / `REVIEW` §48）
+  - `9760fee`（`v1.3 Build 12` L183 `type='button'`・ビューア `'waiting'` タブ開く改善 ＋ **フェーズ 6 全体徹底横断監査 → 否（要修正 `49-1`〜`49-4`）** / `REVIEW` §49）
 - **レビュー完了済み範囲**:
   - 大枠設計協議（`PLAN` §0〜§10 / `REVIEW` §0〜§8）
-  - 実装レビュー（**全サブフェーズ合格済**）: **`6-1a` (`Build 14`)・`6-1b` (`Build 15`)・§12是正 (`Build 16`)・ビルドエラー修正 (`Build 17`)・`6-2` (`v1.1 Build 1`)・`6-3` (`v1.1 Build 2〜3`)・先行UI調整 (`v1.1 Build 4`)・是正バッチ (`v1.1 Build 5`)・ステップ2 `6-4` (`v1.2 Build 6`)・ステップ3 `6-5` (`v1.3 Build 8`)・`6-6` (`v1.3 Build 10`)・`6-7` (`v1.3 Build 12`, `ed660f4`)**
-- **現在のステータス（Build 12 再レビュー＋ステップ 3 完了レビュー：**コードレビュー合格**／Build 12 実ビルド確認待ち）**:
-  - `46-1`（相互排他タイル化＋`PLAN §27.3` 式明記・§47.1 分割採用）・`46-2`（リビジョン先行確定撤去・世代ガード・ポーリング統合）・`46-3`（タイルボタン化・キャッシュ即時描画）・`46-4`（`/api/server/status` 遅延失効スイープ）および観察 1・Build 12 3 箇所統一・JS `node --check`・bare quote 0 件・C# 5 互換をすべて合格確認（詳細: 本台帳 §28 / `REVIEW` §48）。
-  - **ユーザー側ローカル環境で Build 12 のビルド（`furima-server.exe`・APK）と動作確認が取れ次第、`6-7` およびフェーズ 6 完了**。
+  - 各サブフェーズ実装レビュー（`6-1a`〜`6-7`）・`9760fee` 検証・フェーズ 6 全体横断監査（`REVIEW` §49）
+- **現在のステータス（フェーズ 6 全体横断監査：**要修正 `49-1`〜`49-4`**）**:
+  - `9760fee` の 2 改善（`L183 type='button'` / `L2887 openClaudeJobsModal('waiting')`）および §48.2 静的検証は問題なし。
+  - しかしフェーズ 6 全体横断監査にて新規実害 **`49-1`（高: Android まとめ親商品の加工ラベル消失・既読未連動）・`49-2`（高: サーバー側状態遷移の Check-Then-Act 競合＆`ApplyTokenExpiry` supersede 漏れ）・`49-3`（高: `checkIsBundle` タイトル文字列誤判定による送信不能＆通常商品誤消去）・`49-4`（中: `HandleMergeItems` 利益クランプ漏れ＆ステータス検証欠如）**＋軽微 `49-5` を検出（詳細: 本台帳 §29 / `REVIEW` §49）。
+  - **上記 `49-1`〜`49-4` の是正実装および再レビュー合格まではフェーズ 6 完了不可。**
 
 ---
 
@@ -42,6 +44,7 @@
 | **Step 3** | **`6-5`**（加工ラベル＋`§31.3` 一括復元揃え） | **`v1.3 (Build 8)`** (`1308`) | **完了 (`4726e97`)** | **是正確認完了（`§21` / `§39.2`・合格）** | ローカルビルド報告＋JS/C#5/バイナリ確認済 (`9d40c81`, `323708e`) | **`37-1`〜`37-3` 解消確認済 (`323708e`)** | `6036425`, `9d40c81`, `323708e`, `REVIEW` §39.2 |
 | **Step 3** | **`6-6`**（ジョブ一覧改善：3タブ・商品ジャンプ・エラー解消・まとめ範囲） | **`v1.3 (Build 10)`** (`1310`) | 完了 (`PLAN` §27.2改定) | **完了（Build 9 却下 `§39` → Build 10 `§44` 合格）** | ユーザービルド確認＋JS/C#5確認済 (`4b32730`, `487ee7f`) | **完了（`44-1` は 6-7 で回収）** | `4b32730`, `c0866a5`, `487ee7f`, `REVIEW` §44 |
 | **Step 3** | **`6-7`**（右カラム再編・ミューズカラム新設＋`44-1`回収） | **`v1.3 (Build 12)`** (`1312`) | 完了 (`PLAN` §27.3改定) | **完了（Build 11 却下 `§46` → Build 12 `§48` 合格）** | JS `node --check`/C#5 確認済 (`ed660f4`)・ローカルBuild 12確認待ち | **全件解消・確認済 (`46-1`〜`46-4`)** | `ed660f4`, `PLAN` §33, `REVIEW` §48 |
+| **横断監査** | **フェーズ 6 全体再監査＋`9760fee`** | `v1.3 (Build 12)` (`1312`) | — | **実施済（`§49`・要修正）** | JS `node --check`/bare quote 0/3箇所バージョン一致 (`9760fee`) | **新規検出 `49-1`〜`49-5`（要修正）** | `9760fee`, `REVIEW` §49 |
 
 ---
 
@@ -87,6 +90,11 @@
 | **`46-2`** | `tools/DashboardHtml.cs` (`L1749-1788`, `L2561-2601`, `L2686`, `L2790`) | **高・更新停止/競合** | `fetchClaudeJobs()` 成功前に `lastKnownClaudeRevision` を先行上書きし失敗時永久更新停止＋3重並列フェッチ/冗長再取得＋配列世代ガード欠如 | — | **解消・確認済 (`ed660f4` / `REVIEW` §48)** |
 | **`46-3`** | `tools/DashboardHtml.cs` (`L165-186`, `L567-574`, `L2603-2606`) | **中・導線/UI描画** | ミューズカラム 4 タイルがクリック不可、開時に前回タブ（履歴等）を持ち越し、モーダル初回表示で `await` 前に未装飾タブ＋空欄露出 | — | **解消・確認済 (`ed660f4` / `REVIEW` §48)** |
 | **`46-4`** | `tools/FurimaServerNative.cs` (`L1716-1752`, `L5136-5157`) | **中・遅延評価と常時表示** | 10 分承認失効が `/api/server/status` で評価されないため、スマホ未接続の PC 待機時にミューズカラムの `承認待ち` が永久に残留 | 反映済 (`PLAN` §33) | **解消・確認済 (`ed660f4` / `REVIEW` §48)** |
+| **`49-1`** | `FleaMarketViewModel.kt` (`L1017-1109`), `ItemDetailScreen.kt`, `ItemEditScreen.kt` | **高・6-5 Android 不整合** | まとめ親商品で子 UUID を辿らず単一 `itemUuid` のみ参照・既読送信するため、まとめ親の加工ラベル全消失＆子ジョブの「加工済み」既読が PC に同期されない | 要検討 | **未解決（`REVIEW §49` 要修正）** |
+| **`49-2`** | `tools/FurimaServerNative.cs` (`L1723-1727`, `L5146-5233`, `L5248-5345`, `L6293-6326`) | **高・6-1/6-7 並行競合** | 期限・状態遷移をロック外判定し `MutateJob` 内で前提再検証しないため `status` ポーリングや同時承認/取消/移動と競合。加えて `ApplyTokenExpiry` が `MutateJobWithErrorSupersede` を使わず旧エラーを自動解消できない | — | **未解決（`REVIEW §49` 要修正）** |
+| **`49-3`** | `tools/DashboardHtml.cs` (`L2125-2134`) ＋ `FurimaServerNative.cs` (`L3860-3950`) | **高・通常商品誤消去** | `checkIsBundle` がタイトル文字列 `'まとめ買い'` / `'まとめセット'` を部分一致判定するため通常商品の Muse 送信が遮断され、誤表示の「解除」押下で `HandleUnmergeItem` が通常商品＋フォルダを完全削除する | — | **未解決（`REVIEW §49` 要修正）** |
+| **`49-4`** | `tools/FurimaServerNative.cs` (`L2556/2563`, `L3158`, `L3375`, `L3694`, `L3770`) | **中・6-4 整合/検証漏れ** | `HandleMergeItems` の利益計算のみ `Math.Max(0, ...)` 欠落で負の利益が保存される＋サーバー各アイテム更新系にステータス許容値検証およびゴミ箱/`MERGED` 直接更新ガードが欠如 | — | **未解決（`REVIEW §49` 要修正）** |
+| **`49-5`** | `tools/DashboardHtml.cs` (`L2065`), バイナリ群 | **軽微・端数/Build** | 一括価格%減算プレビュー `Math.floor` vs C#/Kotlin `Math.trunc`（1円差）＋ Build 12 以降のバイナリ更新待ち | — | **未解決（`REVIEW §49` 要確認）** |
 
 ---
 
@@ -100,8 +108,12 @@
 5. **テストビルド方針**: テストビルドはユーザー指示時またはステップ区切りを中心とし、中間レビューではコード精査＋軽量静的チェック（C# 5 構文・`DashboardHtml.cs` verbatim `""` バランス・抽出 JS の `node --check` 等）を優先する。
 6. **交互レビュー・ループ運用**: 実装担当から修正案コミットが来たら仕様妥当性をレビューして本ファイルへ追記＋コミットし、双方合意後に実装再開。サブフェーズ等のレビュー終了単位で必ず本ファイルを更新・コミットすること。
 
-### 4.1 次の対象: **Build 12（`ed660f4`）のユーザー側実ビルド・動作確認のみ**（フェーズ 6 コードレビュー全件完了）
-- `6-7` 是正（`46-1`〜`46-4`）およびステップ 3 完了コードレビューは §48 で **合格** 済み。
+### 4.1 次の対象: **フェーズ 6 横断監査指摘 `49-1`〜`49-4` の是正実装＆再レビュー（`9760fee` 検証後に新規検出）**
+1. **`49-1`（高・6-5 Android）**: `FleaMarketViewModel.kt` / `ItemDetailScreen.kt` / `ItemEditScreen.kt` でまとめ親・子孫 UUID 集合を解決し、`claudePhotoLabelKey`（`job.itemUuid` ごとの `seenAt` 参照）・`labelVisitSnapshot`・`markClaudeLabelSeen` を PC 同等にする。
+2. **`49-2`（高・6-1/6-7 サーバー）**: `ApplyApprovalPendingExpiry`・`ApplyTokenExpiry`・`HandleRequestClaudeApproval`・`HandleClaudeApproval`・`HandleMoveClaudeJob` の `MutateJob` 内に時刻・状態・`queue` 再検証を入れ、`ApplyTokenExpiry` 一部着手終端に `MutateJobWithErrorSupersede(..., CollectBundleUuidSetForItemUuid(...))` を適用する。
+3. **`49-3`（高・ダッシュボード＋サーバー）**: `DashboardHtml.cs` `checkIsBundle` からタイトル部分一致（`includes`）を除去し、構造フラグのみへ統一＋`HandleUnmergeItem` に非まとめ商品誤削除ガード（`400` 拒否）を入れる。
+4. **`49-4`（中・6-4 サーバー）**: `HandleMergeItems` の `profit` へ `Math.Max(0, ...)` を追加し、アイテム更新系のステータス検証とゴミ箱/`MERGED` 直接変更抑止を入れる（`49-5` の `Math.trunc` 統一も推奨）。
+5. **再レビュー合格後に** Build 13 として `furima-server.exe`・APK 実ビルド＆動作確認を行うこと。
 
 （以下、Build 10 までの完了済みチェックリスト履歴）
 #### 旧 4.1 記録: `6-6` 是正（Build 10）の実装レビュー【完了・合格 (`§44`)】
@@ -494,3 +506,14 @@
   - `46-4`: `/api/server/status` での `lockObj` 外スイープと `_jobLock` 内の状態再確認による競合防止を確認。
   - 3 箇所バージョン統一（Build 12 / `1312`）・JS `node --check`・bare quote 0 件・C# 5 互換を再確認。
 - **残作業はユーザー側での Build 12 ビルド（`furima-server.exe`・APK）と動作確認のみ。確認完了をもって `6-7` およびフェーズ 6 完了とする。**
+## 29. レビュー担当：`9760fee` 検証＆フェーズ 6 全体徹底横断監査結果（2026-11-17）
+
+- 詳細は `REVIEW_CLAUDE_SEND_PHASE6.md` §49。
+- **`9760fee` 検証**: `DashboardHtml.cs` L183 `type='button'` 追加・L2887 ビューアから `waiting` 送信後の `'waiting'` タブ開く改善、JS `node --check`（179,173B, `rc=0`）、bare quote 0 件を確認（重複 §48 節は `REVIEW_CLAUDE_SEND_PHASE6.md` で整理）。
+- **フェーズ 6 全体横断監査判定: 否（要修正 `49-1`〜`49-4`）**:
+  1. **`49-1`（高・6-5 Android）**: Android の `claudePhotoLabelKey` / `beginLabelVisit` / `markClaudeLabelSeen` がまとめ親の単一 `syncUuid` しか扱わず、子ジョブに紐づくラベル全消失＆Android 閲覧による PC 側既読反映漏れが発生。
+  2. **`49-2`（高・6-1/6-7 サーバー）**: `ApplyApprovalPendingExpiry`・`ApplyTokenExpiry`・`HandleClaudeApproval`・`HandleRequestClaudeApproval`・`HandleMoveClaudeJob` がロック外判定→`MutateJob` 内前提再検証なしで並行競合するほか、`ApplyTokenExpiry` の一部成功終端で `MutateJobWithErrorSupersede` が呼ばれず旧エラーが自動解消されない。
+  3. **`49-3`（高・ダッシュボード/サーバー）**: `DashboardHtml.cs` L2131 `checkIsBundle` のタイトル部分一致（`'まとめ買い'` / `'まとめセット'`）により通常商品が Muse 送信不能になり、誤表示される「解除」ボタンから `HandleUnmergeItem` を経由して通常商品＋フォルダが永久削除される。
+  4. **`49-4`（中・6-4 サーバー）**: `HandleMergeItems` の `profit` 算出に `Math.Max(0, ...)` 欠落＋アイテム系 API のステータスホワイトリスト検証・ゴミ箱/`MERGED` 更新ガード欠如。
+  5. **`49-5`（軽微）**: 一括価格%減算プレビュー `Math.floor` vs C#/Kotlin `Math.trunc` の 1 円丸め差、およびバイナリ群の実ビルド更新待ち。
+- **次は `49-1`〜`49-4` の是正実装と再レビュー。**
