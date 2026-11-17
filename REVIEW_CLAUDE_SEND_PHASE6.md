@@ -1832,3 +1832,79 @@ Build 8 の実装コミット **`6036425`**（13 ファイル変更）・バイ�
 ### 52.10 判定
 - **§35〜§39 を最終実装案として条件付きで合意する。** 条件は C1（登録の不可分性）・C2（カラム数式への `queued` の明記）・C3／C4（取消の対象特定と手順の先行対応）・C5／C6（バッチ 1 の手順文ゲートと承認対象の明記）・C7（集約と導出の同時更新）の 7 件で、いずれも各バッチの着手条件である。条件を満たす範囲で §38 の順序どおり着手してよい。
 - なお本合意は実装案への合意であり、各バッチは従来どおり実装後レビューとユーザーのビルド確認を経ること。
+
+---
+
+## 53. コードレビュー担当：フェーズ 6 完了確認および追加フェーズ群（§35〜§39・§52）実コード再精査・追加指摘（2026-11-18）
+
+最新コミット（`ddf6ddb`）まで同期したうえで、① フェーズ 6（`6-1`〜`6-7`）の完了状態、② 新規則 `§39`（記録の一本化・台帳凍結）、および ③ 追加計画 `§35〜§39` ならびに前セクション `§52` の各前提を **実コードと突合して再精査** した。
+
+結論として、**§52 で見落とされた事実誤認・ロック／同期欠落・データ不整合の穴が 6 件（うち実コード前提誤り 3 件・同期/競合欠陥 2 件・UI 仕様矛盾 1 件）存在する** ため、**表面上の合意はせず、下記 `53-1`〜`53-6` の是正・事前確定を §38 各バッチの追加必須条件（または着手前合意事項）として差し戻す。**
+
+### 53.1 フェーズ 6（6-1〜6-7）完了確認 ＆ §39 合意
+- **フェーズ 6 完了確認**: `0c7fe6b`（Build 13 バイナリ反映）および `8a466ac`（`§51` 合格）により、`6-1a`〜`6-7` の全計画項目が完了していることを確認した。なお軽微なドキュメント整備として、`PROGRESS.md` L14（旧記述のまま）と L69（`- [ ] 【ステップ3】フェーズ 6-7 ...【再レビューと最終ビルド確認待ち】`）が古い状態表記のまま残っているため、次回の `PROGRESS.md` 更新時に実態（完了 `[x]`・ステップ 4 待ち）へ整理されたい。
+- **§39（記録一本化・台帳凍結）**: 合意する。`REVIEW_PROGRESS_PHASE6.md` には一切追記せず、本 `§53` 以降も本ファイルのみへ記録する。
+
+### 53.2 【重大・53-1】§52.7 条件 C6 の前提誤り（実コード上 `manual + queued` は通常発生しない）＆巡回 `processing` 完走規定
+- **§52 との食い違い**: `§52.7` 条件 C6（`REVIEW_CLAUDE_SEND_PHASE6.md` L1821）は手順文に「承認リクエストの対象は『手動キュー かつ `status = queued` のジョブ』と明記せよ」と課しているが、実コードと矛盾している。
+  - `ClaudeJobStore.CreateJob`（`tools/ClaudeJobStore.cs` L339-348）は `queue == "waiting"` のときだけ `status = "queued"` にし、`patrol` / `manual` は **作成と同時に `status = "approval_pending"`**（`approvalRequestedAt = now`）になる。
+  - `FurimaServerNative.HandleMoveClaudeJob`（`tools/FurimaServerNative.cs` L6399-6403）も、`waiting` から `patrol` / `manual` へ移した瞬間に **即座に `status = "approval_pending"`** へ遷移させる。
+  - 一方、承認失効（`ApplyApprovalPendingExpiry`）とトークン失効（`ApplyTokenExpiry`）は `queue = "waiting"`, `status = "queued"` へ落とす。
+- つまり現行サーバーでは、作成・移動の直後にワーカーが `/request-approval` を叩く必要自体がそもそも無い（スマホ側は既に `approval_pending` を直接検知する）。`§37.2`（L962）・`§37.2.1`（L977）および `§52.7` C6 の「作成・移動直後の起床でワーカーが承認リクエストを出す」前提と条件文は実コードに合わせて書き直す必要がある。
+- **手順文へ明記すべき正しい規則（バッチ 1 条件 C5/C6 の修正）**:
+  1. 手動キューの主対象は `queue == "manual" && (status == "approved" || status == "processing")` の実行である（時間帯を問わず実行。万一手動データ等で `queue != "waiting" && status == "queued"` が残っていた場合のみ承認リクエストを出すフォールバック位置づけに改める）。
+  2. **22:00 境界の `processing` 巡回ジョブ完走**: `§37.2`（L962）は「巡回は 10:00〜22:00 の間だけ見る」とする一方、`§37.2.1`（L976）は「一度開始したジョブは完走させる」とある。21:58 に `processing` へ入った巡回ジョブが 22:00 を跨いだ際、手順が `patrol` を一律スキップすると 30 分トークン失効まで放置され `done_with_errors` 化する。**「22:00 外で制限するのは `status == "approved"` の巡回ジョブを新規開始しないことだけであり、既に `status == "processing"` のジョブは巡回であっても完了まで続行する」** と手順文に明記すること。
+  3. **`claude_revision_watch.sh` の状態永続化**: `§37.2.2` の「時間帯入り起床」判定（`last_in_window`）と初回観測フラグは、既存の `last_seen_revision` と同じ状態ファイルへ永続化し、スクリプト再起動や夜間 `manual` 起床を跨いでも 10:00 の巡回キャッチアップが落ちない実装とすること（バッチ 1 の事前転記レビュー時にスクリプト差分も確認する）。
+
+### 53.3 【重大・53-2】§52.1 の事実誤認＋§37.4 の競合穴：`HandleGetClaudeJobPhoto` と `RecordClaudeJobPhotoError` が取消に対して閉じていない
+- **`§52.1`（L1790）の記述誤り**: §52.1 は「写真取得ハンドラはトークン検証に加えて状態検証の二重で閉じており…§37.4 の安全前提は成立している」と結論づけているが、**実コード（`tools/FurimaServerNative.cs` L5436-5554）は取消と直列化されておらず穴がある。**
+  1. `HandleCancelClaudeJob`（L5527）や結果登録系は `lock (claudeResultWriteLock)` を取るが、**`HandleGetClaudeJobPhoto`（L5455-5554）は `claudeResultWriteLock` を取っていない**。そのため、L5478 のトークン・状態検証を通ったあと `File.ReadAllBytes`（L5517）や `TryBuildClaudeDeliveryCopy`（L5521）の実行中に取消が確定しても、古いローカル変数 `job` のまま **`200 OK` で画像バイト列を返してしまう**。
+  2. **より直接的なデータ不整合として `RecordClaudeJobPhotoError`（L5436-5453）がある**: 写真ファイル未発見（L5511）や画像変換失敗（L5524）で呼ばれる `RecordClaudeJobPhotoError` の `MutateJob` ラムダは、`j.errors` の重複チェックしかしておらず、**`j.status == "approved" || j.status == "processing"` を一切検証していない**。取消と交錯した場合、**すでに `status == "cancelled"` となった終端ジョブの `errors` にエラーレコードが追記され、`claudeRevision` まで加算されてしまう**。
+- **バッチ 3 必須是正（追加条件）**:
+  - `RecordClaudeJobPhotoError` の `MutateJob` 内に `if (j.status != "approved" && j.status != "processing") return false;` を追加する。
+  - `HandleGetClaudeJobPhoto` についても、`claudeResultWriteLock` の下で状態・トークン再検証と初回 `approved -> processing` 遷移／エラー記録／応答確定を行う構造へ改め、取消確定後に `200 OK` や `errors` 追記が絶対に起きないようにする（ロック順序は既存のガード B に合わせ、外側の重たい画像変換やディスク読込の扱いもデッドロック・長ロックを避けて検証地点を分離すること）。
+
+### 53.4 【高・53-3】§52.3（C1）の見落とし：テンプレート登録時の `settingsUpdatedAt` 更新欠落によるスマホ同期消失
+- `§52.3`（C1）は `SyncStore` 内での不可分性を指摘したが、**スマホ同期プロトコル上の勝敗判定キー `settingsUpdatedAt` の更新が計画 §35.4・§52.3 とも抜け落ちている**。
+- 実コードでは、`FurimaServerNative.HandleSyncItems`（L2357）と Android `PcServerClient.fetchAndSyncServerSettings`（L436-443）の双方が、**`settingsUpdatedAt` の大小比較** でどちらの `DefaultSettingsConfig`（`promptTemplates` 含む）を採用するかを決定している。
+- `settingsRevision` だけを増やして `settingsUpdatedAt` を更新しないまま `store.json` にテンプレートを追記すると、
+  - スマホは `serverDto.settingsUpdatedAt > localSettings.settingsUpdatedAt` が偽のままのため **新テンプレートを取り込まない**。
+  - 逆にスマホ側で何らかの設定変更があれば `incomingCfg.settingsUpdatedAt > currentCfg.settingsUpdatedAt` が真となり、**PC 側の `store.json` がスマホ側の古い `promptTemplates` で全量上書きされ、登録したテンプレートが消滅する**。
+- さらに `HandleSyncItems`（L2356-2361）の「設定読込 → 時刻比較 → 保存」と `HandleUpdateSettings`（L3570）も `SyncStore` の単一ロックで直列化されていない（`GetDefaultSettings()` は参照を返すだけ）。
+- **バッチ 4 必須是正（C1 への追加要件）**:
+  1. `SyncStore` に新設する不可分メソッド `TryAddPromptTemplate(...)`（仮称）内で、重複チェック・リスト追加と同時に **`settingsUpdatedAt = Math.Max(existingUpdatedAt + 1, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())`** を設定して保存すること。
+  2. `HandleSyncItems`（L2356-2361）の設定比較〜保存側も `SyncStore` 側の原子的比較保存メソッドへ寄せ、登録とスマホ全量設定の競合（Lost Update）を構造的に防ぐこと。
+  3. 送信応答で `templateRegistered == true` を受け取ったクライアント（PC／Android 双方）は、即座に最新設定（`pcSettings`／`fetchAndSyncServerSettings` 等）を取り込んでローカルのリストと `settingsUpdatedAt` を同期させること。
+  4. `§38` バッチ 4 の変更対象ファイル一覧に `tools/SyncStore.cs` と `app/src/main/java/com/example/myapplication/data/server/SyncDtos.kt`（DTO 拡張分）を明記すること。
+
+### 53.5 【高・53-4】§38（L1025）の前提誤り：テンプレート 0 件時に `viewer-claude-queue` が無効化される＆設定モーダル流用禁止
+- **`viewer-claude-queue` に関する事実誤り**: `§38`（L1025）は「置き換えるのはテンプレート選択だけで、`viewer-claude-queue` は無関係（コード確認済み）」と記しているが、実コード `tools/DashboardHtml.cs` L2394-2397（`updateViewerSelectionBar`）は次のとおり実装されている：
+  ```js
+  const hasTpl = (pcSettings.promptTemplates || []).length > 0;
+  if (claudeBtn) claudeBtn.disabled = (selSize === 0 || isBundle || !hasTpl);
+  if (claudeSel) claudeSel.disabled = (!hasTpl || isBundle);
+  if (claudeQueueSel) claudeQueueSel.disabled = (!hasTpl || isBundle);
+  ```
+  現行では **テンプレートが 0 件（`!hasTpl`）だと `viewer-claude-queue` まで `disabled` になる**。バッチ 4 で手打ち入力を解禁する以上、テンプレート 0 件でも「手打ち選択＋有効な本文入力（またはキュー選択）」があれば `viewer-claude-queue` と送信ボタンを有効にするよう `updateViewerSelectionBar` を必ず修正すること。
+- **設定タブ入力モーダルの誤流用防止（§35.2.2）**: `§35.2.2` に「タイトル入力欄は設定タブのテンプレ入力欄を流用してよい」とあるが、PC 管理画面の `template-editor-modal`（`DashboardHtml.cs` L1052-1054, L1639-1664）の「保存して同期」ボタンは `saveTemplateFromEditorModal()`（即座に `PUT /api/settings`）へ直結している。手打ち送信時の登録ダイアログからこれを流用すると「送信時 1 回で `POST /api/claude/jobs` に `registerTemplateName` を載せる（事前登録しない）」仕様と衝突するため、**保存 API を叩く既存ハンドラから切り離した専用の送信時ダイアログ／入力欄** として実装すること。
+- **細部の補記（バッチ 4）**: `HandleCreateClaudeJob` の手打ち時ジョブ名フォールバックは `customPromptName -> registerTemplateName (Trim後) -> "手打ちプロンプト"` の順とし、せっかく登録名を入れたジョブが一覧で `"手打ちプロンプト"` にならないようにすること。また 4,000 文字上限は **`.Trim()` 後の文字数** を基準とし、両クライアントで文字数カウンタを表示すること。
+
+### 53.6 【高・53-5】バッチ 2（§36／§52.8）の設計穴：出品リストへの `MERGED` 子供給経路欠落とプレビュー選択の仕様矛盾
+- **§36.1（出品リストのラベル表示）**: `ItemListScreen` が参照する `itemsWithPhotos` は `ItemDao.kt` L15-16（`WHERE mergedParentId IS NULL AND deletedAt IS NULL`）であり、**`MERGED` 子商品の `ItemEntity`／`syncUuid` をメモリに持っていない**。一方、既存の `FleaMarketViewModel.resolveBundleUuids`（L1076）は `suspend` 関数であり、リストの各カード（`CompactItemCard`）描画中に同期呼び出しできない。
+  - **バッチ 2 着手条件への追加**: `FleaMarketViewModel` で全商品（`MERGED` 含む）またはリポジトリクエリから全トップレベル商品のまとめ UUID 集合・集約ラベルマップ（`StateFlow<Map<...>>`）をコルーチン／Flow で事前計算して `ItemListScreen` へ供給する設計に確定すること（カード描画ごとの DB クエリ発行は禁止）。
+  - あわせて、`CompactItemCard`（`ItemListScreen.kt` L859-947）の `TopStart` はステータス／同期／まとめバッジ、`TopEnd` は枚数バッジが占有しているため、ラベルチップの配置は **`Alignment.BottomStart` 固定** とし、PC 側 `claudeItemLabel`（`DashboardHtml.cs` L2512）と揃えて `エラー ×N` / `加工済み ×N` の件数表記を採るか否かを実装前に確定すること。
+- **§36.2（プレビュー画面のチェックボックス）**: 計画 L946 は「無効化・不可理由は既存のグリッド表示に準ずる」と記しているが、現行 `ItemEditScreen.kt` L868-873 のグリッドチェックボックスは一括削除と共有のため **一度も無効化されず、不可理由のUI表示も存在しない**（`Museに送る` 押下時の Toast 判定 L761-769 と `ClaudeSendDialog` 内の `excludedCount` のみ）。
+  - **バッチ 2 着手前に確定すべき仕様**:
+    1. プレビューのチェックボックスを「既存の削除共有選択（常時チェック可・新規/未保存も選択可能で Muse 送信時のみ自動除外）」に揃えるか、それとも「プレビューは Muse 送信専用（未保存・未同期・まとめ親ならチェック不可＋画面内に理由表示）」にするかを明確化すること。
+    2. もし既存の選択状態（`selectedPhotoKeys` / `photoSelectionMode`）をそのまま共有するなら、① プレビュー内で最初の 1 枚を ON にした際に **`photoSelectionMode = true` も立てる** こと（立てないと編集画面へ戻ってもアクションバーが出ない）、② プレビュー内削除（`onDeletePhoto` L494-508）時に **`selectedPhotoKeys` から削除対象キーを取り除き**、空になったら `photoSelectionMode = false` へ戻すこと（L308 の解除判定が幽霊キーで詰まるのを防ぐ）、③ `ItemDetailScreen.kt`（L158）も同じ `PhotoPreviewDialog` を呼ぶため新パラメータはオプショナルにすること。
+
+### 53.7 【中・53-6】バッチ 3（§37.1／§37.4）の追加確認事項
+- **§37.1（モーダルバッジと優先順位表）**: `DashboardHtml.cs` L2551 のジョブ一覧モーダル内ステータスバッジ `claudeJobStatusInfo('approved')` は現在 **`'承認済み'`** である。ラベル・カラムを `'開始待ち'` へ変える以上、ここも `'開始待ち'` へ揃えるか、意図的に区別するかをバッチ 3 実装前に決めること（用語統一を推奨）。また `claudeItemLabel`（L2503）の `order` マップに新キー（`waiting_start` 等）を追加し忘れないこと。
+- **§37.4（複数アクティブジョブ重複・タップ領域・部分生成キャンセル）**:
+  - 同一写真に複数ジョブ（例: `processing` と `approval_pending`、または複数の待機ジョブ）が紐づくケースはサーバー仕様上発生し得る。§52.6 C3 に加え、取消で 1 件を止めた直後に残余ジョブへ自動再導出される動き・ダイアログ内で対象ジョブ（テンプレート名／状態／枚数）が他ジョブと誤認されない表示を確認すること。
+  - `ItemDetailScreen.kt` L726／`ItemEditScreen.kt` L846 のチップは `8.sp` の極小エリアであり、写真サムネイル全体のタップ（プレビュー起動／選択モードトグル）と衝突しやすい。タッチターゲット（最低限の余白・クリック優先順、`photoSelectionMode` 中は選択トグル優先にするか等）をバッチ 3 で設計すること。
+  - 部分生成後に `processing` 取消したジョブ（`status = "cancelled"`）について、既存導出では `_ai` 成果が残っていても `status == "done" || status == "done_with_errors"` ではないため `"加工済み"` ラベルは付かない。計画の「既に生成完了し返却済みの結果（`_ai` 等）はそのまま残る」仕様どおり、写真自体は残すがラベルは `"加工済み"` を出さない前提でよいか確認しておくこと。
+
+### 53.8 総合判定（再精査）
+- **§52 の「条件付き合意」に対し、上記 `53-1`〜`53-6` の追加是正・事前確定事項を要追記として突き返す（協議継続）。**
+- 特に **バッチ 1（`53-1`: 実遷移に即した承認対象記載＋巡回 `processing` の 22:00 跨ぎ完走＋状態ファイル永続化）**、**バッチ 2（`53-5`: `MERGED` 子取得経路とプレビューチェック仕様矛盾の解消）**、**バッチ 3（`53-2`: `HandleGetClaudeJobPhoto`／`RecordClaudeJobPhotoError` の取消ガード追加）**、**バッチ 4（`53-3`: `settingsUpdatedAt` 更新＋`53-4`: `viewer-claude-queue` と登録ダイアログ分離）** の各点は、そのまま着手するとバグ・データ消失・前提食い違いに直結するため、計画（`PLAN_CLAUDE_SEND_PHASE6.md`）側への補記・合意をもって各バッチの着手可とする。
