@@ -980,3 +980,38 @@
 - **スマホ UI**: 商品詳細・編集画面の写真グリッドで、有効状態のラベルチップ（待機中／承認待ち／開始待ち／加工中）をタップすると、そのジョブのダイアログ（テンプレート名・写真枚数・現在の状態）を開き、「ジョブを取り消す」から確認を経て取り消す。ジョブは写真の集合に対する単位であり、取消はジョブ全体に効くことをダイアログに明記する。取消後はジョブ・ラベル表示を再取得する。出品リストのチップ（§36.1）は表示専用のまま（誤操作防止）。
 - **PC 側の整合**: モーダルの取消ボタン表示条件をサーバーの受理範囲に合わせ、`approved` と `processing` にも表示する。
 - 承認待ち（`approval_pending`）も取消対象に含める（着手前であり、サーバーは既に受理する）。
+
+## 38. 実装順序・変更ファイル・依存関係の注意（2026-11-18 策定）
+
+ユーザー指示（2026-11-18）: §35〜§37 の追加フェーズ群について、実装規模の小さい順（または緊急度が高いと明示できるものから）に並べ、編集に必要な具体的なファイル名まで明記する。依存関係の深い既存機能への注意も併記する。本節が §35.7／§36／§37 で提案した版番号を**置き換える**: 版番号はフェーズ番号順ではなく**実装順**に振る（バッチ 1 は運用変更のみで版番号なし、バッチ 2 = Build 14、バッチ 3 = Build 15、バッチ 4 = Build 16。バージョンはすべて `v1.3`）。
+
+### バッチ 1【運用変更のみ・コード変更なし】§37.2 手動キューの即時実行 — 緊急度：高
+現行では手動キューを自動で拾う仕組みが無く、手動が実質機能していない（§37 の確認事実）。これが先行是正の対象。
+- 変更対象（リポジトリ外）: `~/hooks/scripts/claude_revision_watch.sh`（時間帯ゲートの撤去）、見張りフックのワーカー手順文（hooks 定義。手動は時間帯を問わず処理／巡回は 10:00–22:00 のみ／開始済みジョブに弾かれたら静かに打ち切る §37.4 の規則も含める）。
+- 注意: 稼働中の巡回に即効する変更である。巡回の時間帯内・外どちらで切り替えても、切り替え直後の起床から新手順になる。手順文の全文をレビュー対象として本計画に転記してから切り替える（転記は実装時に §37.2 へ追記する）。
+
+### バッチ 2【小／Android のみ】§36 6-9 相当 → `v1.3 Build 14`
+サーバー変更なし。2 件ともスマホ内の表示・選択の話で、相互に独立。
+- §36.2 プレビューのチェックボックス: `app/src/main/java/com/example/myapplication/ui/components/PhotoPreviewDialog.kt`、`app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt`（選択状態の共有は編集画面側の既存状態を使う）。
+- §36.1 出品リストのラベル: `app/src/main/java/com/example/myapplication/ui/screens/ItemListScreen.kt`（カードへのチップ重ね）、`app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`（商品単位の集約。写真単位の導出 `claudePhotoLabelKey` と Build 13 のまとめ UUID 集合を再利用する）。
+- 注意: リスト表示で既読化しないこと（§36.1）。ジョブデータの取得は既存のラベル用取得に相乗りし、リスト表示のために追加の通信を増やさない。
+
+### バッチ 3【小〜中／PC＋Android＋サーバー小】§37.1＋§37.4 6-10 相当 → `v1.3 Build 15`
+- §37.1 ラベルの実態連動: `tools/DashboardHtml.cs`（ラベル導出とミューズカラムの 5 分割）、`app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`（ラベル導出）、`app/src/main/java/com/example/myapplication/ui/screens/ItemDetailScreen.kt`・`ItemEditScreen.kt`（開始待ちチップの表示）。
+  - **依存注意（最重要）**: ラベル導出は PC（JS）と Android の 2 実装に重複している。本バッチで両方を同時に変えないと、PC とスマホで同じ写真のラベルが食い違う。§27.1／§47.1 の定義は §37.1 が置き換える（旧定義に基づく他の参照箇所が無いか、着手時に全文検索で確認する）。
+  - **依存注意**: `tools/DashboardHtml.cs` は逐語文字列（verbatim）のため、追加する HTML/JS の二重引用符はすべて二重化する（AGENTS.md の規則。静的検査: 逐語復元後の JS 構文検査と素の引用符 grep を必須とする）。
+- §37.4 スマホからの取消: `tools/ClaudeJobStore.cs`（`CancelJob` に `processing` を追加）、`tools/DashboardHtml.cs`（モーダルの取消ボタン表示条件をサーバーの受理範囲へ整合）、`app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`（取消呼び出しの追加）、`app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`（取消アクションと再取得）、`ItemDetailScreen.kt`・`ItemEditScreen.kt`（チップタップのダイアログ）。
+  - **依存注意**: 取消は結果登録系と同じロック規律（ガード B）の内側で既に直列化されている。`CancelJob` の状態追加はその内側だけで完結させ、新しいロック経路を作らない。§37.1 の開始待ちチップが取消導線の一部になるため、本バッチ内では §37.1 → §37.4 の順に実装する。
+
+### バッチ 4【中／サーバー＋両クライアント】§35 6-8 相当 → `v1.3 Build 16`
+- サーバー: `tools/FurimaServerNative.cs`（`HandleCreateClaudeJob` の `promptText` 分岐とテンプレート登録）。登録は既存の設定保存（`SyncStore.SaveDefaultSettings`＋設定リビジョン加算）の手順に相乗りし、`tools/SyncStore.cs` 自体の変更は原則しない。
+  - **依存注意**: 設定はスマホ同期と共有される。登録の書き込みがスマホ側の設定保存と競合しないよう、既存の設定 POST と同じ直列化の範囲で保存する（§35.4 の既定どおり）。
+- PC: `tools/DashboardHtml.cs`（ビューアのテンプレート選択をリスト方式へ置き換え＋登録ダイアログ＋送信処理）。
+  - **依存注意**: 置き換えるのはテンプレート選択（`viewer-claude-template`）だけであり、送り先選択（`viewer-claude-queue`）は別の要素で無関係（コード確認済み）。逐語文字列の引用符規則はバッチ 3 と同じ。
+- スマホ: `app/src/main/java/com/example/myapplication/ui/components/ClaudeSendDialog.kt`（リスト方式＋登録ダイアログ）、`app/src/main/java/com/example/myapplication/data/server/PcServerClient.kt`（`createClaudeJob` の引数拡張）、`app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt`（`sendPhotosToClaude` の引数拡張）、`app/src/main/java/com/example/myapplication/ui/screens/ItemEditScreen.kt`（ダイアログの配線）。
+  - **依存注意**: `ClaudeSendDialog` は詳細画面・編集画面の両方から呼ばれる可能性があるため、呼び出し側の配線漏れを着手時に確認する（現行の呼び出しは編集画面から。詳細画面側の送信導線の有無を再確認すること）。
+
+### 全バッチ共通の注意
+- 版番号は 3 箇所同時更新（`app/build.gradle.kts`、`tools/DashboardHtml.cs`、`app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`）の既存規則どおり。
+- 各バッチとも、実装 → レビュー → ユーザービルド確認の順を守る（次のバッチへは合格確認後）。
+- バッチ 1（運用変更）はコードのビルド確認を伴わないため、切り替え直後に手動ジョブ 1 件で実地確認する（夜間帯に送って数分以内に開始されること）。
