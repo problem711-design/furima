@@ -1746,3 +1746,35 @@ Build 8 の実装コミット **`6036425`**（13 ファイル変更）・バイ�
 
 ### 50.3 次ステップ
 - Build 13 の再レビューをお願いしたい。合格すれば、バイナリを Build 13 で揃えたうえで最終ビルド確認へ進み、フェーズ 6 の完了を確定する。
+
+---
+
+## 51. コードレビュー担当：Build 13（`0879ca9`）是正再レビュー（2026-11-17）
+
+§49 横断監査指摘 `49-1`〜`49-5` に対する是正コミット **`0879ca9`**（11 ファイル変更、`v1.3 Build 13 / 1313`）の全差分と関連周辺コード・静的検査を検証した。
+
+### 51.1 `49-1`〜`49-5` 是正確認結果 — 全件解消・合格
+- **`49-1`（Android まとめ商品ラベル・既読連動）**:
+  - `FleaMarketViewModel.kt`（L884-885, L1021-1158）で `resolveBundleUuids()`（`repository.getMergedChildItemsWithPhotos` による BFS、循環防止 `visitedIds` あり）が実装され、`claudePhotoLabelKey()` がまとめ UUID 集合全体を対象とし、かつ `snapshotMap[job.itemUuid.lowercase()] ?: seenAtMap[job.itemUuid.lowercase()]` でジョブ所属商品ごとに既読判定することを検証した。
+  - `beginLabelVisit(itemId, itemUuid)` でまとめ集合全 UUID のスナップショットを先に確定させてから `markClaudeLabelSeen(bundle)` で `/api/claude/labels/seen` へ一括送信し、`endLabelVisit()` と接続先変更時（L1546）に `_labelBundleUuids` をリセットする。
+  - `ItemDetailScreen.kt`（L138-140, L715-722）および `ItemEditScreen.kt`（L220-222, L836-843）の双方で呼び出しが揃っており、旧シグネチャの取り残しゼロを全ソース grep で確認済み。
+- **`49-2`（サーバー状態遷移の Check-Then-Act 競合＆`ApplyTokenExpiry` supersede 漏れ）**:
+  - `FurimaServerNative.cs` の `ApplyApprovalPendingExpiry`（L5193-5208）・`ApplyTokenExpiry`（L5222-5281）・`HandleRequestClaudeApproval`（L5309-5324）・`HandleClaudeApproval`（L5387-5424）・`HandleMoveClaudeJob`（L6385-6412）の 5 関数すべてで、`MutateJob` / `MutateJobWithErrorSupersede` の `_jobLock` 内に時刻・ステータス・`queue` の前提再検証が入ったことを確認した。HTTP ハンドラ側は不成立時に `409` を返し、`HandleMoveClaudeJob` の `waiting` 戻しでは `jobToken`/`jobTokenExpiresAt` も明示クリアされる。
+  - `ApplyTokenExpiry` は `CollectBundleUuidSetForItemUuid(job.itemUuid)`（`lockObj` 解放後に `_jobLock` を取るためロック順序競合なし）のうえで `MutateJobWithErrorSupersede` を呼び、一部成功後の期限切れ終端でも旧エラーの自動解消が `HandleCompleteClaudeJobLocked` と対称に機能する。
+- **`49-3`（`checkIsBundle` タイトル判定撤廃＋誤解除フェイルセーフ）**:
+  - `DashboardHtml.cs`（L2125-2133）からタイトル文字列部分一致と `mergedChildTitles` 判定が除去され、構造フラグ（`mergedChildCount > 0 || bundleLevel > 0 || photos.some(p => p.childItemId > 0)`）へ統一された。
+  - `FurimaServerNative.cs` `HandleUnmergeItem`（L3975-3981）に `if (restoredCount == 0 && parentChildCount <= 0)` の `400` 拒否が `RecordPermanentlyDeletedUuid` / `DeleteItemFolderById` / `itemsDb.Remove` より前に追加され、二重防御が成立している。
+- **`49-4`（利益下限クランプ＆ステータス検証）**:
+  - `HandleMergeItems`（L3801）の `profit` が `Math.Max(0, ...)` でクランプされたことを確認。
+  - `IsValidItemStatus()`（L1340-1345）が `HandleUpdateItem`（L2564）・`HandleBatchUpdateItems`（L3173）・`HandleCreateItem`（L3395）・`HandleMergeItems`（L3720）へ適用され、5 種ホワイトリスト外は `400` で拒否される（`MERGED` が正当に通る同期経路は適切に対象外）。
+- **`49-5`（丸め統一＆静的検証＆バージョン整合）**:
+  - `DashboardHtml.cs`（L2065）が `Math.trunc((oldPrice * val) / 100)` へ統一され、C#/Kotlin 整数除算と一致した。
+  - **独立静的検査（`0879ca9`）**: 3 箇所バージョン統一（`app/build.gradle.kts` `1313` / `DashboardHtml.cs` L202 `v1.3 (Build 13)` / `WebDashboardHtml.kt` L28 `v1.3 (Build 13)`）、抽出 JS 179,033 bytes `node --check` **`rc=0`**、bare quote **0 件**、欠損 `getElementById` ID **0 件**、全 `tools/*.cs` で C# 6+ 構文（`$""` / `?.` / `nameof`）**0 件**。
+
+### 51.2 軽微な将来観察（本判定は妨げない）
+- **`HandleUpdateItem` のゴミ箱/`MERGED` 直接更新ガード**: UI 上はゴミ箱アイテム・`MERGED` 子商品の編集導線を遮断済みのため通常運用では到達しないが、他端末との同時操作等で `PUT /api/items/{id}` が直接届いた場合に備え、`HandleBatchUpdateItems` と同様に `lock (lockObj)` 内で `IsItemTrashed(item)` / `status == "MERGED"` を `409`/`400` 拒否するガードを将来機会に追加するとより盤石。
+- **`Detail -> Edit` 遷移時の `_labelBundleUuids` 一瞬リセット**: `beginLabelVisit()`（`FleaMarketViewModel.kt` L1104）が `resolveBundleUuids()` 完了前に `_labelBundleUuids.value = listOf(itemUuid)` へ一度戻すため、まとめ親で詳細→編集へ移る際に数ミリ秒だけ子ラベルが消えて再描画される可能性がある（ローカル SQLite 取得で実用上ほぼ不可視）。また `markClaudeLabelSeen` 内で `_claudeLabelSeenAt` のオプティミスティック更新に `update {}` を使うと他コルーチン書込みとの競合面をさらに減らせる。
+
+### 51.3 判定
+- **Build 13（`0879ca9`）の是正コードレビューは 合格 とする（フェーズ 6 全体コードレビュー完了）。**
+- 現時点のバイナリ群（`tools/furima-server.exe`・`flea_market_app.apk`・`public/flea_market_app.apk`）はまだ Build 11 のままのため、**ユーザー側ローカル環境で Build 13 の PC サーバー／APK をコンパイル・ビルドし、実動作確認（＋主要動線の疎通確認）が取れた時点でフェーズ 6 の完全クローズと確定すること。**
