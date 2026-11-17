@@ -880,6 +880,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     private val _labelVisitSnapshot = MutableStateFlow<Map<String, Long>>(emptyMap())
     val labelVisitSnapshot: StateFlow<Map<String, Long>> = _labelVisitSnapshot.asStateFlow()
 
+    // フェーズ 6-5 是正 (Build 13 / 49-1): 閲覧中商品のまとめ UUID 集合 (自分＋子孫・原表記)
+    private val _labelBundleUuids = MutableStateFlow<List<String>>(emptyList())
+    val labelBundleUuids: StateFlow<List<String>> = _labelBundleUuids.asStateFlow()
+
     // フェーズ 6-2 (6-2-2): 「いったん閉じる」で非表示にした承認待ちのジョブID集合。
     // この集合に含まれない承認待ちが新たに現れた場合にだけダイアログを再表示する。
     private val _dismissedClaudeApprovalIds = MutableStateFlow<Set<String>>(emptySet())
@@ -1016,15 +1020,18 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     // 戻り値はラベル種別キー ("error" / "processing" / "approval" / "waiting" / "done")、無ければ null。
     fun claudePhotoLabelKey(
         itemUuid: String,
+        bundleUuids: List<String>,
         md5: String,
         jobs: List<com.example.myapplication.data.server.ClaudeJobDto>,
         seenAtMap: Map<String, Long>,
-        snapshotSeenAt: Long?
+        snapshotMap: Map<String, Long>
     ): String? {
         if (itemUuid.isBlank() || md5.isBlank()) return null
         val target = md5.lowercase()
-        val uuid = itemUuid.lowercase()
-        val itemJobs = jobs.filter { it.itemUuid.lowercase() == uuid }
+        // フェーズ 6-5 是正 (Build 13 / 49-1): まとめ親では子商品のジョブも対象にするため、
+        // 単一 UUID ではなくまとめ UUID 集合 (自分＋子孫) で照合する (PC・サーバーと同一範囲)
+        val bundleSet = (bundleUuids.ifEmpty { listOf(itemUuid) }).map { it.lowercase() }.toSet()
+        val itemJobs = jobs.filter { it.itemUuid.lowercase() in bundleSet }
         // エラー: supersede されていないものが1件でもあればエラー (34-3 の厳密条件)
         for (errJob in itemJobs) {
             if (errJob.status != "done_with_errors" || errJob.errorDismissed) continue
@@ -1040,7 +1047,6 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         var hasApproval = false
         var hasWaiting = false
         var hasDone = false
-        val seenAt = snapshotSeenAt ?: (seenAtMap[uuid] ?: 0L)
         val now = System.currentTimeMillis()
         for (job in itemJobs) {
             if (job.photos.any { it.md5.lowercase() == target }) {
@@ -1051,8 +1057,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 }
             }
             // 加工済みは生成物 (resultMd5) 基準で、所属チェックの外で判定する (32-1)
+            // 既読時刻はジョブの所属商品ごとに引く (49-1: スナップショット優先は PC と同型)
             if ((job.status == "done" || job.status == "done_with_errors") && job.results.any { it.resultMd5.lowercase() == target }) {
-                if (job.completedAt > seenAt && (now - job.completedAt) <= 3L * 24 * 60 * 60 * 1000) hasDone = true
+                val jobSeenAt = snapshotMap[job.itemUuid.lowercase()] ?: (seenAtMap[job.itemUuid.lowercase()] ?: 0L)
+                if (job.completedAt > jobSeenAt && (now - job.completedAt) <= 3L * 24 * 60 * 60 * 1000) hasDone = true
             }
         }
         return when {
@@ -1064,42 +1072,83 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    // まとめ UUID 集合 (自分＋子孫) をローカル ID の親子関係から BFS で解決する (49-1)
+    private suspend fun resolveBundleUuids(itemId: Int, itemUuid: String): List<String> {
+        val result = mutableListOf(itemUuid)
+        val visitedIds = mutableSetOf(itemId)
+        var frontier = listOf(itemId)
+        while (frontier.isNotEmpty()) {
+            val next = mutableListOf<Int>()
+            for (pid in frontier) {
+                val children = try { repository.getMergedChildItemsWithPhotos(pid) } catch (e: Exception) { emptyList() }
+                for (child in children) {
+                    if (!visitedIds.add(child.item.id)) continue
+                    if (child.item.syncUuid.isNotBlank()) result.add(child.item.syncUuid)
+                    next.add(child.item.id)
+                }
+            }
+            frontier = next
+        }
+        return result
+    }
+
     // フェーズ 6-5 是正 (34-2): 商品の閲覧セッション開始。初回入室時のみスナップショットを確定し、
     // 既読化 API を投げる前の既読時刻を保持する (詳細→編集の遷移では上書きしない)。
-    fun beginLabelVisit(itemUuid: String) {
+    // Build 13 / 49-1: まとめ親では子孫を含む UUID 集合でスナップショットと既読送信を行う。
+    fun beginLabelVisit(itemId: Int, itemUuid: String) {
         if (itemUuid.isBlank()) return
         val key = itemUuid.lowercase()
         if (!_labelVisitSnapshot.value.containsKey(key)) {
             _labelVisitSnapshot.value = mapOf(key to (_claudeLabelSeenAt.value[key] ?: 0L))
         }
-        markClaudeLabelSeen(itemUuid)
+        _labelBundleUuids.value = listOf(itemUuid)
+        if (itemId <= 0) {
+            markClaudeLabelSeen(listOf(itemUuid))
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val bundle = resolveBundleUuids(itemId, itemUuid)
+            // 別の商品へ移っていた場合は何もしない
+            if (!_labelVisitSnapshot.value.containsKey(key)) return@launch
+            _labelBundleUuids.value = bundle
+            // スナップショットに集合の各 UUID の既読時刻を補う (既にあるキーは保持する)
+            val additions = bundle.map { it.lowercase() }
+                .filter { !_labelVisitSnapshot.value.containsKey(it) }
+                .associateWith { _claudeLabelSeenAt.value[it] ?: 0L }
+            if (additions.isNotEmpty()) {
+                _labelVisitSnapshot.value = _labelVisitSnapshot.value + additions
+            }
+            markClaudeLabelSeen(bundle)
+        }
     }
 
     // 閲覧セッション終了 (一覧へ戻ったとき・別商品へ移ったときに呼ぶ)
     fun endLabelVisit() {
         if (_labelVisitSnapshot.value.isNotEmpty()) _labelVisitSnapshot.value = emptyMap()
+        if (_labelBundleUuids.value.isNotEmpty()) _labelBundleUuids.value = emptyList()
     }
 
     // フェーズ 6-5: 商品を開いたら加工済みラベルを既読化する (楽観的にローカルへ反映し、
     // サーバー応答の確定値で上書きする。32-5 / 34-4-1)
-    fun markClaudeLabelSeen(itemUuid: String) {
-        if (itemUuid.isBlank()) return
-        val key = itemUuid.lowercase()
+    // Build 13 / 49-1: まとめ UUID 集合を一括で既読化する (API は itemUuids 複数対応済み)
+    fun markClaudeLabelSeen(itemUuids: List<String>) {
+        val keys = itemUuids.filter { it.isNotBlank() }.map { it.lowercase() }.distinct()
+        if (keys.isEmpty()) return
         markSeenSeq++
-        // 応答が得られない場合のフォールバックは、当該商品の最大完了時刻以上へ丸める (§33.5 / 37-2)
+        // 応答が得られない場合のフォールバックは、集合内ジョブの最大完了時刻以上へ丸める (§33.5 / 37-2)
         val fallbackSeenAt = maxOf(
             System.currentTimeMillis(),
-            _claudeJobsForLabels.value.filter { it.itemUuid.lowercase() == key }.maxOfOrNull { it.completedAt } ?: 0L
+            _claudeJobsForLabels.value.filter { it.itemUuid.lowercase() in keys }.maxOfOrNull { it.completedAt } ?: 0L
         )
-        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to fallbackSeenAt)
+        _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + keys.associateWith { fallbackSeenAt }
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
-            val resp = try { pcServerClient.postClaudeLabelSeen(listOf(itemUuid), url, token) } catch (e: Exception) { null }
+            val resp = try { pcServerClient.postClaudeLabelSeen(itemUuids.filter { it.isNotBlank() }.distinct(), url, token) } catch (e: Exception) { null }
             if (resp != null && resp.status == "ok" && resp.seenAt > 0) {
                 claudeRefreshMutex.withLock {
-                    _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + (key to resp.seenAt)
+                    _claudeLabelSeenAt.value = _claudeLabelSeenAt.value + keys.associateWith { resp.seenAt }
                     if (resp.labelSeenRevision > lastKnownLabelSeenRevision) {
                         lastKnownLabelSeenRevision = resp.labelSeenRevision
                     }
@@ -1494,6 +1543,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             _claudeJobsForLabels.value = emptyList()
             _claudeLabelSeenAt.value = emptyMap()
             _labelVisitSnapshot.value = emptyMap()
+            _labelBundleUuids.value = emptyList()
         }
     }
 

@@ -217,8 +217,9 @@ fun ItemEditScreen(
     val claudeJobsForLabels by viewModel.claudeJobsForLabels.collectAsState()
     val claudeLabelSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
     val labelVisitSnapshot by viewModel.labelVisitSnapshot.collectAsState()
+    val labelBundleUuids by viewModel.labelBundleUuids.collectAsState()
     LaunchedEffect(loadedItem?.syncUuid) {
-        loadedItem?.syncUuid?.takeIf { it.isNotBlank() }?.let { viewModel.beginLabelVisit(it) }
+        loadedItem?.let { item -> if (item.syncUuid.isNotBlank()) viewModel.beginLabelVisit(item.id, item.syncUuid) }
     }
 
     LaunchedEffect(itemId) {
@@ -834,10 +835,11 @@ fun ItemEditScreen(
                             val claudeLabelKey = photoEntity?.md5Hash?.takeIf { it.isNotBlank() }?.let { md5 ->
                                 viewModel.claudePhotoLabelKey(
                                     loadedItem?.syncUuid ?: "",
+                                    labelBundleUuids,
                                     md5,
                                     claudeJobsForLabels,
                                     claudeLabelSeenAt,
-                                    labelVisitSnapshot[(loadedItem?.syncUuid ?: "").lowercase()]
+                                    labelVisitSnapshot
                                 )
                             }
                             if (claudeLabelKey != null) {

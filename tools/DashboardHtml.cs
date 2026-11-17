@@ -199,7 +199,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 12)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.3 (Build 13)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -2062,7 +2062,7 @@ public static class DashboardHtml
                 const val = parseInt(document.getElementById('batch-price-value').value || '0', 10) || 0;
                 if (mode === 'FIXED') newPrice = Math.max(0, val);
                 else if (mode === 'DELTA_YEN') newPrice = Math.max(0, oldPrice + val);
-                else if (mode === 'DELTA_PERCENT') newPrice = Math.max(0, oldPrice + Math.floor((oldPrice * val) / 100));
+                else if (mode === 'DELTA_PERCENT') newPrice = Math.max(0, oldPrice + Math.trunc((oldPrice * val) / 100));
             }
             preview.innerHTML = `<p class='font-bold'>変更サンプル (先頭1件: ${escapeHtml(sample.title || '無題')})</p>` +
                 `<p>状態: ${beforeStatus} ➔ ${afterStatus} ／ 価格: ¥${oldPrice.toLocaleString()} ➔ ¥${newPrice.toLocaleString()}</p>`;
@@ -2124,11 +2124,10 @@ public static class DashboardHtml
 
         function checkIsBundle(item) {
             if (!item) return false;
+            // フェーズ 6 是正 (Build 13 / 49-3): まとめ判定は構造フラグのみに統一する (サーバー・Android と同一基準)。
+            // タイトル文字列による推定は、通常商品の誤判定 (送信不能・誤解除) を招くため撤廃した。
             if (item.mergedChildCount && item.mergedChildCount > 0) return true;
             if (item.bundleLevel && item.bundleLevel > 0) return true;
-            if (item.mergedChildTitles && item.mergedChildTitles.trim().length > 0) return true;
-            const title = item.title || '';
-            if (title.startsWith('【まとめ買い】') || title.startsWith('まとめ買いセット') || title.includes('まとめ買い') || title.includes('まとめセット')) return true;
             if (item.photos && item.photos.some(p => p.childItemId && p.childItemId > 0)) return true;
             return false;
         }

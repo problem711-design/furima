@@ -1337,6 +1337,13 @@ class FurimaServerNative
         return status == "SOLD" || status == "SHIPPING";
     }
 
+    // フェーズ 6 是正 (Build 13 / 49-4): クライアントから受け付ける商品ステータスのホワイトリスト。
+    // MERGED はシステムが付与する専用状態のため、API 入力としては受け付けない。
+    private static bool IsValidItemStatus(string status)
+    {
+        return status == "DRAFT" || status == "DRAFT_DONE" || status == "LISTED" || status == "SHIPPING" || status == "SOLD";
+    }
+
     // フェーズ 6-4: ステータス表示名の統一表。不明なコードは出品中へ倒さずコードそのものを返す。
     // MERGED は親ステータスから決まるため、ここでは扱わない (GetMergedChildStatusLabel を使う)。
     private static string GetStatusLabel(string status)
@@ -2554,6 +2561,12 @@ class FurimaServerNative
                 int price = Math.Max(0, ParseIntSafe(json["price"], 0));
                 int soldPrice = Math.Max(0, ParseIntSafe(json["soldPrice"], 0));
                 string status = json.Value<string>("status") ?? "LISTED";
+                if (!IsValidItemStatus(status))
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "不正なステータスです: " + status } });
+                    return;
+                }
                 string description = json.Value<string>("description") ?? "";
 
                 string statusLabel = GetStatusLabel(status);
@@ -3157,6 +3170,12 @@ class FurimaServerNative
 
             string newStatus = json.Value<string>("newStatus");
             if (string.IsNullOrWhiteSpace(newStatus)) newStatus = null;
+            if (newStatus != null && !IsValidItemStatus(newStatus))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "不正なステータスです: " + newStatus } });
+                return;
+            }
 
             bool applyCostPreset = ParseBoolSafe(json["applyCostPreset"], false);
             bool useCustomSettings = ParseBoolSafe(json["useCustomSettings"], false);
@@ -3373,6 +3392,12 @@ class FurimaServerNative
                     ? Math.Max(0, ParseIntSafe(json["soldPrice"], 0))
                     : 0;
                 string status = json.Value<string>("status") ?? "DRAFT";
+                if (!IsValidItemStatus(status))
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "不正なステータスです: " + status } });
+                    return;
+                }
                 string description = json.Value<string>("description") ?? "";
                 bool useCustomSettings = ParseBoolSafe(json["useCustomSettings"], false);
 
@@ -3692,6 +3717,12 @@ class FurimaServerNative
                     ? Math.Max(0, ParseIntSafe(json["newExpenseCost"], mergeDefaults.defaultExpenseCost))
                     : mergeDefaults.defaultExpenseCost;
                 string asStatus = json.Value<string>("asStatus") ?? "LISTED";
+                if (!IsValidItemStatus(asStatus))
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "不正なステータスです: " + asStatus } });
+                    return;
+                }
 
                 int newParentId = 1;
                 long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -3767,7 +3798,7 @@ class FurimaServerNative
                         child["syncedToPhone"] = false;
                     }
 
-                    int profit = totalSoldPrice - newShippingCost - (totalSoldPrice * newFeeRatePercent / 100) - newExpenseCost;
+                    int profit = Math.Max(0, totalSoldPrice - newShippingCost - (totalSoldPrice * newFeeRatePercent / 100) - newExpenseCost);
 
                     int totalChildCount = 0;
                     foreach (var child in childItems)
@@ -3937,6 +3968,16 @@ class FurimaServerNative
                             restoredCount++;
                         }
                     }
+                }
+
+                // フェーズ 6 是正 (Build 13 / 49-3): フェイルセーフ — 復元できた子が 0 件で、
+                // 構造上もまとめ商品でない場合は、通常商品の誤解除として削除を実行せずエラーにする
+                int parentChildCount = parentItem.ContainsKey("mergedChildCount") ? ParseIntSafe(parentItem["mergedChildCount"], 0) : 0;
+                if (restoredCount == 0 && parentChildCount <= 0)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "まとめ商品ではないため解除できません" } });
+                    return;
                 }
 
                 // 親商品は物理除去＋完全削除UUID記録＋親フォルダ削除（スマホへも完全削除伝播しゾンビ復活防止）
@@ -5152,7 +5193,11 @@ class FurimaServerNative
         bool changed = false;
         ClaudeJobStore.MutateJob(job.jobId, j =>
         {
-            if (j.status == "approval_pending")
+            // フェーズ 6 是正 (Build 13 / 49-2): ロック内でも期限超過を再検証する。
+            // 直前に再リクエスト等で approvalRequestedAt が更新されたジョブを誤って失効させない。
+            long nowInLock = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (j.status == "approval_pending" && j.approvalRequestedAt > 0
+                && nowInLock - j.approvalRequestedAt > 10L * 60L * 1000L)
             {
                 j.status = "queued";
                 j.queue = "waiting";
@@ -5177,9 +5222,14 @@ class FurimaServerNative
         if (string.IsNullOrEmpty(job.jobToken) || job.jobTokenExpiresAt <= 0) return false;
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() <= job.jobTokenExpiresAt) return false;
         bool changed = false;
-        ClaudeJobStore.MutateJob(job.jobId, j =>
+        // フェーズ 6 是正 (Build 13 / 49-2): 終端時は完了処理と同様に自動エラー解消 (まとめ範囲) を効かせる
+        var expiryBundleUuids = CollectBundleUuidSetForItemUuid(job.itemUuid);
+        ClaudeJobStore.MutateJobWithErrorSupersede(job.jobId, j =>
         {
-            if (j.status == "approved" || j.status == "processing")
+            // ロック内でも有効期限を再検証する (結果投稿による延長と競合しても誤失効させない)
+            if ((j.status == "approved" || j.status == "processing")
+                && !string.IsNullOrEmpty(j.jobToken) && j.jobTokenExpiresAt > 0
+                && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > j.jobTokenExpiresAt)
             {
                 bool untouched = (j.results == null || j.results.Count == 0) && (j.errors == null || j.errors.Count == 0);
                 if (untouched)
@@ -5227,7 +5277,7 @@ class FurimaServerNative
                 return true;
             }
             return false;
-        });
+        }, expiryBundleUuids);
         if (changed) BumpClaudeRevision();
         return changed;
     }
@@ -5256,14 +5306,24 @@ class FurimaServerNative
                 return;
             }
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            bool applied = false;
             ClaudeJobStore.MutateJob(jobId, j =>
             {
+                // フェーズ 6 是正 (Build 13 / 49-2): ロック内でも前提状態を再検証する
+                if (j.status != "queued" || j.queue == "waiting") return false;
                 j.status = "approval_pending";
                 j.approvalRequestedAt = now;
                 j.jobToken = null;
                 j.jobTokenExpiresAt = 0;
+                applied = true;
                 return true;
             });
+            if (!applied)
+            {
+                res.StatusCode = 409;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブの状態が変わったため、承認リクエストできませんでした" } });
+                return;
+            }
             BumpClaudeRevision();
             job = ClaudeJobStore.GetJob(jobId);
             SendJson(res, new Dictionary<string, object>
@@ -5318,6 +5378,7 @@ class FurimaServerNative
             }
 
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            bool applied = false;
             if (approved)
             {
                 // jobToken は権限分離ではなく「スマホ承認が完了しない限り実行APIが通らない」
@@ -5326,9 +5387,13 @@ class FurimaServerNative
                 long expiresAt = now + 30L * 60L * 1000L;
                 ClaudeJobStore.MutateJob(jobId, j =>
                 {
+                    // フェーズ 6 是正 (Build 13 / 49-2): ロック内でも承認待ちであることを再検証する。
+                    // 取消・待機戻し・失効と交錯した場合に、終端済みジョブへトークンを発行して復活させない。
+                    if (j.status != "approval_pending") return false;
                     j.status = "approved";
                     j.jobToken = newToken;
                     j.jobTokenExpiresAt = expiresAt;
+                    applied = true;
                     return true;
                 });
             }
@@ -5336,12 +5401,20 @@ class FurimaServerNative
             {
                 ClaudeJobStore.MutateJob(jobId, j =>
                 {
+                    if (j.status != "approval_pending") return false;
                     j.status = "denied";
                     j.completedAt = now;
                     j.jobToken = null;
                     j.jobTokenExpiresAt = 0;
+                    applied = true;
                     return true;
                 });
+            }
+            if (!applied)
+            {
+                res.StatusCode = 409;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブの状態が変わったため、承認を反映できませんでした" } });
+                return;
             }
             BumpClaudeRevision();
             job = ClaudeJobStore.GetJob(jobId);
@@ -6309,21 +6382,34 @@ class FurimaServerNative
                 return;
             }
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            bool applied = false;
             ClaudeJobStore.MutateJob(jobId, j =>
             {
+                // フェーズ 6 是正 (Build 13 / 49-2): ロック内でも移動可能な状態かを再検証する。
+                // 承認が先行したジョブ (approved + トークン発行済み) を巻き戻さない。
+                if (j.status != "queued" && j.status != "approval_pending") return false;
                 j.queue = target;
                 if (target == "waiting")
                 {
                     j.status = "queued";
                     j.approvalRequestedAt = 0;
+                    j.jobToken = null;
+                    j.jobTokenExpiresAt = 0;
                 }
                 else if (j.status == "queued")
                 {
                     j.status = "approval_pending";
                     j.approvalRequestedAt = now;
                 }
+                applied = true;
                 return true;
             });
+            if (!applied)
+            {
+                res.StatusCode = 409;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブの状態が変わったため、移動できませんでした" } });
+                return;
+            }
             BumpClaudeRevision();
             job = ClaudeJobStore.GetJob(jobId);
             SendJson(res, new Dictionary<string, object>

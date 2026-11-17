@@ -135,8 +135,9 @@ fun ItemDetailScreen(
     val detailClaudeJobs by viewModel.claudeJobsForLabels.collectAsState()
     val detailClaudeSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
     val detailVisitSnapshot by viewModel.labelVisitSnapshot.collectAsState()
+    val detailBundleUuids by viewModel.labelBundleUuids.collectAsState()
     LaunchedEffect(currentItem.syncUuid) {
-        if (currentItem.syncUuid.isNotBlank()) viewModel.beginLabelVisit(currentItem.syncUuid)
+        if (currentItem.syncUuid.isNotBlank()) viewModel.beginLabelVisit(currentItem.id, currentItem.syncUuid)
     }
 
     // フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める
@@ -713,10 +714,11 @@ fun ItemDetailScreen(
                             val claudeLabelKey = photo.md5Hash.takeIf { it.isNotBlank() }?.let { md5 ->
                                 viewModel.claudePhotoLabelKey(
                                     currentItem.syncUuid,
+                                    detailBundleUuids,
                                     md5,
                                     detailClaudeJobs,
                                     detailClaudeSeenAt,
-                                    detailVisitSnapshot[currentItem.syncUuid.lowercase()]
+                                    detailVisitSnapshot
                                 )
                             }
                             if (claudeLabelKey != null) {
