@@ -1512,3 +1512,71 @@ Build 8 の実装コミット **`6036425`**（13 ファイル変更）・バイ�
 
 ### 45.3 完了レビューの依頼
 - これでステップ 3（6-5 / 6-6 / 6-7）の実装は全て完了した。**ステップ 3 完了レビュー**をお願いしたい。問題なければフェーズ 6 は完了となる。
+---
+
+## 46. コードレビュー担当：フェーズ 6-7（Build 11 / `f9770f5`・`66a2837`）およびステップ 3 完了レビュー（2026-11-17）
+
+対象コミット: **`f9770f5`**（実装・文書 7 ファイル変更）および **`66a2837`**（Build 11 バイナリ更新: `flea_market_app.apk` / `public/flea_market_app.apk` / `tools/furima-server.exe`）。
+`6-7` の新規実装およびステップ 3 完了の妥当性について、コード全量とサーバー側仕様を突き合わせて厳格に検証した。**安易な合格は出せない不具合が複数残っているため、却下（要是正）とする。**
+
+### 46.1 確認・合格した項目（事実確認）
+- **右カラムブロック順序・ID 維持（`DashboardHtml.cs` L87-212）**: `実績・売上分析` → `コントロール` → `Muse 連携` → `PC容量 & 写真情報` の順へ再編されており、各ブロック内部の既存 DOM ID（`stat-*`・`openCleanupModal`・`openPhotoTrashModal`・`sidebar-photo-trash-count` 等）および Build 4 の独立スクロール（`lg:sticky lg:top-14 lg:max-h-[calc(100vh-4.5rem)] lg:overflow-y-auto`）・ヘッダー側接続ステータス表示は維持されている。
+- **44-1 回収（`DashboardHtml.cs` L2712-2722）**: `renderClaudeJobsList()` が `byCreatedAsc = (a, b) => (a.createdAt || 0) - (b.createdAt || 0)`（依頼中・待機中）および `(b.createdAt || 0) - (a.createdAt || 0)`（履歴）で明示的にソートする形に修正され、待機中の `isClaudeErrorJob` 安定ソート先頭固定と両立していることを確認した（計画 §32 のとおり方式 (a) 準拠）。
+- **バージョン 3 箇所統一・バイナリ整合**: `app/build.gradle.kts`（`versionCode = 1311`, `versionName = "1.3"`）、`DashboardHtml.cs`（L202: `v1.3 (Build 11)`）、`WebDashboardHtml.kt`（L28: `v1.3 (Build 11)`）の 3 箇所が一致。ルート APK と `public/flea_market_app.apk` の SHA256 も完全一致（`faf810bd...`）、`tools/furima-server.exe` も再ビルド済み。
+- **静的検証（レビュー側独立実行）**: `DashboardHtml.cs` verbatim 文字列内の bare quote 検出 **0 件**、アンエスケープ抽出 JS（178,194 文字）の `node --check` **`rc=0`**、`getElementById` 欠損 ID **`0 件`**、`tools/*.cs` での C# 6+ 構文混入 **0 件**。
+
+---
+
+### 46.2 要修正指摘（却下理由）
+
+#### **46-1（高・仕様不整合＆二重計上バグ）：ミューズカラム「待機中」と「エラー」の件数重複**
+- **該当箇所**: `tools/DashboardHtml.cs` L165-182（`Muse 連携` 2×2 グリッド）、L2582-2589（`updateClaudeColumn()`）、L2623-2632（`claudeJobTab()` / `isClaudeErrorJob()`）
+- **現象**:
+  ```js
+  setText('claude-col-waiting', jobs.filter(j => claudeJobTab(j) === 'waiting').length);
+  setText('claude-col-error', jobs.filter(isClaudeErrorJob).length);
+  ```
+  `claudeJobTab(j)` は `(j.status === 'queued' && j.queue === 'waiting') || (j.status === 'done_with_errors' && !j.errorDismissed)` で `waiting` を返す。そのため **未解消エラー 1 件・純粋待機 0 件のとき、並んだ 2×2 タイルに `待機中: 1件` と `エラー: 1件` が同時表示される**（1 件のジョブを 2 箇所で二重カウント）。
+- **問題点**:
+  1. 同列の 4 ステータスカード（`処理中 / 承認待ち / 待機中 / エラー`）で同じジョブを二重計上するため、ユーザーは「待機中 1 件とエラー 1 件の計 2 件がある」と誤認する。
+  2. 計画 §27.3（`処理中（承認済み＋処理中のジョブ数）、承認待ち、待機中、エラー（未解消のみ）`）の定義は待機と未解消エラーを独立項目として列挙しているにもかかわらず、計画 §32 で事前協議なく `claudeJobTab` の `waiting`（エラー同梱版）を流用し意味をすり替えている。
+- **是正要求**:
+  - 原則として `claude-col-waiting` は **純粋な待機キュー件数**（`j.status === 'queued' && j.queue === 'waiting'`）のみを計上し、4 タイルを相互排他（1 ジョブ＝最大 1 タイル）にすること。計画 §27.3 にも 4 タイルの厳密な述語式を明記すること（もし「待機タブ総数」を出したいなら、ラベルとレイアウトを「待機中（エラー除く）」にするか、`待機タブ N件（うちエラー M件）` のように包含関係が視覚的に分かる UI へ改めること。現在の並列 4 タイル表記のまま二重計上は不可）。
+  - 補足（軽微）: `claudeJobTab` では `(status === 'queued' && queue !== 'waiting')`（6-1a 以前のレガシー「未依頼」データ等）を `active` に入れて `Museジョブ (N)` に計上する一方、4 タイル（`approved||processing` / `approval_pending` / `queued&&waiting` / `isClaudeErrorJob`）からは漏れる点も認識の上で整理すること（レガシーデータのみなら仕様明記で可）。
+
+#### **46-2（高・更新停止＆競合バグ）：`lastKnownClaudeRevision` 先行確定と重複・無保護フェッチによるミューズカラム陳腐化**
+- **該当箇所**: `tools/DashboardHtml.cs` L1749-1761（`pollServerRevisions()`）、L1782・L1788（`fetchItems()`）、L2561-2601（`fetchClaudeJobs()`・`refreshClaudeJobsCount()`）、L2686-2687（`dismissClaudeJobError()`）、L2790-2791（`moveClaudeJob()`）
+- **現象と問題点**:
+  1. **失敗時の永久更新停止（リトライ不能）**: `fetchItems()` L1782 と `pollServerRevisions()` L1755 が、**`fetchClaudeJobs()` の完了・成功を待たずに `lastKnownClaudeRevision` を最新サーバー値へ先行上書き**している。初期表示時やポーリング中に `/api/claude/jobs` が 1 回でも失敗（タイムアウト／一時 500／起動直後エラー）すると、`fetchClaudeJobs()` が早期 return して `claudeJobsCache` は空/旧値のままで `updateClaudeColumn()` も走らず、さらに `refreshClaudeJobsCount()` L2599 は失敗時でも `.then()` で `viewer-claude-jobs-count` を `0`（旧キャッシュ値）で上書きする。それでいて `lastKnownClaudeRevision` は既にサーバーと一致済みのため、以後 3 秒間隔の `pollServerRevisions()` は何度回っても変化なしと誤認し、次のジョブ操作が起きるまで **ミューズカラムと件数表示が永久に復旧しない**。なお `fetchClaudeJobs()` L2568 自体が成功時に `lastKnownClaudeRevision = data.claudeRevision` を更新しているため、呼び出し前の先行代入は不要（多重実行抑止が必要ならリビジョン先行上書きではなく in-flight フラグで制御すべき）。
+  2. **同報ポーリング時の 3 重並列フェッチ＆追い越し上書き**: `pollServerRevisions()` で `labelSeenRevision` と `claudeRevision` が同時に進み、かつモーダル表示中だと、1 ティックで `fetchClaudeJobs()`（L1751）・`refreshClaudeJobsCount()`（L1756）・`refreshClaudeJobsList()`（L1759）の **3 本の同一 `GET /api/claude/jobs` が並列発火**する。さらに `dismissClaudeJobError()`（L2686-2687）と `moveClaudeJob()`（L2790-2791）も、`viewer-claude-jobs-count` 更新済みの `await refreshClaudeJobsList()` の直後に `refreshClaudeJobsCount()` を重ねて不要な 2 本目を投げている。`fetchClaudeJobs()` には `claudeJobsCache` 用の世代ガード（シーケンス番号比較）がないため（`claudeSeenSeq` は既読マップ専用）、遅延応答が後着するとミューズカラム・一覧・ラベルが古い状態で上書きされ得る。
+- **是正要求**:
+  - `lastKnownClaudeRevision` の先行更新を `fetchItems()` L1782・`pollServerRevisions()` L1755 から撤去し、`fetchClaudeJobs()` 成功時のみ確定させること（必要なら `claudeJobsFetchInFlight` / `claudeJobsFetchSeq` で重複・追い越しを防止）。
+  - `pollServerRevisions()` 内のジョブ取得は 1 ティック最大 1 回に統合し（モーダルが開いていれば描画＋件数・カラム更新まで 1 回で済ませる）、`dismissClaudeJobError()`・`moveClaudeJob()` の冗長な `refreshClaudeJobsCount()` 呼び出しを削除すること。`refreshClaudeJobsCount()` も `fetchClaudeJobs()` 失敗時に誤って旧値で UI 上書きしないようにすること。
+
+#### **46-3（中・新規 UI 導線＆描画不備）：ミューズカラム各タイルの無反応・タブ状態の持ち越し・初回モーダルちらつき**
+- **該当箇所**: `tools/DashboardHtml.cs` L165-186（`Muse 連携` カード）、L567-574（`claude-jobs-modal` 初期 HTML）、L2603-2606（`openClaudeJobsModal()`）
+- **現象と問題点**:
+  1. `Muse 連携` カードの 4 タイル（`処理中`・`承認待ち`・`待機中`・`エラー`）がすべて非インタラクティブの `<div>` で、クリックしてもジョブ一覧の該当タブへ飛べない。また「ジョブ一覧を開く」ボタンも `claudeJobsTab` をリセット・指定しないため、前回 `履歴` タブを見て閉じた状態で `エラー: 1件` を見て一覧を開くと **`履歴` タブが開かれたまま**になり、直感に反する。
+  2. `openClaudeJobsModal()` L2604 が `await refreshClaudeJobsList()` の完了前にモーダルを表示し、かつキャッシュからの即時描画を行っていない。初期 HTML（L568-573）のタブボタンは件数表記もアクティブ背景も持たず `#claude-jobs-list` も空コメントのままなので、初回オープン時は通信完了まで **スタイル未適用タブ＋空リスト** が露出する（通信失敗時は空のまま）。
+- **是正要求**:
+  - 各タイルをクリック可能な `<button type='button'>` 等にして該当タブ（`処理中`・`承認待ち` → `active`、`待機中`・`エラー` → `waiting`）で直接開けるようにし、「ジョブ一覧を開く」ボタンの挙動（明示タブ指定または既定/優先タブ方針）を整理すること（ボタンには `type='button'` を明記）。
+  - `openClaudeJobsModal(initialTab)` で表示前にキャッシュから `renderClaudeJobsList()` を同期実行し、裏で `await refreshClaudeJobsList()` を走らせてちらつきを無くすこと。
+
+#### **46-4（中・常時表示ゆえの運用盲点）：PC 管理画面放置時の 10 分承認失効がミューズカラムへ反映されない**
+- **該当箇所**: `tools/FurimaServerNative.cs` L1716-1752（`HandleServerStatus`）、L5072-5073（`HandleGetClaudeJobs`）、L5136-5157（`ApplyApprovalPendingExpiry`）
+- **現象と問題点**:
+  - サーバー側の承認待ち 10 分失効（`approval_pending` → `queued / waiting`）およびトークン失効は、`HandleGetClaudeJobs` 等のジョブ API アクセス時にだけ走る**遅延評価**であり、ダッシュボードが 3 秒ごとに叩く `GET /api/server/status` では評価されない。
+  - 6-6 まではモーダルを開いた瞬間（`/api/claude/jobs` 呼び出し）に評価されていたため目立たなかったが、**6-7 で管理画面の右カラムに `承認待ち` と `待機中` を常時表示するようになった結果**、スマホがスリープ・未接続のまま PC 画面だけ見ていると、10 分経過して本来は待機へ戻っているジョブが PC 上では何時間でも **`承認待ち: 1件`／`待機中: 0件` のまま固まる**。
+- **是正要求**:
+  - 以下のいずれかで実態と常時表示を一致させること: (a) 既存の遅延評価ヘルパー（あるいは軽量な期限チェック）を `HandleServerStatus`（または定期メンテナンス）でも評価して期限切れ時に `claudeRevision` を進め、PC ポーリングだけで `承認待ち` → `待機中` 遷移を即時反映できるようにする（注意: ロック順や `/api/server/status` の負荷・副作用に留意すること）、あるいは (b) 明確に「次回のスマホ接続またはジョブ一覧再読込まで更新されない」制約をユーザー承認の上で仕様書へ明記する（本件は 6-7 で新設された常時表示カラムの正確性に直結するため、原則 (a) を推奨）。
+
+---
+
+### 46.3 その他の軽微観察・台帳整合（本バッチで是正または併記推奨）
+- **観察 1（右カラム sticky 上端余白 / Build 4 由来）**: `DashboardHtml.cs` L29-30 のヘッダーは `flex-wrap` のため `lg:` 幅（1024px 前後）で 2 行（高さ約 72〜80px）に折り返す一方、`<aside>`（L87）は `lg:top-14`（56px）・`lg:max-h-[calc(100vh-4.5rem)]` 固定のまま。6-7 で 4 カード体制になり縦スクロールが発生しやすくなったため、2 行ヘッダー時にカード上端がヘッダー下に僅かに潜り得る。余裕があれば調整推奨。
+- **観察 2（`44-1` 履歴ソート基準の補記）**: `history` タブは `createdAt` 降順で実装され §44-1(a) に合致するが、長期間待機キューに置かれて後に完了したジョブは「作成時刻が古い」ため履歴の下位に沈む。運用上「完了順（`completedAt || createdAt` 降順）」の方が自然であれば今後の調整候補（現時点では計画 §32・§44-1(a) どおり）。
+- **観察 3（`REVIEW_PROGRESS_PHASE6.md` 冒頭陳腐化）**: 台帳の「1. 現在地」が `eb00b9e`（Build 8 却下時点）のまま放置され、進捗表の `6-6` / `6-7` 行も重複・旧記載が残っていたため、本 §46 コミットにてレビュー側で現状（6-6 完了、6-7 Build 11 却下・是正待ち）へ同期整理した。
+
+### 46.4 判定
+- **フェーズ 6-7（Build 11 / `f9770f5`・`66a2837`）およびステップ 3 完了レビューは 却下（要修正） とする。**
+- 実装担当エージェントは **46-1・46-2・46-3（および 46-4 の方針決定／実装）** を是正した上で再提出すること（版番号は再是正ビルドとして Build 12 / `1312` 等へ進めること。計画 §27.3 への述語式明記も同梱すること）。
