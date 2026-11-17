@@ -2183,3 +2183,37 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
   1. ユーザー操作で PC ジョブ画面から既存の異常系ジョブ（`サンキャッチャー5`）を取り消す。
   2. §43.2 を本番監視スクリプトへ反映し、§43.1 をワーカー手順文へ差し替える。
   3. `HATCH_HOOK_DRY_RUN=1` でのドライラン判定確認の後、§42 冒頭記載の実地確認（手動ジョブ 1 件の承認→処理完走／待機中ジョブのみで不起動）を実施してバッチ 2（スマホ UI 側）へ進むこと。
+## 61. バッチ 2（6-9・v1.4 Build 14 / コミット `67e39bf`）コードレビュー — 却下（バグ 3 件）（2026-11-18）
+
+※ 本セクションは記録追記ルールに従い、既存の §58〜§60 を改変せず末尾へ新規追記する。
+
+### 61.1 指摘事項（要是正）
+
+1. **61-1【重大】プレビュー内「選択中 N枚を Muse に送る」ボタンが送信前ガードをすべて素通りする（`ItemEditScreen.kt` L502〜505 / L780〜791）**
+   - **不具合内容**:
+     - グリッド側の「Museに送る」ボタン（`ItemEditScreen.kt` L780〜791）は、① `itemId == 0 || hasUnsavedChanges`（「保存してからMuseに送ってください」）、② `(loadedItem?.mergedChildCount ?: 0) > 0`（「まとめ商品は個別の子商品から送信してください」）、③ `claudeEligiblePhotos.isEmpty()`（「PC同期済みの写真が選択されていません」）、④ `!isSendingToClaude` を検証してから `showClaudeSendDialog = true` を立てる。
+     - しかし `PhotoPreviewDialog` へ渡された `onSendToClaude`（L502〜505）はこれらのガードを一切通さず、無条件で `previewStartIndex = null; showClaudeSendDialog = true` を実行している。
+     - そのため、新規作成商品（`itemId == 0`）・未保存編集あり（プレビュー内削除直後など）・まとめ親商品・未同期／新規 `uri:` 写真のみ選択（`claudeEligiblePhotos` が 0 件）の状態でも送信ダイアログが開いてしまう。
+     - さらに `ClaudeSendDialog`（`ClaudeSendDialog.kt` L160）の「送信する」ボタンの有効条件が `enabled = isConnected && selected != null` のみであるため、対象写真 0 枚（`選択した写真 0枚を...`）や `itemId == 0` / `itemUuid == ""` のまま「送信する」が押せてしまい、不正なジョブ作成リクエストが飛ぶ。
+   - **是正内容**: グリッド側とプレビュー側の送信ボタン起動ロジックを共通のガード関数に統合し、`!isSendingToClaude` および上記 ①〜③ の検証を通過した場合のみ `showClaudeSendDialog = true` とすること（要件未達時は既存と同じ Toast で案内し、送信ダイアログを開かない）。
+
+2. **61-2【重大】出品リストのまとめ商品ラベル集約が写真を二重・多重カウントしている（`FleaMarketViewModel.kt` L933〜940）**
+   - **不具合内容**:
+     - `FleaMarketRepository.mergeItems`（L494〜509）により、まとめ親商品 `top` の `photos` には子商品の全写真がコピーされており、かつ子商品（`status == "MERGED"`, `mergedParentId = top.id`, `deletedAt == null`）側にも元の `photos` が保持されたままになっている。`repository.getAllItemsWithPhotos()` は親と子の両方を返す。
+     - `buildClaudeItemLabelSummaries`（L933〜940）は `bundleItems` から `bundleUuids` を構築したうえで、写真集計ループまで `for (itemWithPhotos in bundleItems)` で親＋全子の写真を走査している。そのため、まとめ商品の写真 1 枚ごとに親と子の両方で二重カウントされ（入れ子のまとめでは 3 重以上）、たとえば子商品の写真 1 枚だけが加工済み／エラーになってもスマホ一覧では `加工済み ×2`／`エラー ×2` と誤表示される。
+     - PC 側の `claudeItemLabel`（`tools/DashboardHtml.cs` L2500〜2514）は `collectBundleUuidSet(item)` で UUID 集合を集めつつ、写真ループは親の `(item.photos || [])` のみを走査している。本件は §40.2 の「件数表記 `×N` は PC 側 `claudeItemLabel` の既存規則に一致」に反する。
+   - **是正内容**: `bundleItems` からは従来どおり `bundleUuids` のみを解決し、写真のカウントループは親自身の `for (photo in top.photos)` のみに限定すること（`CompactItemCard` が表示する写真集合および PC 側 `claudeItemLabel` と 1 対 1 で一致する）。
+
+3. **61-3【中】`PhotoPreviewDialog.kt` のチェックボックス＋「選択中 N枚を Muse に送る」行が通常スマホ幅で横幅不足になり文字が欠ける（`PhotoPreviewDialog.kt` L360〜402）**
+   - **不具合内容**:
+     - 上部ヘッダー内（`padding(horizontal = 12.dp)` のため 360dp 幅端末で有効幅 336dp）の単一 `Row` に、`.weight(1f)` の無いチェックボックス列（48dp タッチ領域＋「Muse に送る写真に含める」）と、デフォルト `contentPadding`（左右計 48dp）かつ固定高さ `.height(40.dp)` の `Button`（「選択中 N枚を Muse に送る」）を横並びにしている。
+     - 360dp〜412dp 幅の端末では右側の送信ボタンに十分な横幅が残らず、ボタン内ラベルが 2〜3 行に折り返したうえで固定 `.height(40.dp)` により上下がクリップされる（またタッチターゲット 48dp も満たさない）。
+   - **是正内容**: チェックボックス行と送信ボタンを 2 段に分ける／`FlowRow` や `weight(1f)`・コンパクトな `contentPadding`・`heightIn(min = 48.dp)`・`softWrap = false` を用いるなど、狭い縦画面幅でも文字切れ・重なりが起きない配置に修正すること。
+
+### 61.2 問題なかった確認項目
+- `ItemListScreen.kt` での事前計算 `StateFlow` 購読、`emptyMap()` による閲覧スナップショット非混入、`ON_RESUME` 時の `refreshClaudeItemLabels()` による 3 日窓再導出は §40.2 / §41.2 どおり実装されている。
+- `PhotoPreviewDialog` へのオプショナル引数追加により、既存呼び出し元（`ItemDetailScreen` / `CameraXCaptureDialog`）の無影響を確認した。
+- 選択モード中の長押しプレビュー開起、プレビュー内削除時の選択キー解除・空時モード終了・Undo 時未選択維持、設定画面バージョン表記（`versionCode % 100`）および 3 箇所の版番号同期（`v1.4 Build 14`）はいずれも仕様どおり。
+
+### 61.3 判定
+- **バッチ 2（コミット `67e39bf`）は 61-1〜61-3 の修正完了まで却下とする（バッチ 3 への進行は不可）。** 上記 3 点を修正し、ビルド確認のうえ再レビューへ提出すること。
