@@ -2375,3 +2375,45 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 - **判定：合格（バッチ 3 / 6-10 後半・`v1.4 Build 15` 完了可）**
 - 運用補足（差し戻しではない）：push 後の CI（`.github/workflows/build-check.yml` の C# ビルド・Android `assembleDebug`・`testDebugUnitTest`・JS テスト）通過および実機動作確認をもって `PROGRESS.md` のバッチ 3 完了チェック・現在バージョン表記を締め、**バッチ 4（フェーズ 6-8・`v1.4 Build 16` 予定）** へ進まれたい（着手時は条件 C1：`SyncStore` `_configLock` 内での不可分な同名検査・追加・保存＋`HandleSyncItems` 原子的比較保存・事前重複チェック等を計画どおり維持すること）。
+
+## 67. バッチ 4（フェーズ 6-8・v1.4 Build 16 / コミット `c1d0dd3`）レビュー — 差し戻し（2026-11-18）
+
+バッチ 4（`c1d0dd3`・`v1.4 Build 16` / `versionCode = 1416`）の全変更 11 ファイルを実コード・計画（§35・§35.2.1・§35.2.2・§40.4・§41.4）・事前レビュー条件（§52 C1 / §53-3 / §53-4 / §55-4）と突き合わせて精査した結果、**要修正 3 件（`67-1`〜`67-3`）** が見つかったため差し戻す（※ `REVIEW_PROGRESS_PHASE6.md` は計画 §39 により凍結中のため、本ファイルのみに記録する）。
+
+### 67.1 合意仕様・条件 C1 の実装確認（良好点）
+
+- **`tools/SyncStore.cs`（L261〜365）**：`GetDefaultSettings()` が `_configLock` 内で JSON シリアライズによるディープコピーを返すよう改善され、`GET /api/settings` との列挙競合を防止できている。`TryRegisterPromptTemplate()` も `_configLock` 内で `Trim()` 空名禁止・`OrdinalIgnoreCase` 重複禁止・リスト複製差し替え（コピーオンライト）・`Math.Max(settings.settingsUpdatedAt + 1, now)` 更新を不可分に実行しており、`HandleSyncItems`（`FurimaServerNative.cs` L2358）も原子的比較保存 `SaveDefaultSettingsIfNewer()` へ移行済み。
+- **`tools/FurimaServerNative.cs`（`HandleCreateClaudeJob` L4938〜5144）**：`promptText` 優先（Trim 後 1〜4,000 文字検証・超過エラー）、表示名フォールバック（`customPromptName` → `registerTemplateName` Trim 後 → `"手打ちプロンプト"`）、ジョブ作成成功後の登録試行および `templateRegistered` / `templateRegisterError` の分離返却を確認した。
+- **両クライアントの履歴分離とリスト UI 骨格**：PC（`localStorage` キー `claudeFreeTextHistoryPc`）・Android（`SharedPreferences` キー `claude_free_text_history`）ともに直近 3 件の再利用履歴を端末ローカルのみに保持し、同期設定に混入させていない。`updateViewerSelectionBar`（`DashboardHtml.cs` L2544〜2551）もテンプレ 0 件＋手打ち有効本文時にキュー選択と送信ボタンが有効になるよう是正されている。
+
+### 67.2 差し戻し指摘（要修正 3 件）
+
+1. **【高・67-1】PC ビューア `#viewer-claude-picker` のモーダル内クリップ／はみ出しと閉じ忘れ（`tools/DashboardHtml.cs` L388, L422, L437, L2469〜2511）**
+   - **クリップ／操作不能**：`#photo-viewer-modal` の内側カード（L388）は `max-h-[90vh] ... overflow-hidden` だが、`#viewer-claude-picker`（L437）は `absolute right-0 top-full mt-1 ... w-[400px] max-w-[92vw]` で **自身の高さ上限（`max-h`）と縦スクロール（`overflow-y-auto`）を持っていない**（展開本文 L1513 側のみ `max-h-40`）。写真が 0〜2 枚の商品（カード高さが内容分しかなく `#viewer-action-bar` 下が約 200〜300px 程度）や登録テンプレートが多い場合、手打ち入力欄（`rows='5'`）＋履歴チップ＋テンプレート行＋展開本文がモーダル下端を超えた分が **L388 の `overflow-hidden` で完全に切り落とされ、スクロール手段もなく下位行を選択できなくなる**。さらに `#viewer-action-bar`（L422 `flex-wrap`）が狭い画面幅で折り返し `#viewer-claude-template-btn` が左寄せになった場合、`right-0` 基準の `w-[400px]` パネルがモーダル左端の外へ飛び出して同じく `overflow-hidden` で左側が欠ける。
+   - **閉じ忘れ**：`closePhotoViewer()`（L2505〜2511）および `openPhotoViewer()`（L2469〜2503）が `closeClaudeTemplatePicker()` を呼んでいないため、ピッカーを開いたままモーダルを閉じて別商品を開くと、最初からピッカーが開きっぱなしでギャラリー上に被さる。
+   - **是正**：`#viewer-claude-picker` に表示可能領域内に収まる高さ上限（例としてビューポート基準の `max-h-[55vh] overflow-y-auto` 等、少枚数商品でもカード内に収まる設計またはクリッピング親からの切り離し）と幅・水平位置のはみ出し防止を入れ、`closePhotoViewer()` / `openPhotoViewer()` 双方で `closeClaudeTemplatePicker()` を呼ぶこと。
+
+2. **【高・67-2】テンプレート登録直後の設定同期による自己上書き消滅 ＆ `PUT /api/settings` の時刻非単調性（`FleaMarketViewModel.kt` L411〜419 / `PcServerClient.kt` L496〜507 / `FurimaServerNative.cs` L3578〜3581 / `tools/SyncStore.cs`）**
+   - **スマホ側の自己上書き消滅**：`FleaMarketViewModel.sendPhotosToClaude`（L411〜419）は `result.templateRegistered == true` のとき `pcServerClient.fetchAndSyncServerSettings()` を呼ぶが、同メソッド（`PcServerClient.kt` L496〜507）は `localSettings.settingsUpdatedAt > serverDto.settingsUpdatedAt` の場合に **`pushSettingsToServer()`（`PUT /api/settings`）でローカル設定をサーバーへ押し戻す**。
+     設定画面（`FleaMarketViewModel.updateDefaultSettings` L361〜367）でローカル設定変更後に `pushSettingsToServer()` が一時失敗して未同期のまま残った状態（心拍維持中は `settingsRevision` が変化しないため L1513 では同期されない）やスマホ時計が PC より進んでいる状態で、手打ち送信＋テンプレート登録を行うと、`TryRegisterPromptTemplate` が算出する `Math.Max(serverExisting + 1, pcNow)` より `localSettings.settingsUpdatedAt` の方がなお大きい。その結果、登録成功通知をトリガーに発火した `fetchAndSyncServerSettings()` が **サーバー上の `promptTemplates` をスマホ側の古い配列で丸ごと上書きし、たった今登録したばかりのテンプレートを自分で消滅させる**（「テンプレートに登録しました」トーストが出るにもかかわらず一覧に残らない）。また、非同期 `launch` を待たずに `onSuccess` を先に呼んでいる点も直後の再表示と競合する。
+   - **PC 側 `HandleUpdateSettings`（`PUT /api/settings`）の時刻非単調性**：`TryRegisterPromptTemplate`（`SyncStore.cs` L361）は `Math.Max(settings.settingsUpdatedAt + 1, now)` で単調増加させている一方、`HandleUpdateSettings`（`FurimaServerNative.cs` L3578〜3581）は `_configLock` 外で `cfg.settingsUpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()` を代入して `SyncStore.SaveDefaultSettings(cfg)` を呼んでいる。スマホ時計が PC より進んでいる環境でスマホ由来の `settingsUpdatedAt` がサーバーへ保存された後に PC 設定画面からテンプレート追加・削除等を行うと、**サーバーの `settingsUpdatedAt` が逆行**し、直後の心拍で `settingsRevision` 変化を検知したスマホ側の `fetchAndSyncServerSettings()` が古い設定を PC へ押し戻して PC 側変更を消失させる。
+   - **是正**：(1) `SyncStore` に `_configLock` 内で `Math.Max(existingUpdatedAt + 1, now)` を採番して保存する更新用メソッドを追加し、`HandleUpdateSettings` もそれを経由して単調増加を保証すること。(2) スマホ側 `sendPhotosToClaude` で `result.templateRegistered == true` を処理する同期経路では、ローカルの未同期 `settingsUpdatedAt` によってサーバー側で登録された `promptTemplates` を `pushSettingsToServer()` で上書き消滅させない制御を入れること（サーバーの登録結果を優先反映し `settingsUpdatedAt` を整合させる／設定を取り切るまで `onSuccess` と競合させない等）。
+
+3. **【中・67-3】Android 登録名仮入れ時の改行文字残留（`ClaudeSendDialog.kt` L75）および細部の整合**
+   - `ClaudeSendDialog.kt` L75 が `registerName = customTrimmed.take(20)` としており、複数行プロンプト（`OutlinedTextField` は `minLines = 4`）の先頭 20 文字に改行 `\n` が含まれると、履歴チップ（L198 `replace("\n", " ")`）や PC 側 `<input type='text'>`（ブラウザ DOM が改行を除去）と異なり、**`OutlinedTextField(singleLine = true)`（L108）の文字列値内に `\n` がそのまま残る**。そのまま登録送信するとサーバー側の `TextTemplate.name` に改行入りタイトルが保存されて両クライアント表示が不整合になるため、仮入れおよび確定時の正規化で改行を空白等へ置換すること（サーバー `TryRegisterPromptTemplate` 側の改行サニタイズ併用も推奨）。
+   - 付記（同是正サイクルでの併修推奨・単体差し戻し事由ではない）：
+     - `DashboardHtml.cs` L3103 の確認ダイアログ文言が `"...手打ちプロンプトでClaudeに送ります。"`（L3046 と同様の旧 `Claude` 表記）となっているため、既存方針の `"Museに送ります"` 統一に合わせること。
+     - `ClaudeSendDialog.kt` L166〜178（「プロンプトを手打ち」行）がチェックボックス本体のみのタップ判定になっている（送り先ラジオ行 L258 と同様に行または見出しタップでも切り替えられる方が自然）。
+     - `DashboardHtml.cs` L3109 `postViewerClaudeJob` は `fetch` 送信中に `#viewer-claude-send-btn` を無効化しておらず、連続実行防止を入れておくとより安全。
+
+### 67.3 静的検証・版数確認
+
+- `node --test tools/tests/claude-label.test.mjs`：**13/13 合格**。
+- `node --check`：`tools/DashboardHtml.cs`（202,600B）および `WebDashboardHtml.kt`（52,888B）の inline script エラー 0 件。`tools/DashboardHtml.cs` の生二重引用符（未エスケープ `"`）は 0 件。
+- C# 5 非互換構文（`$"` / `?.`）：`tools/FurimaServerNative.cs`・`tools/SyncStore.cs` ともに 0 件。
+- バージョン 3 箇所：`app/build.gradle.kts`（`versionCode = 1416` / `versionName = "1.4"`）、`tools/DashboardHtml.cs`（`v1.4 (Build 16)`）、`WebDashboardHtml.kt`（`v1.4 (Build 16)`）で一致（`PROGRESS.md` 側の `v1.4 (Build 16)` 表記および項目 66 未チェック状態も実態と一致）。
+
+### 67.4 総合判定
+
+- **判定：差し戻し（`67-1`〜`67-3` を是正のうえ再レビューへ）**
+- 版番号は同一フェーズの是正サイクルのため `v1.4 Build 16`（`versionCode = 1416`）据え置きでよい。是正コミット後に再レビューを実施する。
