@@ -2442,3 +2442,33 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 ### 68.5 検証
 - JS: `node --check`（verbatim 復元後）エラー 0 件、ゴールデンテスト 13/13 合格を再確認した。
 - C# / Android のコンパイルと単体テストは、push 後の CI（csc ビルド・`assembleDebug`・`testDebugUnitTest`・JS テスト）で確認する。
+
+## 69. バッチ 4 是正版（6-8・v1.4 Build 16 / コミット `62b96de`）再レビュー — 合格（2026-11-18）
+
+バッチ 4 の是正コミット `62b96de`（回答 §68・`PROGRESS.md` 更新含む）を実コードと突き合わせて再検証し、§67 指摘 `67-1`〜`67-3` および付記 3 点の解消と静的整合性を確認した（※ `REVIEW_PROGRESS_PHASE6.md` は計画 §39 により凍結中のため、本ファイルのみに記録する）。
+
+### 69.1 §67 指摘（`67-1`〜`67-3`）および付記の解消確認
+
+1. **`67-1`（PC ビューア `#viewer-claude-picker` のクリップ／はみ出し・閉じ忘れ）— 解消**
+   - `tools/DashboardHtml.cs` L437・L1443〜1458 にて `#viewer-claude-picker` が `fixed z-[70]`＋`overflow-y-auto` へ改められ、モーダルカード（L388 `overflow-hidden`、親要素に CSS `transform` 系なし）の切り抜きから独立した。開くたびに `positionClaudeTemplatePicker()` がボタンの `getBoundingClientRect()` から幅（最大 400px・画面幅−16px）・左右クランプ済み位置・`window.innerHeight - top - 12`（下限 160px）の高さ上限を動的に設定し、少枚数商品や狭い画面幅でもスクロール可能かつ画面内に収まる。
+   - `openPhotoViewer()`（L2489）および `closePhotoViewer()`（L2526）の双方で `closeClaudeTemplatePicker()` が呼ばれるようになり、開きっぱなし持ち越しも解消された。
+
+2. **`67-2`（登録直後の自己上書き消滅・`PUT /api/settings` の時刻非単調性）— 解消**
+   - **サーバー**：`tools/SyncStore.cs` L295〜307 に `SaveDefaultSettingsMonotonic()` が新設され、`_configLock` 内で `Math.Max(existing + 1, now)` を採番して `SaveDefaultSettings()` を呼ぶ構造になった。`HandleUpdateSettings`（`FurimaServerNative.cs` L3581）もこれへ移行し、クライアント時計が進んでいる環境でもサーバーの `settingsUpdatedAt` が逆行しない。
+   - **スマホ**：`PcServerClient.kt` L523〜559 に push を行わない専用メソッド `fetchServerSettingsAfterTemplateRegistration()` が追加され、`serverDto.settingsUpdatedAt < localSettings.settingsUpdatedAt` の場合でも `promptTemplates` と `settingsUpdatedAt` だけをサーバー値へ合わせて他項目の未同期分を維持しつつ、後続心拍での押し戻しを防いでいる。`FleaMarketViewModel.sendPhotosToClaude`（L412〜419）もこの取り直し完了を待ってから `onSuccess(result)` を呼ぶよう改められた。
+
+3. **`67-3`（登録名の改行残留）および付記 3 点 — 解消**
+   - `ClaudeSendDialog.kt` L76 の仮入れ（`replace("\n", " ").replace("\r", " ").take(20)`）および L123 の確定時正規化に加え、`tools/SyncStore.cs` L337 の `TryRegisterPromptTemplate()` 側でも `CRLF` / `CR` / `LF` を空白置換して `Trim()` する防御が入った。
+   - 付記 3 点についても、`DashboardHtml.cs` L3067・L3124 の確認ダイアログ文言の `"Muse に送ります"` 統一、`ClaudeSendDialog.kt` L173 の「プロンプトを手打ち」行全体タップ対応、`DashboardHtml.cs` L3132〜3163 の `postViewerClaudeJob()` 送信中ボタン無効化と完了後の状態再評価を確認した。
+
+### 69.2 静的検証・版数確認
+
+- `node --test tools/tests/claude-label.test.mjs`：**13/13 合格**（再実行確認）。
+- `node --check`：`tools/DashboardHtml.cs`（204,178B）および `WebDashboardHtml.kt`（52,888B）の inline script エラー 0 件。`tools/DashboardHtml.cs` の生二重引用符は 0 件。
+- C# 5 非互換構文（`$"` / `?.`）：`tools/FurimaServerNative.cs`・`tools/SyncStore.cs`・`tools/ClaudeJobStore.cs` ともに 0 件。
+- バージョン 3 箇所：`app/build.gradle.kts`（`versionCode = 1416` / `versionName = "1.4"`）、`tools/DashboardHtml.cs`（`v1.4 (Build 16)`）、`WebDashboardHtml.kt`（`v1.4 (Build 16)`）で一致。
+
+### 69.3 判定・次工程への案内
+
+- **判定：合格（バッチ 4 / フェーズ 6-8・`v1.4 Build 16` 完了可）**
+- 運用補足（差し戻しではない）：push 後の CI（C# ビルド・Android `assembleDebug`・`testDebugUnitTest`・JS テスト）通過および実機動作確認をもって `PROGRESS.md` のバッチ 4 完了チェックを締められたい（追加フェーズ バッチ 1〜4 を含む `v1.4` 全計画が完了）。
