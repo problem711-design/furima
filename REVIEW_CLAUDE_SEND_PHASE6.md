@@ -2320,3 +2320,24 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 - **判定：差し戻し（上記 `64-1`〜`64-3` を同一 Batch 3 / Build 15 内で是正後に再レビュー）**
 - `64-1`〜`64-3` はいずれも局所修正（数行〜十数行単位）であり、完了後に今回同様 `node --test tools/tests/claude-label.test.mjs` および CI（`.github/workflows/build-check.yml` の C# ビルド・Android `assembleDebug`・`testDebugUnitTest`）の通過を確認したうえで再レビューを依頼されたい（版番号は未リリースの Batch 3 内のため `v1.4 Build 15` / `1415` 据え置きで構わない）。
+
+## 65. 実装担当エージェント回答（§64 指摘 64-1〜64-4 への是正）（2026-11-18）
+
+§64 の指摘 4 件はいずれも実コードで検証し、正当と認めて全件是正した。版番号は未リリースのバッチ 3 内のため v1.4 Build 15 / 1415 据え置き。
+
+### 65.1 64-1（プレビューの取消ボタン表示ガード）への是正
+- `PhotoPreviewDialog.kt`: 源泉ジョブの解決と取消ボタンの表示を、表示ラベルがアクティブ 4 状態（`processing` / `approval` / `startwait` / `waiting`）のときに限るようガードを追加した（グリッド側 `ItemDetailScreen` / `ItemEditScreen` の条件と同一）。仕様表ケース #9 の写真でも、エラーバッジ表示中に裏の `processing` ジョブの取消ボタンは出なくなる。
+- あわせて `ClaudeLabelDerivation.labelSourceJob` のコメントを実態に揃えた: 本関数は未解決エラー・加工済みの有無を見ず、アクティブなジョブがあれば返し得ること、呼び出し側は表示ラベルがアクティブ 4 状態のときに限って取消に使う契約であることを明記した。
+
+### 65.2 64-2（取消前の再取得の二重 GET と古いキャッシュフォールバック）への是正
+- `FleaMarketViewModel.cancelClaudeJobFromLabel`: `refreshClaudeJobStates` の戻り値（成否）を受け取る形に改めた。失敗（`false` または例外）時は「最新のジョブ状態を取得できなかったため、取り消しませんでした。接続を確認してください。」を表示して早期リターンし、取り消しを送信しない。成功時のみ、更新済みの `_claudeJobsForLabels.value` で源泉ジョブを再検証する。後段の重複した `fetchClaudeJobs` 呼び出しと、古いキャッシュへのフォールバックは削除した（GET は 1 回に解消）。
+
+### 65.3 64-3（RecordClaudeJobPhotoError の戻り値の意味）への是正
+- `tools/FurimaServerNative.cs` の `RecordClaudeJobPhotoError`: 戻り値を「ジョブが実行可能な状態（`approved` / `processing`）にあるか」に変更した。変更ラムダ内で状態ガードを通過した時点で `executable = true` とし、同一写真のエラーが既に記録済み（重複）の場合は再保存せず `true` を返す。新規追加のときだけ保存と `BumpClaudeRevision()` を行う。非実行状態のときだけ `false` を返し、写真取得ハンドラはその場合に限り HTTP 400（実行可能な状態ではない）へ分岐する。これにより `processing` 中ジョブへの同一写真の再取得が、重複を理由に 400 へ誤分岐しなくなる。
+
+### 65.4 64-4（確定点ロック内での失効評価）への是正
+- `HandleGetClaudeJobPhoto`: 承認・トークンの失効評価（`ApplyApprovalPendingExpiry` / `ApplyTokenExpiry`）をロック直前から `claudeResultWriteLock` 内へ移し、再取得した `fresh` に対して評価してから、もう一度取得し直した状態でトークン・状態の再検証、状態遷移、応答を行う形に揃えた（他の結果系ハンドラと同一構造）。
+
+### 65.5 検証
+- JS 側ゴールデンテスト（`node --test tools/tests/claude-label.test.mjs`）は本是正の対象外（JS 変更なし）だが、再実行して 13/13 合格を再確認した。
+- C# / Android のコンパイルと Android 単体テストは、push 後の CI（`.github/workflows/build-check.yml`：csc ビルド・`assembleDebug`・`testDebugUnitTest`・JS テスト）で確認する。

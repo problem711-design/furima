@@ -5433,15 +5433,19 @@ class FurimaServerNative
         }
     }
 
-    // フェーズ 6-10 (§40.3 / §41.3): 記録したかどうかを bool で返す。変更ラムダ内でも
-    // 状態ガードを行い、approved / processing 以外 (取消済み・終端など) には記録しない。
-    // 呼び出し側は、記録が弾かれた場合に「実行可能な状態ではない」側の応答へ切り替える。
+    // フェーズ 6-10 (§40.3 / §41.3): 戻り値は「ジョブが実行可能な状態 (approved / processing)
+    // にあるか」。変更ラムダ内でも状態ガードを行い、それ以外 (取消済み・終端など) には記録しない。
+    // 呼び出し側は、false の場合に「実行可能な状態ではない」側の応答へ切り替える。
+    // レビュー 64-3: 同一写真のエラーが既に記録済み (重複) の場合も、状態が実行可能なら
+    // true を返す (再保存はしない)。新規追加のときだけ保存とリビジョン加算を行う。
     private static bool RecordClaudeJobPhotoError(string jobId, string md5, string message)
     {
         bool added = false;
+        bool executable = false;
         ClaudeJobStore.MutateJob(jobId, j =>
         {
             if (j.status != "approved" && j.status != "processing") return false;
+            executable = true;
             if (j.errors == null) j.errors = new List<ClaudeJobError>();
             foreach (var e in j.errors)
             {
@@ -5454,7 +5458,7 @@ class FurimaServerNative
             return true;
         });
         if (added) BumpClaudeRevision();
-        return added;
+        return executable;
     }
 
     private static void HandleGetClaudeJobPhoto(HttpListenerRequest req, HttpListenerResponse res, string jobId, string md5)
@@ -5550,15 +5554,16 @@ class FurimaServerNative
             // フェーズ 6-10 (§40.3 / 53-2): 確定直前に claudeResultWriteLock の下で状態・トークンを
             // 再検証してから状態遷移と応答を行う。重い読み込み・変換は上のロック外で済ませてある。
             // 再検証で無効ならバイト列を返さず、エラー記録もしない (取消・失効との競合をここで閉じる)。
-            var commitJob = ClaudeJobStore.GetJob(jobId);
-            if (commitJob != null)
-            {
-                ApplyApprovalPendingExpiry(commitJob);
-                ApplyTokenExpiry(commitJob);
-            }
             lock (claudeResultWriteLock)
             {
                 var fresh = ClaudeJobStore.GetJob(jobId);
+                if (fresh != null)
+                {
+                    // レビュー 64-4: 失効評価も他の結果系ハンドラと同様に、ロック内の fresh に対して行う
+                    ApplyApprovalPendingExpiry(fresh);
+                    ApplyTokenExpiry(fresh);
+                    fresh = ClaudeJobStore.GetJob(jobId);
+                }
                 if (fresh == null)
                 {
                     res.StatusCode = 404;

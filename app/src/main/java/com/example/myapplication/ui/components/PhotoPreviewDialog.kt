@@ -388,7 +388,13 @@ fun PhotoPreviewDialog(
                                         .testTag("photo_preview_claude_label")
                                 )
                             }
-                            val activeSourceJob = onResolveLabelSourceJob?.invoke(activeHash)
+                            // レビュー 64-1: 取消ボタンは表示ラベルがアクティブ 4 状態のときだけ出す。
+                            // エラー / 加工済み表示中に、裏で並存する別ジョブの取消ボタンを出さない (グリッド側ガードと同一条件)
+                            val activeSourceJob = if (activeLabelKey == "processing" || activeLabelKey == "approval" || activeLabelKey == "startwait" || activeLabelKey == "waiting") {
+                                onResolveLabelSourceJob?.invoke(activeHash)
+                            } else {
+                                null
+                            }
                             if (activeSourceJob != null && onCancelLabelJob != null) {
                                 Button(
                                     onClick = { onCancelLabelJob(activeSourceJob, activeHash) },

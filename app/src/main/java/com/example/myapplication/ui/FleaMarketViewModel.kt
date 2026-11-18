@@ -1128,16 +1128,18 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         _claudeActionInProgress.value = true
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                try {
+                // レビュー 64-2: 再取得は refreshClaudeJobStates の成否で判定し、失敗時は
+                // 古いキャッシュで源泉を検証せず、取り消さずに終了する (二重 GET も解消)
+                val refreshed = try {
                     refreshClaudeJobStates(url, token)
                 } catch (_: Exception) {
+                    false
                 }
-                val freshJobs = try {
-                    pcServerClient.fetchClaudeJobs(url, token)?.jobs ?: _claudeJobsForLabels.value
-                } catch (e: Exception) {
-                    _claudeJobsForLabels.value
+                if (!refreshed) {
+                    _claudeActionMessage.value = "最新のジョブ状態を取得できなかったため、取り消しませんでした。接続を確認してください。"
+                    return@launch
                 }
-                val source = claudePhotoLabelSourceJob(itemUuid, bundleUuids, md5, freshJobs)
+                val source = claudePhotoLabelSourceJob(itemUuid, bundleUuids, md5, _claudeJobsForLabels.value)
                 if (source == null || source.jobId != jobId) {
                     _claudeActionMessage.value = "ジョブの状態が変わったため、取り消しませんでした。最新の表示を確認してください。"
                     return@launch
