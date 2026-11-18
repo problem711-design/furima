@@ -2234,3 +2234,32 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 ### 62.4 検証状況とお願い
 - 全是正ファイルの括弧バランスは是正前のリモート状態と一致。Kotlin のコンパイルは実装側の環境では実施できないため、§61.3 の指示どおり、ユーザーのビルド確認後に再レビューを依頼する。
+---
+
+## 63. バッチ 2 是正版（6-9・v1.4 Build 14 / コミット `134ccf1`）再レビュー — 合格（2026-11-18）
+
+バッチ 2 の初回実装（`67e39bf`）、是正コミット（`134ccf1` / 回答 §62）、関連仕様（計画 §36・§38・§40.2・§41.2・§52 条件 C7）、および `PROGRESS.md`・`.github/workflows/build-check.yml`（`1e56316`）を通読し、再レビューを実施した（※ `REVIEW_PROGRESS_PHASE6.md` は計画 §39 により凍結中のため、本ファイルのみに記録する）。
+
+### 63.1 §61 指摘（61-1〜61-3）の解消確認
+1. **61-1（プレビュー送信ボタンのガード素通り）— 解消**
+   - `ItemEditScreen.kt` L334〜354 に共通ガード関数 `tryOpenClaudeSendDialog()` が抽出され、① `itemId == 0 || hasUnsavedChanges`（保存促し Toast）、② `(loadedItem?.mergedChildCount ?: 0) > 0`（子商品から送信案内 Toast）、③ `claudeEligiblePhotos.isEmpty()`（PC 同期済み写真なし Toast）、④ `isSendingToClaude` を一括検証する構成を確認した。
+   - グリッド側ボタン（L806）は `tryOpenClaudeSendDialog()` を呼び出し、プレビュー側 `onSendToClaude`（L526〜531）も `if (tryOpenClaudeSendDialog()) { previewStartIndex = null }` へ統合されている。未達時はダイアログを開かずプレビューも閉じないため、未保存・新規作成・まとめ親・対象 0 枚での不正起動経路が完全に塞がれている。
+2. **61-2（まとめ商品ラベルの二重・多重カウント）— 解消**
+   - `FleaMarketViewModel.kt` L916〜945 の `buildClaudeItemLabelSummaries` は、BFS により子孫を含む `bundleUuids` を構築したうえで、写真集計ループを親自身の `for (photo in top.photos)`（L936）のみに限定している。
+   - `ItemDao.getAllItemsWithPhotos()`（`deletedAt IS NULL`）との組み合わせにより、ゴミ箱商品は除外され、親へコピー済みの子商品写真を重複計上する不具合が解消された。件数表記（`error` / `done` のみ 2 件以上で `×N`）および優先順位（`error > processing > approval > waiting > done`）も PC 側 `claudeItemLabel`（`tools/DashboardHtml.cs` L2500〜2514）と 1 対 1 で一致する。
+3. **61-3（プレビューヘッダーの横幅不足によるボタン文字切れ）— 解消**
+   - `PhotoPreviewDialog.kt` L362〜408 にて、チェックボックス行と「選択中 N枚を Muse に送る」ボタンを `Column` の 2 段構成へ分離したことを確認した。
+   - 送信ボタンは右寄せ（`Modifier.align(Alignment.End)`）、`heightIn(min = 48.dp)`、コンパクトな `PaddingValues(horizontal = 16.dp, vertical = 8.dp)`、`softWrap = false` が設定されており、通常スマホ幅でも折り返し・上下クリップなく 48dp タッチ領域を満たす。
+
+### 63.2 バッチ 2 全体の最終確認（静的検証含む）
+- **リスト集約と 3 日窓追随**: `claudeItemLabelSummaries` は `claudePhotoLabelKey(..., emptyMap())` を呼び出し、`labelVisitSnapshot` を一切混入させない（§40.2・§41.2・55-5・条件 C7 充足）。`ItemListScreen.kt` L160〜167 の `ON_RESUME` 監視により復帰時に `refreshClaudeItemLabels()` が発火する。
+- **プレビュー選択と編集画面整合**: `ItemEditScreen.kt` L501〜572・L854〜856・L964〜966 にて、既存写真（`path:`）と未保存写真（`uri:`）の双方でキー共有、選択モード中の長押しプレビュー起動、プレビュー削除時の選択解除（空時は選択モード終了）および Undo 時の未選択維持を確認した。`ItemDetailScreen.kt` / `CameraXCaptureDialog.kt` への影響もない。
+- **バージョン表記・静的チェック**:
+  - `SettingsStorageScreen.kt` L1053 の `Build ${versionCode % 100}`（`Build 14` 表示）を確認。
+  - バージョン 3 箇所（`app/build.gradle.kts` `versionCode = 1414` / `versionName = "1.4"`、`tools/DashboardHtml.cs` `v1.4 (Build 14)`、`WebDashboardHtml.kt` `v1.4 (Build 14)`）の一致を確認。
+  - JS 構文チェック（`node --check`）で `tools/DashboardHtml.cs`（179,032B, `rc=0`）および `WebDashboardHtml.kt`（50,293B, `rc=0`）のエラー 0 件を確認。
+
+### 63.3 判定・次工程への案内
+- **判定: 合格（バッチ 2 / 6-9・v1.4 Build 14 完了可）**。`61-1`〜`61-3` の是正を含め、設計要件の充足を確認した。
+- **次工程に向けた補足（差し戻し事項ではない）**:
+  - `134ccf1` 時点では `PROGRESS.md`（L43 の現在バージョン表記および L67 の完了チェック）と配布バイナリ（`flea_market_app.apk` / `public/flea_market_app.apk` / `tools/furima-server.exe`）は Build 13 のままである。ビルド確認（CI `.github/workflows/build-check.yml` およびローカル実機確認）後にこれらを更新してバッチ 2 を締め、バッチ 3（6-10 後半・`v1.4 Build 15`）へ進まれたい。
