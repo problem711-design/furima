@@ -2353,10 +2353,10 @@ class FurimaServerNative
                     try
                     {
                         var incomingCfg = ParseDefaultSettingsConfig(dsObj);
-                        var currentCfg = SyncStore.GetDefaultSettings();
-                        if (incomingCfg.settingsUpdatedAt > currentCfg.settingsUpdatedAt)
+                        // フェーズ 6-8 (§40.4): 比較〜保存は SyncStore の原子的メソッドへ寄せる
+                        // (テンプレート登録と競合しても、比較と保存の間に割り込まれない)
+                        if (SyncStore.SaveDefaultSettingsIfNewer(incomingCfg))
                         {
-                            SyncStore.SaveDefaultSettings(incomingCfg);
                             BumpSettingsRevision();
                         }
                     }
@@ -4935,6 +4935,33 @@ class FurimaServerNative
             int itemId = ParseIntSafe(json["itemId"], 0);
             string itemUuid = (json.Value<string>("itemUuid") ?? "").Trim();
             string templateId = (json.Value<string>("templateId") ?? "").Trim();
+            // フェーズ 6-8 (§35.3): 手打ちプロンプト用の任意フィールド。promptText が指定されたら
+            // templateId より優先する。customPromptName は表示名、registerTemplateName は登録試行の指定。
+            string promptTextRaw = json.Value<string>("promptText");
+            string customPromptName = (json.Value<string>("customPromptName") ?? "").Trim();
+            string registerTemplateNameRaw = json.Value<string>("registerTemplateName");
+            bool hasPromptText = promptTextRaw != null;
+            string promptTextSnapshot = hasPromptText ? promptTextRaw.Trim() : null;
+            if (hasPromptText)
+            {
+                // §35.4 / §40.4: 空白のみは不可、上限は Trim 後の 4,000 文字 (超過は切り捨てずエラー)
+                if (promptTextSnapshot.Length == 0)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "プロンプトが入力されていません" } });
+                    return;
+                }
+                if (promptTextSnapshot.Length > 4000)
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "プロンプトが長すぎます (4,000 文字以内で入力してください)" } });
+                    return;
+                }
+            }
+            // §40.4: 手打ちジョブの表示名フォールバック (customPromptName → registerTemplateName → 既定名)
+            string registerTemplateNameTrimmed = (registerTemplateNameRaw ?? "").Trim();
+            string freeTextJobName = !string.IsNullOrEmpty(customPromptName) ? customPromptName
+                : (!string.IsNullOrEmpty(registerTemplateNameTrimmed) ? registerTemplateNameTrimmed : "手打ちプロンプト");
             string origin = (json.Value<string>("origin") ?? "").Trim();
             if (origin != "pc" && origin != "phone") origin = "pc";
             string queue = (json.Value<string>("queue") ?? "").Trim();
@@ -4963,7 +4990,7 @@ class FurimaServerNative
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "送信する写真が指定されていません" } });
                 return;
             }
-            if (string.IsNullOrEmpty(templateId))
+            if (!hasPromptText && string.IsNullOrEmpty(templateId))
             {
                 res.StatusCode = 400;
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "プロンプトテンプレートが指定されていません" } });
@@ -5008,12 +5035,15 @@ class FurimaServerNative
                     else
                     {
                         TextTemplateConfig tpl = null;
-                        var settings = SyncStore.GetDefaultSettings();
-                        if (settings != null && settings.promptTemplates != null)
+                        if (!hasPromptText)
                         {
-                            tpl = settings.promptTemplates.Find(t => t != null && t.id == templateId);
+                            var settings = SyncStore.GetDefaultSettings();
+                            if (settings != null && settings.promptTemplates != null)
+                            {
+                                tpl = settings.promptTemplates.Find(t => t != null && t.id == templateId);
+                            }
                         }
-                        if (tpl == null)
+                        if (!hasPromptText && tpl == null)
                         {
                             errorMessage = "プロンプトテンプレートが見つかりません";
                         }
@@ -5062,9 +5092,9 @@ class FurimaServerNative
                                     itemTitle = item.ContainsKey("title") && item["title"] != null ? item["title"].ToString() : "",
                                     folderName = folderName,
                                     photos = jobPhotos,
-                                    templateId = tpl.id,
-                                    templateName = tpl.name ?? "",
-                                    promptText = tpl.content ?? "",
+                                    templateId = hasPromptText ? "" : tpl.id,
+                                    templateName = hasPromptText ? freeTextJobName : (tpl.name ?? ""),
+                                    promptText = hasPromptText ? promptTextSnapshot : (tpl.content ?? ""),
                                     origin = origin,
                                     queue = queue
                                 };
@@ -5082,14 +5112,35 @@ class FurimaServerNative
                 return;
             }
 
+            // フェーズ 6-8 (§35.4): テンプレート登録はジョブ作成の成功後に同一リクエスト内で試みる。
+            // 登録の成否はジョブ作成と切り離し、失敗してもジョブは作成されたものとして応答する。
+            bool templateRegistered = false;
+            string templateRegisterError = null;
+            if (hasPromptText && registerTemplateNameRaw != null)
+            {
+                string regError;
+                if (SyncStore.TryRegisterPromptTemplate(registerTemplateNameRaw, promptTextSnapshot, out regError))
+                {
+                    templateRegistered = true;
+                    BumpSettingsRevision();
+                }
+                else
+                {
+                    templateRegisterError = regError;
+                }
+            }
+
             // リビジョン加算は CreateJob が単一ロック内で行う (フェーズ 6-1a)。
             // ここで二重に加算しないこと。
-            SendJson(res, new Dictionary<string, object>
+            var createResponse = new Dictionary<string, object>
             {
                 { "status", "ok" },
                 { "job", ToPublicClaudeJob(created) },
-                { "claudeRevision", GetClaudeRevision() }
-            });
+                { "claudeRevision", GetClaudeRevision() },
+                { "templateRegistered", templateRegistered }
+            };
+            if (templateRegisterError != null) createResponse["templateRegisterError"] = templateRegisterError;
+            SendJson(res, createResponse);
         }
         catch (Exception ex)
         {

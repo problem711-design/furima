@@ -121,7 +121,11 @@ data class CreateClaudeJobRequestDto(
     @param:Json(name = "photos") val photos: List<ClaudeJobPhotoDto>,
     @param:Json(name = "templateId") val templateId: String,
     @param:Json(name = "origin") val origin: String = "phone",
-    @param:Json(name = "queue") val queue: String = "patrol"
+    @param:Json(name = "queue") val queue: String = "patrol",
+    // フェーズ 6-8 (§35.3): 手打ちプロンプト用の任意フィールド (null のときは送信しない)
+    @param:Json(name = "promptText") val promptText: String? = null,
+    @param:Json(name = "customPromptName") val customPromptName: String? = null,
+    @param:Json(name = "registerTemplateName") val registerTemplateName: String? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -190,5 +194,8 @@ data class ClaudeJobResponseDto(
     @param:Json(name = "status") val status: String = "",
     @param:Json(name = "message") val message: String? = null,
     @param:Json(name = "job") val job: ClaudeJobDto? = null,
-    @param:Json(name = "claudeRevision") val claudeRevision: Long = 0
+    @param:Json(name = "claudeRevision") val claudeRevision: Long = 0,
+    // フェーズ 6-8 (§35.3): テンプレート登録の結果 (旧サーバー応答では既定値で安全)
+    @param:Json(name = "templateRegistered") val templateRegistered: Boolean = false,
+    @param:Json(name = "templateRegisterError") val templateRegisterError: String? = null
 )

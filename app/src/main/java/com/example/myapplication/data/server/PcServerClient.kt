@@ -211,16 +211,44 @@ class PcServerClient(
     data class ClaudeJobCreateResult(
         val success: Boolean,
         val jobId: String = "",
-        val message: String = ""
+        val message: String = "",
+        // フェーズ 6-8: テンプレート登録の結果 (ジョブ作成の成否とは切り離して伝える)
+        val templateRegistered: Boolean = false,
+        val templateRegisterError: String? = null
     )
 
+    // フェーズ 6-8 (§55.6-3 / §41.4): 手打ちプロンプトの履歴は端末ローカルにのみ直近 3 件を
+    // 保持する (同期される設定には絶対に入れない)
+    fun getClaudeFreeTextHistory(): List<String> {
+        val raw = prefs.getString("claude_free_text_history", null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    fun pushClaudeFreeTextHistory(text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return
+        val next = (listOf(trimmed) + getClaudeFreeTextHistory().filter { it != trimmed }).take(3)
+        val arr = org.json.JSONArray()
+        next.forEach { arr.put(it) }
+        prefs.edit().putString("claude_free_text_history", arr.toString()).apply()
+    }
+
     // 「Museに送る」ジョブを作成する (フェーズ 5-3)。商品特定は itemUuid (syncUuid) を必須とする (Q1)。
+    // フェーズ 6-8: promptText を渡すと手打ちジョブになる (templateId より優先される)。
     suspend fun createClaudeJob(
         itemId: Int,
         itemUuid: String,
         photos: List<Pair<String, String>>,
         templateId: String,
         queue: String = "patrol",
+        promptText: String? = null,
+        customPromptName: String? = null,
+        registerTemplateName: String? = null,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
     ): ClaudeJobCreateResult = withContext(Dispatchers.IO) {
@@ -241,7 +269,10 @@ class PcServerClient(
                 photos = photos.map { ClaudeJobPhotoDto(md5 = it.first, fileName = it.second) },
                 templateId = templateId,
                 origin = "phone",
-                queue = queue
+                queue = queue,
+                promptText = promptText,
+                customPromptName = customPromptName,
+                registerTemplateName = registerTemplateName
             )
             val body = createClaudeJobRequestAdapter.toJson(reqDto)
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -253,7 +284,12 @@ class PcServerClient(
                     try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
                 } else null
                 if (response.isSuccessful && parsed?.status == "ok" && parsed.job != null) {
-                    ClaudeJobCreateResult(true, jobId = parsed.job.jobId)
+                    ClaudeJobCreateResult(
+                        true,
+                        jobId = parsed.job.jobId,
+                        templateRegistered = parsed.templateRegistered,
+                        templateRegisterError = parsed.templateRegisterError
+                    )
                 } else {
                     ClaudeJobCreateResult(false, message = parsed?.message ?: "サーバーエラー (${response.code})")
                 }

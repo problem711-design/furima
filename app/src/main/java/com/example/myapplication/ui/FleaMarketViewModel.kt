@@ -376,24 +376,48 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         return repository.getItemById(id)
     }
 
+    // フェーズ 6-8: 手打ちプロンプト履歴 (端末ローカルのみ・直近 3 件)
+    fun claudeFreeTextHistory(): List<String> = pcServerClient.getClaudeFreeTextHistory()
+
     // 「Museに送る」送信ラッパー (フェーズ 5-3)。photos は (md5Hash, fileName) のリスト。
+    // フェーズ 6-8: promptText を渡すと手打ちジョブになり、registerTemplateName で登録も試みる。
     fun sendPhotosToClaude(
         itemId: Int,
         itemUuid: String,
         photos: List<Pair<String, String>>,
         templateId: String,
         queue: String = "patrol",
+        promptText: String? = null,
+        customPromptName: String? = null,
+        registerTemplateName: String? = null,
         onError: (String) -> Unit = {},
-        onSuccess: () -> Unit
+        onSuccess: (com.example.myapplication.data.server.PcServerClient.ClaudeJobCreateResult) -> Unit
     ) {
         viewModelScope.launch {
             if (!_isPcServerConnected.value) {
                 onError("PCサーバー未接続です")
                 return@launch
             }
-            val result = pcServerClient.createClaudeJob(itemId, itemUuid, photos, templateId, queue)
+            val result = pcServerClient.createClaudeJob(
+                itemId, itemUuid, photos, templateId, queue,
+                promptText = promptText,
+                customPromptName = customPromptName,
+                registerTemplateName = registerTemplateName
+            )
             if (result.success) {
-                onSuccess()
+                if (!promptText.isNullOrBlank()) {
+                    pcServerClient.pushClaudeFreeTextHistory(promptText)
+                }
+                if (result.templateRegistered) {
+                    // §40.4: 登録できたら設定を取り直してテンプレート一覧へ即反映する
+                    viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            pcServerClient.fetchAndSyncServerSettings()
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+                onSuccess(result)
             } else {
                 onError(result.message)
             }

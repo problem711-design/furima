@@ -203,7 +203,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 15)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 16)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -429,7 +429,13 @@ public static class DashboardHtml
                 </div>
                 <div class='flex flex-wrap items-center gap-2'>
                     <span id='viewer-claude-bundle-note' class='hidden text-[11px] text-amber-700 font-bold'>まとめ商品は個別の子商品から送信してください</span>
-                    <select id='viewer-claude-template' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 max-w-[180px]' title='画像加工プロンプトテンプレート'></select>
+                    <div class='relative'>
+                        <button type='button' id='viewer-claude-template-btn' onclick='toggleClaudeTemplatePicker()' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 max-w-[220px] flex items-center gap-1' title='画像加工プロンプトの選択（タイトルを押すと本文を確認できます）'>
+                            <span id='viewer-claude-template-label' class='truncate'>プロンプト未登録</span>
+                            <i class='fa-solid fa-chevron-down text-[9px] text-slate-400'></i>
+                        </button>
+                        <div id='viewer-claude-picker' class='hidden absolute right-0 top-full mt-1 z-40 w-[400px] max-w-[92vw] bg-white border border-violet-200 rounded-xl shadow-2xl p-2 text-left'></div>
+                    </div>
                     <select id='viewer-claude-queue' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700' title='送り先（巡回: 承認後に自動処理 / 手動: チャットで呼んで即実行 / 待機: あとで送る）'>
                         <option value='patrol'>巡回（自動）</option>
                         <option value='manual'>手動（すぐ）</option>
@@ -551,6 +557,30 @@ public static class DashboardHtml
             <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500'>
                 <span>復元すると元の商品（まとめ商品の場合は内訳含む）へ戻ります。</span>
                 <button type='button' onclick='closePhotoTrashModal()' class='px-4 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>閉じる</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- フェーズ 6-8: 手打ちプロンプトのテンプレート登録確認モーダル (送信直前フロー専用) -->
+    <div id='claude-custom-register-modal' class='fixed inset-0 bg-black/70 z-[60] hidden flex items-center justify-center p-3 sm:p-5'>
+        <div class='bg-white rounded-xl max-w-md w-full shadow-2xl border border-slate-200 p-5'>
+            <div id='claude-custom-register-step1'>
+                <p class='text-sm font-bold text-slate-800 mb-1'>このプロンプトをテンプレートに登録しますか？</p>
+                <p class='text-xs text-slate-500 mb-4'>登録すると、次回からテンプレート一覧で選べるようになります。登録しなくても送信はできます。</p>
+                <div class='flex flex-wrap justify-end gap-2'>
+                    <button type='button' onclick='closeClaudeCustomRegisterModal()' class='px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>キャンセル</button>
+                    <button type='button' onclick='decideClaudeCustomRegister(false)' class='px-3 py-1.5 text-xs font-bold bg-slate-500 hover:bg-slate-600 text-white rounded-lg transition'>登録しないで送信</button>
+                    <button type='button' onclick='showClaudeCustomRegisterNameStep()' class='px-3 py-1.5 text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition'>登録する</button>
+                </div>
+            </div>
+            <div id='claude-custom-register-step2' class='hidden'>
+                <p class='text-sm font-bold text-slate-800 mb-2'>テンプレートのタイトル</p>
+                <input type='text' id='claude-custom-register-name' class='w-full text-sm border border-violet-300 rounded-lg px-2 py-1.5 mb-1' maxlength='100'>
+                <p id='claude-custom-register-error' class='hidden text-[11px] text-rose-600 font-bold mb-2'></p>
+                <div class='flex flex-wrap justify-end gap-2 mt-3'>
+                    <button type='button' onclick='backToClaudeCustomRegisterStep1()' class='px-3 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>戻る</button>
+                    <button type='button' onclick='decideClaudeCustomRegister(true)' class='px-3 py-1.5 text-xs font-bold bg-violet-600 hover:bg-violet-700 text-white rounded-lg transition'>この名前で登録して送信</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1357,21 +1387,137 @@ public static class DashboardHtml
             renderClaudeTemplateSelect();
         }
 
+        // フェーズ 6-8 (§35.2.1): テンプレート選択はリスト方式 (先頭行 = 手打ち)。
+        // チェックは排他で他行はグレーアウトし、タイトルを押すと本文を展開する。
+        let viewerClaudeSelType = 'template';
+        let viewerClaudeSelTemplateId = '';
+        let viewerClaudeCustomText = '';
+        let viewerClaudeExpandedId = '';
+
+        function claudeFreeTextHistory() {
+            try {
+                const arr = JSON.parse(localStorage.getItem('claudeFreeTextHistoryPc') || '[]');
+                return Array.isArray(arr) ? arr.filter(x => typeof x === 'string').slice(0, 3) : [];
+            } catch (e) { return []; }
+        }
+
+        function pushClaudeFreeTextHistory(text) {
+            try {
+                const next = [text].concat(claudeFreeTextHistory().filter(x => x !== text)).slice(0, 3);
+                localStorage.setItem('claudeFreeTextHistoryPc', JSON.stringify(next));
+            } catch (e) { }
+        }
+
         function renderClaudeTemplateSelect() {
-            const sel = document.getElementById('viewer-claude-template');
-            if (!sel) return;
             const tpls = pcSettings.promptTemplates || [];
-            const prev = sel.value;
-            if (tpls.length === 0) {
-                sel.innerHTML = `<option value=''>プロンプト未登録（設定で追加）</option>`;
-                sel.disabled = true;
-            } else {
-                sel.innerHTML = tpls.map(t => `<option value='${escapeHtml(t.id)}'>${escapeHtml(t.name)}</option>`).join('');
-                sel.disabled = false;
-                if (prev && tpls.some(t => t.id === prev)) sel.value = prev;
+            if (viewerClaudeSelType === 'template') {
+                if (!tpls.some(t => t.id === viewerClaudeSelTemplateId)) {
+                    viewerClaudeSelTemplateId = tpls.length > 0 ? tpls[0].id : '';
+                    if (tpls.length === 0) viewerClaudeSelType = 'custom';
+                }
             }
+            const label = document.getElementById('viewer-claude-template-label');
+            if (label) {
+                if (viewerClaudeSelType === 'custom') {
+                    label.innerText = 'プロンプトを手打ち';
+                } else {
+                    const cur = tpls.find(t => t.id === viewerClaudeSelTemplateId);
+                    label.innerText = cur ? cur.name : 'プロンプト未登録';
+                }
+            }
+            renderClaudeTemplatePicker();
             const item = allItems.find(i => i.id === currentViewerItemId);
             updateViewerSelectionBar(item && item.photos ? item.photos.length : 0);
+        }
+
+        function toggleClaudeTemplatePicker() {
+            const p = document.getElementById('viewer-claude-picker');
+            if (!p) return;
+            if (p.classList.contains('hidden')) {
+                renderClaudeTemplatePicker();
+                p.classList.remove('hidden');
+            } else {
+                p.classList.add('hidden');
+            }
+        }
+
+        function closeClaudeTemplatePicker() {
+            const p = document.getElementById('viewer-claude-picker');
+            if (p) p.classList.add('hidden');
+        }
+
+        function selectClaudeCustomRow() {
+            viewerClaudeSelType = 'custom';
+            renderClaudeTemplateSelect();
+        }
+
+        function selectClaudeTemplateByIndex(idx) {
+            const tpls = pcSettings.promptTemplates || [];
+            if (idx < 0 || idx >= tpls.length) return;
+            viewerClaudeSelType = 'template';
+            viewerClaudeSelTemplateId = tpls[idx].id;
+            renderClaudeTemplateSelect();
+        }
+
+        function toggleClaudeTemplateBodyByIndex(idx) {
+            const tpls = pcSettings.promptTemplates || [];
+            if (idx < 0 || idx >= tpls.length) return;
+            const id = tpls[idx].id;
+            viewerClaudeExpandedId = (viewerClaudeExpandedId === id) ? '' : id;
+            renderClaudeTemplatePicker();
+        }
+
+        function onViewerClaudeCustomInput() {
+            const ta = document.getElementById('viewer-claude-custom-text');
+            viewerClaudeCustomText = ta ? ta.value : '';
+            const cnt = document.getElementById('viewer-claude-custom-count');
+            if (cnt) cnt.innerText = viewerClaudeCustomText.trim().length + ' / 4,000 文字';
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            updateViewerSelectionBar(item && item.photos ? item.photos.length : 0);
+        }
+
+        function reuseClaudeFreeText(idx) {
+            const h = claudeFreeTextHistory();
+            if (idx < 0 || idx >= h.length) return;
+            viewerClaudeCustomText = h[idx];
+            renderClaudeTemplatePicker();
+            const item = allItems.find(i => i.id === currentViewerItemId);
+            updateViewerSelectionBar(item && item.photos ? item.photos.length : 0);
+        }
+
+        function renderClaudeTemplatePicker() {
+            const p = document.getElementById('viewer-claude-picker');
+            if (!p) return;
+            const tpls = pcSettings.promptTemplates || [];
+            let html = '';
+            html += `<div class='flex items-center justify-between px-1 pb-1'><span class='text-[11px] font-bold text-slate-500'>プロンプトを選ぶ（タイトルを押すと本文表示）</span><button type='button' onclick='closeClaudeTemplatePicker()' class='text-slate-400 hover:text-slate-600 text-xs px-1'>✕</button></div>`;
+            const customChecked = viewerClaudeSelType === 'custom';
+            html += `<div class='rounded-lg px-2 py-1.5 ${customChecked ? 'bg-violet-50' : 'opacity-60'}'>`;
+            html += `<div class='flex items-center gap-2'><input type='checkbox' ${customChecked ? 'checked' : ''} onchange='selectClaudeCustomRow()' class='accent-violet-600 cursor-pointer'><span class='text-xs font-bold text-slate-700'>プロンプトを手打ち</span></div>`;
+            if (customChecked) {
+                html += `<div class='mt-1.5'><textarea id='viewer-claude-custom-text' rows='5' oninput='onViewerClaudeCustomInput()' class='w-full text-xs border border-violet-300 rounded-lg px-2 py-1.5' placeholder='加工プロンプトを入力（4,000 文字まで）'>${escapeHtml(viewerClaudeCustomText)}</textarea>`;
+                html += `<div><span id='viewer-claude-custom-count' class='text-[10px] text-slate-400'>${viewerClaudeCustomText.trim().length} / 4,000 文字</span></div>`;
+                const hist = claudeFreeTextHistory();
+                if (hist.length > 0) {
+                    html += `<div class='mt-1 flex flex-wrap items-center gap-1'><span class='text-[10px] text-slate-400'>前回の手打ちを再利用:</span>` + hist.map((h, i) => `<button type='button' onclick='reuseClaudeFreeText(${i})' class='text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 max-w-[140px] truncate'>${escapeHtml(h.slice(0, 20))}</button>`).join('') + `</div>`;
+                }
+                html += `</div>`;
+            }
+            html += `</div>`;
+            tpls.forEach((t, i) => {
+                const checked = viewerClaudeSelType === 'template' && viewerClaudeSelTemplateId === t.id;
+                const dim = checked ? '' : 'opacity-60';
+                html += `<div class='rounded-lg px-2 py-1.5 ${checked ? 'bg-violet-50' : ''} ${dim}'>`;
+                html += `<div class='flex items-center gap-2'><input type='checkbox' ${checked ? 'checked' : ''} onchange='selectClaudeTemplateByIndex(${i})' class='accent-violet-600 cursor-pointer'><span class='text-xs font-bold text-slate-700 cursor-pointer flex-1' onclick='toggleClaudeTemplateBodyByIndex(${i})'>${escapeHtml(t.name)}</span></div>`;
+                if (viewerClaudeExpandedId === t.id) {
+                    html += `<div class='mt-1 ml-6 text-[11px] text-slate-600 whitespace-pre-wrap bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 max-h-40 overflow-y-auto'>${escapeHtml(t.content || '')}</div>`;
+                }
+                html += `</div>`;
+            });
+            if (tpls.length === 0) {
+                html += `<p class='text-[11px] text-slate-400 px-2 py-1'>テンプレートは未登録です（設定画面で追加できます）。手打ちはそのまま使えます。</p>`;
+            }
+            p.innerHTML = html;
         }
 
         async function savePcSettingsPayload(nextSettings, toastMsg) {
@@ -2389,16 +2535,20 @@ public static class DashboardHtml
 
             const claudeCountSpan = document.getElementById('viewer-claude-selected-count');
             const claudeBtn = document.getElementById('viewer-claude-send-btn');
-            const claudeSel = document.getElementById('viewer-claude-template');
+            const claudePickerBtn = document.getElementById('viewer-claude-template-btn');
             const claudeQueueSel = document.getElementById('viewer-claude-queue');
             const bundleNote = document.getElementById('viewer-claude-bundle-note');
             if (claudeCountSpan) claudeCountSpan.innerText = selSize;
             const viewerItem = allItems.find(i => i.id === currentViewerItemId);
             const isBundle = checkIsBundle(viewerItem);
-            const hasTpl = (pcSettings.promptTemplates || []).length > 0;
-            if (claudeBtn) claudeBtn.disabled = (selSize === 0 || isBundle || !hasTpl);
-            if (claudeSel) claudeSel.disabled = (!hasTpl || isBundle);
-            if (claudeQueueSel) claudeQueueSel.disabled = (!hasTpl || isBundle);
+            // フェーズ 6-8 (§40.4): 手打ちはテンプレート 0 件でも、本文が入っていれば送信可
+            const customLen = viewerClaudeCustomText.trim().length;
+            const promptReady = viewerClaudeSelType === 'custom'
+                ? (customLen > 0 && customLen <= 4000)
+                : !!viewerClaudeSelTemplateId;
+            if (claudeBtn) claudeBtn.disabled = (selSize === 0 || isBundle || !promptReady);
+            if (claudePickerBtn) claudePickerBtn.disabled = isBundle;
+            if (claudeQueueSel) claudeQueueSel.disabled = (isBundle || !promptReady);
             if (bundleNote) bundleNote.classList.toggle('hidden', !isBundle);
         }
 
@@ -2843,6 +2993,9 @@ public static class DashboardHtml
             }
         }
 
+        // フェーズ 6-8: 手打ち送信時の登録確認モーダルが引き継ぐ送信内容
+        let pendingClaudeCustomSend = null;
+
         async function sendViewerPhotosToClaude() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             const photos = (item && item.photos) ? item.photos : [];
@@ -2851,12 +3004,7 @@ public static class DashboardHtml
                 showToast('まとめ商品は個別の子商品から送信してください');
                 return;
             }
-            const sel = document.getElementById('viewer-claude-template');
-            const templateId = sel ? sel.value : '';
-            if (!templateId) {
-                showToast('プロンプトテンプレートが未登録です（設定画面で登録してください）');
-                return;
-            }
+            closeClaudeTemplatePicker();
             // 送信直前の照合 (Q6): 選択中インデックスが現在の写真一覧の実在写真に対応するか確認する
             const targets = [];
             let mismatch = false;
@@ -2869,19 +3017,103 @@ public static class DashboardHtml
                 showToast('写真の選択状態が変わっています。選択し直してください');
                 return;
             }
-            const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
-            const tplName = tpl ? tpl.name : '';
             const queueSel = document.getElementById('viewer-claude-queue');
             const queue = queueSel ? queueSel.value : 'patrol';
             const queueLabel = queue === 'manual' ? '手動' : (queue === 'waiting' ? '待機' : '巡回');
             const listText = targets.map((t, i) => (i + 1) + '. ' + (t.fileName || t.md5)).join('\n');
-            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」でMuseに送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + '\n\n対象ファイル:\n' + listText)) return;
+            if (viewerClaudeSelType === 'custom') {
+                const text = viewerClaudeCustomText.trim();
+                if (!text) {
+                    showToast('プロンプトを入力してください');
+                    return;
+                }
+                if (text.length > 4000) {
+                    showToast('プロンプトが長すぎます (4,000 文字以内)');
+                    return;
+                }
+                // §35.2.2: 登録するかどうかは手打ち送信時のダイアログで聞く
+                pendingClaudeCustomSend = { item: item, photos: photos, targets: targets, queue: queue, queueLabel: queueLabel, listText: listText, text: text };
+                openClaudeCustomRegisterModal();
+                return;
+            }
+            const templateId = viewerClaudeSelTemplateId;
+            if (!templateId) {
+                showToast('プロンプトテンプレートが未登録です（設定画面で登録するか、手打ちを選んでください）');
+                return;
+            }
+            const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
+            const tplName = tpl ? tpl.name : '';
+            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」でClaudeに送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + '\n\n対象ファイル:\n' + listText)) return;
+            await postViewerClaudeJob(item, photos, targets, queue, queueLabel, { templateId: templateId });
+        }
 
+        function openClaudeCustomRegisterModal() {
+            const m = document.getElementById('claude-custom-register-modal');
+            if (!m) return;
+            document.getElementById('claude-custom-register-step1').classList.remove('hidden');
+            document.getElementById('claude-custom-register-step2').classList.add('hidden');
+            m.classList.remove('hidden');
+        }
+
+        function closeClaudeCustomRegisterModal() {
+            const m = document.getElementById('claude-custom-register-modal');
+            if (m) m.classList.add('hidden');
+            pendingClaudeCustomSend = null;
+        }
+
+        function backToClaudeCustomRegisterStep1() {
+            document.getElementById('claude-custom-register-step2').classList.add('hidden');
+            document.getElementById('claude-custom-register-step1').classList.remove('hidden');
+        }
+
+        function showClaudeCustomRegisterNameStep() {
+            if (!pendingClaudeCustomSend) return;
+            const input = document.getElementById('claude-custom-register-name');
+            const err = document.getElementById('claude-custom-register-error');
+            if (err) err.classList.add('hidden');
+            if (input) input.value = pendingClaudeCustomSend.text.slice(0, 20);
+            document.getElementById('claude-custom-register-step1').classList.add('hidden');
+            document.getElementById('claude-custom-register-step2').classList.remove('hidden');
+        }
+
+        async function decideClaudeCustomRegister(withRegister) {
+            const pending = pendingClaudeCustomSend;
+            if (!pending) {
+                closeClaudeCustomRegisterModal();
+                return;
+            }
+            let registerName = null;
+            if (withRegister) {
+                const input = document.getElementById('claude-custom-register-name');
+                const name = input ? input.value.trim() : '';
+                const err = document.getElementById('claude-custom-register-error');
+                // §40.4: 両クライアントとも送信前に手元一覧で同名を事前チェックする
+                const dup = (pcSettings.promptTemplates || []).some(t => (t.name || '').trim().toLowerCase() === name.toLowerCase());
+                if (!name || dup) {
+                    if (err) {
+                        err.innerText = !name ? 'タイトルを入力してください' : '同名のテンプレートが既にあります: ' + name;
+                        err.classList.remove('hidden');
+                    }
+                    return;
+                }
+                registerName = name;
+            }
+            closeClaudeCustomRegisterModal();
+            const nameNote = registerName ? '\nテンプレート「' + registerName + '」として登録します' : '';
+            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトでClaudeに送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + '\n\n対象ファイル:\n' + pending.listText)) return;
+            const extras = { promptText: pending.text };
+            if (registerName) extras.registerTemplateName = registerName;
+            await postViewerClaudeJob(pending.item, pending.photos, pending.targets, pending.queue, pending.queueLabel, extras);
+        }
+
+        async function postViewerClaudeJob(item, photos, targets, queue, queueLabel, extras) {
             try {
+                const payload = { itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, origin: 'pc', queue: queue };
+                Object.assign(payload, extras);
                 const res = await fetch('/api/claude/jobs', {
                     method: 'POST',
                     headers: getHeaders(),
-                    body: JSON.stringify({ itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, templateId: templateId, origin: 'pc', queue: queue })
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
                 if (!res.ok || data.status === 'error') {
@@ -2890,9 +3122,15 @@ public static class DashboardHtml
                 selectedViewerPhotoIndices.clear();
                 updateViewerSelectionBar(photos.length);
                 renderViewerPhotos();
-                showToast(queue === 'waiting'
+                if (extras.promptText) pushClaudeFreeTextHistory(extras.promptText);
+                let msg = queue === 'waiting'
                     ? '待機リストへ送りました（' + targets.length + '枚）'
-                    : 'Museジョブを作成しました（' + targets.length + '枚・' + queueLabel + '）スマホの承認をお待ちください');
+                    : 'Museジョブを作成しました（' + targets.length + '枚・' + queueLabel + '）スマホの承認をお待ちください';
+                if (data.templateRegistered) msg += '（テンプレートに登録しました）';
+                if (data.templateRegisterError) msg += '（テンプレート登録は失敗: ' + data.templateRegisterError + '）';
+                showToast(msg);
+                // §40.4: 登録できたら設定を取り直して一覧へ即反映する
+                if (data.templateRegistered) await fetchSettings();
                 openClaudeJobsModal(queue === 'waiting' ? ""waiting"" : ""active"");
             } catch (e) {
                 showToast('エラー: ' + e.message);

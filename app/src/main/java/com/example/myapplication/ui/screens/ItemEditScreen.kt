@@ -407,8 +407,9 @@ fun ItemEditScreen(
             photoCount = claudeEligiblePhotos.size,
             excludedCount = claudeExcludedCount,
             isConnected = isPcServerConnected,
+            freeTextHistory = viewModel.claudeFreeTextHistory(),
             onDismiss = { showClaudeSendDialog = false },
-            onSend = { tpl, queue ->
+            onSendTemplate = { tpl, queue ->
                 showClaudeSendDialog = false
                 isSendingToClaude = true
                 viewModel.sendPhotosToClaude(
@@ -428,6 +429,31 @@ fun ItemEditScreen(
                             if (queue == "waiting") "待機リストへ送りました" else "Museジョブを作成しました（承認リクエストを送信しました）",
                             Toast.LENGTH_LONG
                         ).show()
+                        exitPhotoSelectionMode()
+                    }
+                )
+            },
+            onSendCustom = { text, queue, registerName ->
+                showClaudeSendDialog = false
+                isSendingToClaude = true
+                viewModel.sendPhotosToClaude(
+                    itemId = itemId,
+                    itemUuid = loadedItem?.syncUuid ?: "",
+                    photos = claudeEligiblePhotos,
+                    templateId = "",
+                    queue = queue,
+                    promptText = text,
+                    registerTemplateName = registerName,
+                    onError = { msg ->
+                        isSendingToClaude = false
+                        Toast.makeText(context, "送信エラー: $msg", Toast.LENGTH_LONG).show()
+                    },
+                    onSuccess = { result ->
+                        isSendingToClaude = false
+                        var msg = if (queue == "waiting") "待機リストへ送りました" else "Museジョブを作成しました（承認リクエストを送信しました）"
+                        if (result.templateRegistered) msg += "（テンプレートに登録しました）"
+                        if (result.templateRegisterError != null) msg += "（テンプレート登録は失敗: ${result.templateRegisterError}）"
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                         exitPhotoSelectionMode()
                     }
                 )

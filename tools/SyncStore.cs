@@ -280,9 +280,87 @@ public static class SyncStore
                 {
                     _currentConfig.defaultSettings.promptTemplates = new List<TextTemplateConfig>();
                 }
-                return _currentConfig.defaultSettings;
+                // フェーズ 6-8 (§41.4): ディープコピーを返す。呼び出し側が戻り値を変更しても
+                // 保持中の設定へ影響しない (列挙中の変更例外の防止も兼ねる)
+                return JsonConvert.DeserializeObject<DefaultSettingsConfig>(
+                    JsonConvert.SerializeObject(_currentConfig.defaultSettings));
             }
             return DefaultSettingsConfig.CreateDefault();
+        }
+    }
+
+    // フェーズ 6-8 (§40.4): 設定の比較〜保存を _configLock 内で不可分に行う。
+    // incoming の settingsUpdatedAt が保持中より新しい場合だけ保存し、保存したら true を返す。
+    public static bool SaveDefaultSettingsIfNewer(DefaultSettingsConfig incoming)
+    {
+        if (incoming == null) return false;
+        lock (_configLock)
+        {
+            long current = 0;
+            if (_currentConfig != null && _currentConfig.defaultSettings != null)
+            {
+                current = _currentConfig.defaultSettings.settingsUpdatedAt;
+            }
+            if (incoming.settingsUpdatedAt <= current) return false;
+            SaveDefaultSettings(incoming);
+            return true;
+        }
+    }
+
+    // フェーズ 6-8 (§35.4 / §40.4 / §41.4): 手打ちプロンプトのテンプレート登録。
+    // 同名検査・追加・保存を _configLock 内で不可分に行う。同名 (Trim 後・大文字小文字を
+    // 区別しない) は上書きせずエラーとし、空名もエラーとする。登録時はリストを複製して
+    // 差し替え (コピーオンライト)、settingsUpdatedAt を単調増加させる。
+    public static bool TryRegisterPromptTemplate(string name, string content, out string error)
+    {
+        error = null;
+        string trimmed = (name ?? "").Trim();
+        if (trimmed.Length == 0)
+        {
+            error = "テンプレート名が空です";
+            return false;
+        }
+        lock (_configLock)
+        {
+            if (_currentConfig == null)
+            {
+                _currentConfig = new StoreConfig
+                {
+                    storeId = _storeId,
+                    path = _syncDir,
+                    authToken = _authToken,
+                    createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK")
+                };
+            }
+            if (_currentConfig.defaultSettings == null)
+            {
+                _currentConfig.defaultSettings = DefaultSettingsConfig.CreateDefault();
+            }
+            var settings = _currentConfig.defaultSettings;
+            if (settings.promptTemplates == null)
+            {
+                settings.promptTemplates = new List<TextTemplateConfig>();
+            }
+            foreach (var t in settings.promptTemplates)
+            {
+                if (t != null && string.Equals((t.name ?? "").Trim(), trimmed, StringComparison.OrdinalIgnoreCase))
+                {
+                    error = "同名のテンプレートが既にあります: " + trimmed;
+                    return false;
+                }
+            }
+            var newList = new List<TextTemplateConfig>(settings.promptTemplates);
+            newList.Add(new TextTemplateConfig
+            {
+                id = Guid.NewGuid().ToString(),
+                name = trimmed,
+                content = content ?? ""
+            });
+            settings.promptTemplates = newList;
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            settings.settingsUpdatedAt = Math.Max(settings.settingsUpdatedAt + 1, now);
+            SaveDefaultSettings(settings);
+            return true;
         }
     }
 
