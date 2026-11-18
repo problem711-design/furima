@@ -70,6 +70,22 @@
 
 ---
 
+### 将来のパフォーマンス・構造改善メモ（2026-11-18 レビュー所見・急ぎではないバックログ）
+
+現行規模（出品数百件前後・個人運用）では、リビジョン番号ゲーティング（`dataRevision` / `settingsRevision` / `claudeRevision`）やスマホ側の Room＋Coil＋差分同期により十分実用的であり、**今すぐの全面リファクタリングは不要**。将来的に商品 500〜1,000 件超・写真数千枚規模へ増えた際や次の大型機能追加の前に着手できるよう、投資対効果の高い改善候補を記録する。
+
+1. **PC 側 3 秒ポーリングの軽量化（`FurimaServerNative.cs` `/api/server/status` ・ `SyncStore.CountMissingFiles`）**
+   - 現状は 3 秒ごとの監視のたびに `lock (lockObj)` 内で全有効商品の全写真に `File.Exists()` を実行している。欠損件数集計を起動時・同期完了時・写真追加／削除時のキャッシュ更新へ寄せ、定期ポーリングはロックレスなリビジョン確認主体にするとロック競合とディスク I/O を大きく削れる。
+2. **写真配信のロック外 I/O 化・不変キャッシュ・一覧用軽量表示（`FurimaServerNative.cs` `ServePhotoByHash` ・ `DashboardHtml.cs`）**
+   - `ServePhotoByHash` は `lock (lockObj)` のまま `File.ReadAllBytes` と `OutputStream.Write` まで行っている。ロック内をパス解決のみにして読み込み・送信をロック外へ出し、内容不変なハッシュ URL（`/api/photos/{hash}`）へ `Cache-Control`（`immutable`）を付与するだけでも再描画時の再取得・ブロックが無くなる。一覧グリッドが原寸読み込みで重くなった場合はサムネイル配信も検討する。
+3. **PC 一覧描画と検索の負荷軽減（`DashboardHtml.cs` `renderItems`）**
+   - 検索入力（`oninput`）に 150〜200ms 程度のデバウンスを入れ、件数増加時にはページングまたは段階描画を導入する。
+4. **JSON 全量上書き保存の負荷対策（`SaveItemsDbToDisk` ・ `ClaudeJobStore.SaveToDisk`）**
+   - 現状は更新のたびに全量インデント付き JSON を同期書出ししている。数千件規模へ拡大した場合はインデント省略や遅延フラッシュ（または SQLite 移行）を検討する。
+5. **保守性向上のためのファイル分割（次の大型フェーズ着手前を目安）**
+   - 肥大化した単一ファイル（`FurimaServerNative.cs` 約 6,885 行、`DashboardHtml.cs` 約 4,686 行、`FleaMarketViewModel.kt` 約 1,762 行、`PcServerClient.kt` 約 1,682 行）を責務別（ルーティング／同期／出品／Muse ジョブ／HTML・JS 分離等）に整理する。
+---
+
 ## 更新履歴 (Changelog)
 
 ### [2026-11-17] コードレビュー修正一括 (バージョン 1.1 Build 5)
