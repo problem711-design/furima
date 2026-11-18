@@ -23,6 +23,8 @@ jobs:
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
           "%CSC%" /nologo /codepage:65001 /out:furima-sync.exe /target:exe FurimaSyncNative.cs /reference:Newtonsoft.Json.dll /reference:System.Net.Http.dll
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+      - name: Golden label fixtures - JS side (plan 41.5)
+        run: node --test tools/tests/claude-label.test.mjs
 
   android:
     name: Android app (assembleDebug)
@@ -69,3 +71,5 @@ jobs:
           gradle-version: '9.6.0'
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
+      - name: Unit tests - Android side (golden label fixtures, plan 41.5)
+        run: gradle testDebugUnitTest --stacktrace
