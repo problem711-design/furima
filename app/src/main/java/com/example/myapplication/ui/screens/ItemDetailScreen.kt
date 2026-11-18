@@ -76,6 +76,8 @@ import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.data.local.mergedChildStatusLabelOf
 import com.example.myapplication.data.local.statusLabelOf
 import com.example.myapplication.ui.FleaMarketViewModel
+import com.example.myapplication.data.server.ClaudeJobDto
+import com.example.myapplication.ui.components.ClaudeJobCancelDialog
 import com.example.myapplication.ui.components.ListingValidationBanner
 import com.example.myapplication.ui.components.PhotoPreviewDialog
 import com.example.myapplication.ui.components.evaluateListingWarnings
@@ -131,6 +133,9 @@ fun ItemDetailScreen(
     val currentItem = itemWithPhotos!!.item
     val photos = itemWithPhotos!!.photos
 
+    // フェーズ 6-10 (§37.4): ラベルチップ / プレビューからの取消対象 (ジョブと、その写真の md5)
+    var claudeCancelTarget by remember { mutableStateOf<Pair<ClaudeJobDto, String>?>(null) }
+
     // フェーズ 6-5 (是正 Build 8): 加工ラベル表示のためのジョブ状態購読と閲覧セッション開始
     val detailClaudeJobs by viewModel.claudeJobsForLabels.collectAsState()
     val detailClaudeSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
@@ -177,7 +182,26 @@ fun ItemDetailScreen(
                     }
                 }
             },
+            onResolvePhotoLabel = { hash ->
+                viewModel.claudePhotoLabelKey(currentItem.syncUuid, detailBundleUuids, hash, detailClaudeJobs, detailClaudeSeenAt, detailVisitSnapshot)
+            },
+            onResolveLabelSourceJob = { hash ->
+                viewModel.claudePhotoLabelSourceJob(currentItem.syncUuid, detailBundleUuids, hash, detailClaudeJobs)
+            },
+            onCancelLabelJob = { job, hash -> claudeCancelTarget = job to hash },
             onDismiss = { previewStartIndex = null }
+        )
+    }
+
+    // フェーズ 6-10 (§37.4): ジョブ取消ダイアログ (グリッドのチップ / プレビュー共通)
+    claudeCancelTarget?.let { (job, md5) ->
+        ClaudeJobCancelDialog(
+            job = job,
+            onConfirm = {
+                claudeCancelTarget = null
+                viewModel.cancelClaudeJobFromLabel(currentItem.syncUuid, detailBundleUuids, md5, job.jobId)
+            },
+            onDismiss = { claudeCancelTarget = null }
         )
     }
 
@@ -734,6 +758,20 @@ fun ItemDetailScreen(
                                         color = if (claudeLabelKey == "approval") Color.Black else Color.White,
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            // フェーズ 6-10 (§37.4 / §40.3): アクティブなラベルのチップには余白つきのタップ領域を重ね、源泉ジョブの取消ダイアログを開く
+                            if (claudeLabelKey == "processing" || claudeLabelKey == "approval" || claudeLabelKey == "startwait" || claudeLabelKey == "waiting") {
+                                val claudeSourceJob = photo.md5Hash.takeIf { it.isNotBlank() }?.let { md5 ->
+                                    viewModel.claudePhotoLabelSourceJob(currentItem.syncUuid, detailBundleUuids, md5, detailClaudeJobs)
+                                }
+                                if (claudeSourceJob != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .size(width = 56.dp, height = 32.dp)
+                                            .clickable { claudeCancelTarget = claudeSourceJob to photo.md5Hash }
                                     )
                                 }
                             }

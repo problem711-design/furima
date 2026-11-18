@@ -365,6 +365,32 @@ class PcServerClient(
         }
     }
 
+    // フェーズ 6-10 (§37.4): ジョブの取消 (queued / approval_pending / approved / processing が対象)
+    suspend fun postClaudeJobCancel(
+        jobId: String,
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaType())
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/cancel").post(body)
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string()
+                val parsed = if (!respStr.isNullOrBlank()) {
+                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                } else null
+                parsed?.status == "ok"
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "postClaudeJobCancel 例外: ${e.message}", e)
+            false
+        }
+    }
+
     // フェーズ 6-5 (是正 Build 8): 加工済みラベルの一括既読化 (商品を開いたときに呼ぶ)。
     // 応答にはサーバー確定の seenAt と labelSeenRevision が含まれ、呼び出し側で楽観値を確定させる。
     // 失敗しても本処理は止めない (null を返す)。

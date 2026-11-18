@@ -907,7 +907,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         jobs: List<com.example.myapplication.data.server.ClaudeJobDto>,
         seenAt: Map<String, Long>
     ): Map<Int, ClaudeItemLabelSummary> {
-        val priority = listOf("error", "processing", "approval", "waiting", "done")
+        val priority = listOf("error", "processing", "approval", "startwait", "waiting", "done")
         val childrenByParent = allItems.filter { it.item.mergedParentId != null }
             .groupBy { it.item.mergedParentId!! }
         val result = mutableMapOf<Int, ClaudeItemLabelSummary>()
@@ -1091,48 +1091,66 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         snapshotMap: Map<String, Long>
     ): String? {
         if (itemUuid.isBlank() || md5.isBlank()) return null
-        val target = md5.lowercase()
         // フェーズ 6-5 是正 (Build 13 / 49-1): まとめ親では子商品のジョブも対象にするため、
         // 単一 UUID ではなくまとめ UUID 集合 (自分＋子孫) で照合する (PC・サーバーと同一範囲)
-        val bundleSet = (bundleUuids.ifEmpty { listOf(itemUuid) }).map { it.lowercase() }.toSet()
-        val itemJobs = jobs.filter { it.itemUuid.lowercase() in bundleSet }
-        // エラー: supersede されていないものが1件でもあればエラー (34-3 の厳密条件)
-        for (errJob in itemJobs) {
-            if (errJob.status != "done_with_errors" || errJob.errorDismissed) continue
-            if (errJob.errors.none { it.sourceMd5.lowercase() == target }) continue
-            val errTime = if (errJob.completedAt > 0) errJob.completedAt else errJob.createdAt
-            val superseded = itemJobs.any { ok ->
-                (ok.status == "done" || ok.status == "done_with_errors") && ok.completedAt > errTime &&
-                    ok.results.any { it.sourceMd5.lowercase() == target }
-            }
-            if (!superseded) return "error"
-        }
-        var hasProcessing = false
-        var hasApproval = false
-        var hasWaiting = false
-        var hasDone = false
-        val now = System.currentTimeMillis()
-        for (job in itemJobs) {
-            if (job.photos.any { it.md5.lowercase() == target }) {
-                when (job.status) {
-                    "approved", "processing" -> hasProcessing = true
-                    "approval_pending" -> hasApproval = true
-                    "queued" -> hasWaiting = true
+        // フェーズ 6-10: 導出本体は純粋関数 (ClaudeLabelDerivation) へ移し、§41.5 の単体テストで検証する
+        val bundleSet = bundleUuids.ifEmpty { listOf(itemUuid) }
+        return com.example.myapplication.data.server.ClaudeLabelDerivation.photoLabelKey(
+            bundleSet, md5, jobs, seenAtMap, snapshotMap, System.currentTimeMillis()
+        )
+    }
+
+    // フェーズ 6-10 (§37.4 / §40.3): チップが示すラベルの源泉ジョブ (取消対象そのもの)
+    fun claudePhotoLabelSourceJob(
+        itemUuid: String,
+        bundleUuids: List<String>,
+        md5: String,
+        jobs: List<com.example.myapplication.data.server.ClaudeJobDto>
+    ): com.example.myapplication.data.server.ClaudeJobDto? {
+        if (itemUuid.isBlank() || md5.isBlank()) return null
+        val bundleSet = bundleUuids.ifEmpty { listOf(itemUuid) }
+        return com.example.myapplication.data.server.ClaudeLabelDerivation.labelSourceJob(bundleSet, md5, jobs)
+    }
+
+    // フェーズ 6-10 (§37.4 / §40.3): ラベルチップからのジョブ取消。
+    // 送信直前に最新のジョブ状態を取り直し、その写真の源泉ジョブが表示時と変わっていたら
+    // 取り消さずに再導出 (表示更新) だけ行う。成功・失敗いずれでもジョブ状態を再取得する。
+    fun cancelClaudeJobFromLabel(
+        itemUuid: String,
+        bundleUuids: List<String>,
+        md5: String,
+        jobId: String
+    ) {
+        val url = _pcServerUrl.value
+        val token = _pcAuthToken.value
+        if (url.isBlank() || jobId.isBlank()) return
+        if (_claudeActionInProgress.value) return
+        _claudeActionInProgress.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                try {
+                    refreshClaudeJobStates(url, token)
+                } catch (_: Exception) {
                 }
+                val freshJobs = try {
+                    pcServerClient.fetchClaudeJobs(url, token)?.jobs ?: _claudeJobsForLabels.value
+                } catch (e: Exception) {
+                    _claudeJobsForLabels.value
+                }
+                val source = claudePhotoLabelSourceJob(itemUuid, bundleUuids, md5, freshJobs)
+                if (source == null || source.jobId != jobId) {
+                    _claudeActionMessage.value = "ジョブの状態が変わったため、取り消しませんでした。最新の表示を確認してください。"
+                    return@launch
+                }
+                val ok = pcServerClient.postClaudeJobCancel(jobId, url, token)
+                try {
+                    refreshClaudeJobStates(url, token)
+                } catch (_: Exception) {
+                }
+                _claudeActionMessage.value = if (ok) "ジョブを取り消しました" else "取り消しを送信できませんでした。接続を確認してもう一度お試しください。"
+            } finally {
+                _claudeActionInProgress.value = false
             }
-            // 加工済みは生成物 (resultMd5) 基準で、所属チェックの外で判定する (32-1)
-            // 既読時刻はジョブの所属商品ごとに引く (49-1: スナップショット優先は PC と同型)
-            if ((job.status == "done" || job.status == "done_with_errors") && job.results.any { it.resultMd5.lowercase() == target }) {
-                val jobSeenAt = snapshotMap[job.itemUuid.lowercase()] ?: (seenAtMap[job.itemUuid.lowercase()] ?: 0L)
-                if (job.completedAt > jobSeenAt && (now - job.completedAt) <= 3L * 24 * 60 * 60 * 1000) hasDone = true
-            }
-        }
-        return when {
-            hasProcessing -> "processing"
-            hasApproval -> "approval"
-            hasWaiting -> "waiting"
-            hasDone -> "done"
-            else -> null
         }
     }
 

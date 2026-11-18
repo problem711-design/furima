@@ -5433,11 +5433,15 @@ class FurimaServerNative
         }
     }
 
-    private static void RecordClaudeJobPhotoError(string jobId, string md5, string message)
+    // フェーズ 6-10 (§40.3 / §41.3): 記録したかどうかを bool で返す。変更ラムダ内でも
+    // 状態ガードを行い、approved / processing 以外 (取消済み・終端など) には記録しない。
+    // 呼び出し側は、記録が弾かれた場合に「実行可能な状態ではない」側の応答へ切り替える。
+    private static bool RecordClaudeJobPhotoError(string jobId, string md5, string message)
     {
         bool added = false;
         ClaudeJobStore.MutateJob(jobId, j =>
         {
+            if (j.status != "approved" && j.status != "processing") return false;
             if (j.errors == null) j.errors = new List<ClaudeJobError>();
             foreach (var e in j.errors)
             {
@@ -5450,6 +5454,7 @@ class FurimaServerNative
             return true;
         });
         if (added) BumpClaudeRevision();
+        return added;
     }
 
     private static void HandleGetClaudeJobPhoto(HttpListenerRequest req, HttpListenerResponse res, string jobId, string md5)
@@ -5508,7 +5513,15 @@ class FurimaServerNative
             if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
             {
                 // Build 13 (13-3): エラーを記録しないと complete が永久に失敗するため、404 でも写真単位エラーとして残す
-                RecordClaudeJobPhotoError(job.jobId, md5, "写真ファイルが見つかりません");
+                // フェーズ 6-10 (§41.3): 記録が状態ガードで弾かれた場合は、404 ではなく
+                // 「実行可能な状態ではない」側の応答を返す (取消済みジョブ等にエラーを残さない)
+                if (!RecordClaudeJobPhotoError(job.jobId, md5, "写真ファイルが見つかりません"))
+                {
+                    var cur = ClaudeJobStore.GetJob(jobId);
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが実行可能な状態ではありません (status: " + (cur != null ? cur.status : "unknown") + ")" } });
+                    return;
+                }
                 res.StatusCode = 404;
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "写真ファイルが見つかりません" } });
                 return;
@@ -5521,36 +5534,77 @@ class FurimaServerNative
             if (!TryBuildClaudeDeliveryCopy(raw, out outBytes, out outMime, out copyError))
             {
                 // 未対応形式などは写真単位のエラーとして記録し、他の写真は継続可能にする
-                RecordClaudeJobPhotoError(job.jobId, md5, copyError);
+                // フェーズ 6-10 (§41.3): 記録が弾かれた場合は 415 ではなく「実行可能な状態ではない」側の応答
+                if (!RecordClaudeJobPhotoError(job.jobId, md5, copyError))
+                {
+                    var cur = ClaudeJobStore.GetJob(jobId);
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが実行可能な状態ではありません (status: " + (cur != null ? cur.status : "unknown") + ")" } });
+                    return;
+                }
                 res.StatusCode = 415;
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", copyError } });
                 return;
             }
 
-            if (job.status == "approved")
+            // フェーズ 6-10 (§40.3 / 53-2): 確定直前に claudeResultWriteLock の下で状態・トークンを
+            // 再検証してから状態遷移と応答を行う。重い読み込み・変換は上のロック外で済ませてある。
+            // 再検証で無効ならバイト列を返さず、エラー記録もしない (取消・失効との競合をここで閉じる)。
+            var commitJob = ClaudeJobStore.GetJob(jobId);
+            if (commitJob != null)
             {
-                // 初回取得: 状態遷移と同じ変更でトークン期限も延長する (6-1b、二重保存の回避)
-                ClaudeJobStore.MutateJob(job.jobId, j =>
+                ApplyApprovalPendingExpiry(commitJob);
+                ApplyTokenExpiry(commitJob);
+            }
+            lock (claudeResultWriteLock)
+            {
+                var fresh = ClaudeJobStore.GetJob(jobId);
+                if (fresh == null)
                 {
-                    if (j.status == "approved")
-                    {
-                        j.status = "processing";
-                        j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
-                        return true;
-                    }
-                    return false;
-                });
-                BumpClaudeRevision();
-            }
-            else
-            {
-                ExtendClaudeJobToken(job.jobId);
-            }
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                    return;
+                }
+                string freshToken = req.Headers["X-Claude-Job-Token"];
+                if (string.IsNullOrEmpty(fresh.jobToken) || string.IsNullOrEmpty(freshToken) ||
+                    !string.Equals(freshToken, fresh.jobToken, StringComparison.Ordinal))
+                {
+                    res.StatusCode = 403;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブトークンが無効です（未承認・期限切れ・不一致）" } });
+                    return;
+                }
+                if (fresh.status != "approved" && fresh.status != "processing")
+                {
+                    res.StatusCode = 400;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが実行可能な状態ではありません (status: " + fresh.status + ")" } });
+                    return;
+                }
 
-            res.ContentType = outMime;
-            res.ContentLength64 = outBytes.Length;
-            res.OutputStream.Write(outBytes, 0, outBytes.Length);
-            res.OutputStream.Close();
+                if (fresh.status == "approved")
+                {
+                    // 初回取得: 状態遷移と同じ変更でトークン期限も延長する (6-1b、二重保存の回避)
+                    ClaudeJobStore.MutateJob(job.jobId, j =>
+                    {
+                        if (j.status == "approved")
+                        {
+                            j.status = "processing";
+                            j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
+                            return true;
+                        }
+                        return false;
+                    });
+                    BumpClaudeRevision();
+                }
+                else
+                {
+                    ExtendClaudeJobToken(job.jobId);
+                }
+
+                res.ContentType = outMime;
+                res.ContentLength64 = outBytes.Length;
+                res.OutputStream.Write(outBytes, 0, outBytes.Length);
+                res.OutputStream.Close();
+            }
         }
         catch (Exception ex)
         {
@@ -6539,6 +6593,15 @@ class FurimaServerNative
 
     private static void HandleCancelClaudeJobLocked(HttpListenerResponse res, string jobId)
     {
+        // フェーズ 6-10 (§41.3): CancelJob の前に承認・トークンの失効評価を通す。
+        // 失効で終端へ落ちたジョブは取消対象外となり、失効の結果 (待機戻し・失効エラー記録) を
+        // 取消で上書きしない。待機へ戻っただけのジョブは queued として通常どおり取消できる。
+        var before = ClaudeJobStore.GetJob(jobId);
+        if (before != null)
+        {
+            ApplyApprovalPendingExpiry(before);
+            ApplyTokenExpiry(before);
+        }
         int result = ClaudeJobStore.CancelJob(jobId);
         if (result == 0)
         {

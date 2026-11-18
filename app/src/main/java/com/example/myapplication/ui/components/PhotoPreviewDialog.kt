@@ -80,6 +80,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.example.myapplication.data.local.PhotoEntity
+import com.example.myapplication.data.server.ClaudeJobDto
+import com.example.myapplication.ui.screens.claudeLabelColor
+import com.example.myapplication.ui.screens.claudeLabelText
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
@@ -121,6 +124,10 @@ fun PhotoPreviewDialog(
     onToggleSelection: ((String) -> Unit)? = null,
     selectedCount: Int = 0,
     onSendToClaude: (() -> Unit)? = null,
+    // フェーズ 6-10 (§37.4 / §41.3): 表示中写真の Muse ラベル表示と源泉ジョブ取消 (任意。渡された場合だけ出す)
+    onResolvePhotoLabel: ((String) -> String?)? = null,
+    onResolveLabelSourceJob: ((String) -> ClaudeJobDto?)? = null,
+    onCancelLabelJob: ((ClaudeJobDto, String) -> Unit)? = null,
     onDismiss: () -> Unit
 ) {
     if (photos.isEmpty()) {
@@ -354,6 +361,47 @@ fun PhotoPreviewDialog(
                                 contentDescription = "閉じる",
                                 tint = Color.White
                             )
+                        }
+                    }
+                }
+
+                // フェーズ 6-10 (§37.4 / §41.3): 現在表示中の写真の Muse ラベルと、アクティブな源泉ジョブの取消ボタン
+                if (onResolvePhotoLabel != null && activeHash.isNotBlank()) {
+                    val activeLabelKey = onResolvePhotoLabel(activeHash)
+                    if (activeLabelKey != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Surface(
+                                color = claudeLabelColor(activeLabelKey).copy(alpha = 0.9f),
+                                shape = RoundedCornerShape(16.dp)
+                            ) {
+                                Text(
+                                    text = claudeLabelText(activeLabelKey),
+                                    color = if (activeLabelKey == "approval") Color.Black else Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                                        .testTag("photo_preview_claude_label")
+                                )
+                            }
+                            val activeSourceJob = onResolveLabelSourceJob?.invoke(activeHash)
+                            if (activeSourceJob != null && onCancelLabelJob != null) {
+                                Button(
+                                    onClick = { onCancelLabelJob(activeSourceJob, activeHash) },
+                                    shape = RoundedCornerShape(20.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE11D48)),
+                                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .heightIn(min = 48.dp)
+                                        .testTag("photo_preview_claude_cancel_button")
+                                ) {
+                                    Text("ジョブを取り消す", fontSize = 12.sp, fontWeight = FontWeight.Bold, softWrap = false)
+                                }
+                            }
                         }
                     }
                 }

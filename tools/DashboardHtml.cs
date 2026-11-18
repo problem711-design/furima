@@ -164,8 +164,12 @@ public static class DashboardHtml
                     </h2>
                     <div class='grid grid-cols-2 gap-2'>
                         <button type='button' onclick='openClaudeJobsModal(""active"")' class='bg-violet-50/70 p-2 rounded border border-violet-100 text-left hover:bg-violet-100/70 transition'>
-                            <p class='text-[10px] font-medium text-slate-500'>処理中</p>
+                            <p class='text-[10px] font-medium text-slate-500'>加工中</p>
                             <p id='claude-col-processing' class='text-base font-black text-violet-900'>0件</p>
+                        </button>
+                        <button type='button' onclick='openClaudeJobsModal(""active"")' class='bg-sky-50/70 p-2 rounded border border-sky-100 text-left hover:bg-sky-100/70 transition'>
+                            <p class='text-[10px] font-medium text-slate-500'>開始待ち</p>
+                            <p id='claude-col-startwait' class='text-base font-black text-sky-900'>0件</p>
                         </button>
                         <button type='button' onclick='openClaudeJobsModal(""active"")' class='bg-amber-50/70 p-2 rounded border border-amber-100 text-left hover:bg-amber-100/70 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>承認待ち</p>
@@ -175,7 +179,7 @@ public static class DashboardHtml
                             <p class='text-[10px] font-medium text-slate-500'>待機中</p>
                             <p id='claude-col-waiting' class='text-base font-black text-slate-800'>0件</p>
                         </button>
-                        <button type='button' onclick='openClaudeJobsModal(""waiting"")' class='bg-rose-50/70 p-2 rounded border border-rose-100 text-left hover:bg-rose-100/70 transition'>
+                        <button type='button' onclick='openClaudeJobsModal(""waiting"")' class='col-span-2 bg-rose-50/70 p-2 rounded border border-rose-100 text-left hover:bg-rose-100/70 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>エラー</p>
                             <p id='claude-col-error' class='text-base font-black text-rose-900'>0件</p>
                         </button>
@@ -199,7 +203,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 14)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 15)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -2434,6 +2438,7 @@ public static class DashboardHtml
             error: { text: 'エラー', cls: 'bg-rose-600 text-white' },
             processing: { text: '加工中', cls: 'bg-blue-600 text-white' },
             approval: { text: '承認待ち', cls: 'bg-amber-400 text-amber-900' },
+            startwait: { text: '開始待ち', cls: 'bg-sky-600 text-white' },
             waiting: { text: '待機中', cls: 'bg-slate-500 text-white' },
             done: { text: '加工済み', cls: 'bg-emerald-600 text-white' }
         };
@@ -2475,12 +2480,14 @@ public static class DashboardHtml
                     (ok.results || []).some(r => String(r.sourceMd5 || '').toLowerCase() === target));
                 if (!superseded) return { key: 'error', text: CLAUDE_LABEL_META.error.text, cls: CLAUDE_LABEL_META.error.cls };
             }
-            let hasProcessing = false, hasApproval = false, hasWaiting = false, hasDone = false;
+            let hasProcessing = false, hasApproval = false, hasStartWait = false, hasWaiting = false, hasDone = false;
             const now = Date.now();
             for (const job of jobs) {
                 if ((job.photos || []).some(p => String(p.md5 || '').toLowerCase() === target)) {
-                    if (job.status === 'approved' || job.status === 'processing') hasProcessing = true;
+                    // フェーズ 6-10 (§37.1): approved は未着手なので「開始待ち」として分離し、「加工中」は processing のみとする
+                    if (job.status === 'processing') hasProcessing = true;
                     else if (job.status === 'approval_pending') hasApproval = true;
+                    else if (job.status === 'approved') hasStartWait = true;
                     else if (job.status === 'queued') hasWaiting = true;
                 }
                 // 加工済みは生成物 (resultMd5) 基準で、所属チェックの外で判定する (32-1)
@@ -2492,6 +2499,7 @@ public static class DashboardHtml
             }
             if (hasProcessing) return { key: 'processing', text: CLAUDE_LABEL_META.processing.text, cls: CLAUDE_LABEL_META.processing.cls };
             if (hasApproval) return { key: 'approval', text: CLAUDE_LABEL_META.approval.text, cls: CLAUDE_LABEL_META.approval.cls };
+            if (hasStartWait) return { key: 'startwait', text: CLAUDE_LABEL_META.startwait.text, cls: CLAUDE_LABEL_META.startwait.cls };
             if (hasWaiting) return { key: 'waiting', text: CLAUDE_LABEL_META.waiting.text, cls: CLAUDE_LABEL_META.waiting.cls };
             if (hasDone) return { key: 'done', text: CLAUDE_LABEL_META.done.text, cls: CLAUDE_LABEL_META.done.cls };
             return null;
@@ -2500,7 +2508,7 @@ public static class DashboardHtml
         function claudeItemLabel(item) {
             const uuidSet = collectBundleUuidSet(item);
             if (!uuidSet.length) return null;
-            const order = { error: 0, processing: 1, approval: 2, waiting: 3, done: 4 };
+            const order = { error: 0, processing: 1, approval: 2, startwait: 3, waiting: 4, done: 5 };
             const counts = {};
             (item.photos || []).forEach(p => {
                 const l = claudePhotoLabel(uuidSet, p.md5Hash, labelSeenAtByItemUuid);
@@ -2548,7 +2556,7 @@ public static class DashboardHtml
                     ? { label: '待機中', cls: 'bg-slate-200 text-slate-700' }
                     : { label: '未依頼', cls: 'bg-slate-200 text-slate-700' };
                 case 'approval_pending': return { label: '承認待ち', cls: 'bg-amber-200 text-amber-800' };
-                case 'approved': return { label: '承認済み', cls: 'bg-sky-200 text-sky-800' };
+                case 'approved': return { label: '開始待ち', cls: 'bg-sky-200 text-sky-800' };
                 case 'processing': return { label: '処理中', cls: 'bg-indigo-200 text-indigo-800' };
                 case 'done': return { label: '完了', cls: 'bg-emerald-200 text-emerald-800' };
                 case 'done_with_errors': return { label: '一部エラー', cls: 'bg-amber-200 text-amber-800' };
@@ -2586,13 +2594,15 @@ public static class DashboardHtml
         }
 
         // フェーズ 6-7: 右カラムのミューズカラムの件数を、取得済みジョブから更新する (計画 §27.3)
-        // 4 タイルは相互排他 (46-1 是正): 処理中 = 依頼中タブのうち承認待ちを除いたもの
-        // (巡回・手動キュー + 承認済み + 処理中)、承認待ち = approval_pending、
-        // 待機中 = 待機キューのみ、エラー = 未解消エラーのみ。履歴のジョブはどのタイルにも入らない。
+        // フェーズ 6-10 (§37.1 / §41.3 案A): 5 タイルに再分割する。加工中 = processing のみ、
+        // 開始待ち = approved + (queued かつ待機キュー以外)、承認待ち = approval_pending、
+        // 待機中 = 待機キューの queued、エラー = 未解消エラーのみ。
+        // 非終端ジョブは重ならず・漏れずいずれか 1 タイルに入る。履歴のジョブはどのタイルにも入らない。
         function updateClaudeColumn() {
             const jobs = claudeJobsCache || [];
             const setText = (id, n) => { const el = document.getElementById(id); if (el) el.innerText = n + '件'; };
-            setText('claude-col-processing', jobs.filter(j => claudeJobTab(j) === 'active' && j.status !== 'approval_pending').length);
+            setText('claude-col-processing', jobs.filter(j => j.status === 'processing').length);
+            setText('claude-col-startwait', jobs.filter(j => j.status === 'approved' || (j.status === 'queued' && j.queue !== 'waiting')).length);
             setText('claude-col-approval', jobs.filter(j => j.status === 'approval_pending').length);
             setText('claude-col-waiting', jobs.filter(j => j.status === 'queued' && j.queue === 'waiting').length);
             setText('claude-col-error', jobs.filter(isClaudeErrorJob).length);
@@ -2757,7 +2767,7 @@ public static class DashboardHtml
                     : (((job.status === 'queued' && job.queue !== 'waiting') || job.status === 'approval_pending')
                         ? `<button type='button' onclick='moveClaudeJob(""${job.jobId}"", ""waiting"")' class='px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[11px] font-bold transition shrink-0'>待機へ</button>`
                         : '');
-                const canCancel = job.status === 'queued' || job.status === 'approval_pending';
+                const canCancel = job.status === 'queued' || job.status === 'approval_pending' || job.status === 'approved' || job.status === 'processing';
                 const isDone = job.status === 'done' || job.status === 'done_with_errors';
                 const unacked = isDone && !job.acknowledged;
                 const ackMark = isDone

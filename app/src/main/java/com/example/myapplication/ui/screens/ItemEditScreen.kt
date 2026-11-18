@@ -104,7 +104,9 @@ import com.example.myapplication.data.local.ItemEntity
 import com.example.myapplication.data.local.isSoldFamilyStatus
 import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.ui.FleaMarketViewModel
+import com.example.myapplication.data.server.ClaudeJobDto
 import com.example.myapplication.ui.components.CameraXCaptureDialog
+import com.example.myapplication.ui.components.ClaudeJobCancelDialog
 import com.example.myapplication.ui.components.ClaudeSendDialog
 import com.example.myapplication.ui.components.ListingValidationBanner
 import com.example.myapplication.ui.components.evaluateListingWarnings
@@ -214,6 +216,8 @@ fun ItemEditScreen(
     }
 
     // フェーズ 6-5 (是正 Build 8): 加工ラベル表示のためのジョブ状態購読と閲覧セッション開始
+    // フェーズ 6-10 (§37.4): ラベルチップ / プレビューからの取消対象 (ジョブと、その写真の md5)
+    var claudeCancelTarget by remember(itemId) { mutableStateOf<Pair<ClaudeJobDto, String>?>(null) }
     val claudeJobsForLabels by viewModel.claudeJobsForLabels.collectAsState()
     val claudeLabelSeenAt by viewModel.claudeLabelSeenAt.collectAsState()
     val labelVisitSnapshot by viewModel.labelVisitSnapshot.collectAsState()
@@ -570,9 +574,28 @@ fun ItemEditScreen(
                         }
                     }
                 },
+                onResolvePhotoLabel = { hash ->
+                    viewModel.claudePhotoLabelKey(loadedItem?.syncUuid ?: "", labelBundleUuids, hash, claudeJobsForLabels, claudeLabelSeenAt, labelVisitSnapshot)
+                },
+                onResolveLabelSourceJob = { hash ->
+                    viewModel.claudePhotoLabelSourceJob(loadedItem?.syncUuid ?: "", labelBundleUuids, hash, claudeJobsForLabels)
+                },
+                onCancelLabelJob = { job, hash -> claudeCancelTarget = job to hash },
                 onDismiss = { previewStartIndex = null }
             )
         }
+    }
+
+    // フェーズ 6-10 (§37.4): ジョブ取消ダイアログ (グリッドのチップ / プレビュー共通)
+    claudeCancelTarget?.let { (job, md5) ->
+        ClaudeJobCancelDialog(
+            job = job,
+            onConfirm = {
+                claudeCancelTarget = null
+                viewModel.cancelClaudeJobFromLabel(loadedItem?.syncUuid ?: "", labelBundleUuids, md5, job.jobId)
+            },
+            onDismiss = { claudeCancelTarget = null }
+        )
     }
 
     if (showCameraPermissionDeniedDialog) {
@@ -894,6 +917,21 @@ fun ItemEditScreen(
                                         color = if (claudeLabelKey == "approval") Color.Black else Color.White,
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                            // フェーズ 6-10 (§37.4 / §40.3): アクティブなラベルのチップに余白つきタップ領域を重ね、源泉ジョブの取消ダイアログを開く。
+                            // 選択モード中はサムネイル全体タップが選択トグル優先のため、チップタップは置かない
+                            if (!photoSelectionMode && (claudeLabelKey == "processing" || claudeLabelKey == "approval" || claudeLabelKey == "startwait" || claudeLabelKey == "waiting")) {
+                                val claudeSourceJob = photoEntity?.md5Hash?.takeIf { it.isNotBlank() }?.let { md5 ->
+                                    viewModel.claudePhotoLabelSourceJob(loadedItem?.syncUuid ?: "", labelBundleUuids, md5, claudeJobsForLabels)
+                                }
+                                if (claudeSourceJob != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .size(width = 56.dp, height = 32.dp)
+                                            .clickable { claudeCancelTarget = claudeSourceJob to (photoEntity?.md5Hash ?: "") }
                                     )
                                 }
                             }
@@ -1470,10 +1508,12 @@ private fun insertTemplateAtCursor(current: TextFieldValue, insertText: String):
 }
 
 // フェーズ 6-5: 加工ラベルの表示名と色 (PC 管理画面のパレットに合わせる)
+// フェーズ 6-10 (§37.1): 開始待ち (startwait) を追加
 fun claudeLabelText(key: String): String = when (key) {
     "error" -> "エラー"
     "processing" -> "加工中"
     "approval" -> "承認待ち"
+    "startwait" -> "開始待ち"
     "waiting" -> "待機中"
     "done" -> "加工済み"
     else -> ""
@@ -1483,7 +1523,17 @@ fun claudeLabelColor(key: String): Color = when (key) {
     "error" -> Color(0xFFE11D48)
     "processing" -> Color(0xFF2563EB)
     "approval" -> Color(0xFFFBBF24)
+    "startwait" -> Color(0xFF0284C7)
     "waiting" -> Color(0xFF64748B)
     "done" -> Color(0xFF059669)
     else -> Color.Gray
+}
+
+// フェーズ 6-10 (§37.4): 取消ダイアログ等で使うジョブ状態の表示名 (ラベル導出と同じ語に揃える)
+fun claudeJobStatusText(status: String): String = when (status) {
+    "queued" -> "待機中"
+    "approval_pending" -> "承認待ち"
+    "approved" -> "開始待ち"
+    "processing" -> "加工中"
+    else -> status
 }

@@ -553,7 +553,9 @@ public static class ClaudeJobStore
         }
     }
 
-    // 実行前 (queued / approval_pending / approved) のジョブだけを取り消せる。
+    // 実行前 (queued / approval_pending / approved) に加え、フェーズ 6-10 (§37.4) で
+    // processing も取り消せるようにした (13-3 の方針の意図的な変更)。
+    // 取消前に返却済みの結果は残り、未処理の写真はもう処理されない。
     // 戻り値: 0=対象なし, 1=取消成功, 2=取消不可の状態
     public static int CancelJob(string jobId)
     {
@@ -566,7 +568,7 @@ public static class ClaudeJobStore
                 if (string.Equals(list[i].jobId, jobId, StringComparison.OrdinalIgnoreCase))
                 {
                     var job = list[i];
-                    if (job.status == "queued" || job.status == "approval_pending" || job.status == "approved")
+                    if (job.status == "queued" || job.status == "approval_pending" || job.status == "approved" || job.status == "processing")
                     {
                         job.status = "cancelled";
                         job.completedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
