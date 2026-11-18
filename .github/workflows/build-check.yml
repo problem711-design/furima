@@ -61,6 +61,9 @@ jobs:
           }
           JSON
           echo "sdk.dir=$ANDROID_HOME" > local.properties
+          # debugConfig が参照する ~/.android/debug.keystore がランナーには無いため、標準のデバッグ用キーを生成する
+          mkdir -p ~/.android
+          keytool -genkeypair -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" > /dev/null 2>&1
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.6.0'
