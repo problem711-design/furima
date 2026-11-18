@@ -434,7 +434,7 @@ public static class DashboardHtml
                             <span id='viewer-claude-template-label' class='truncate'>プロンプト未登録</span>
                             <i class='fa-solid fa-chevron-down text-[9px] text-slate-400'></i>
                         </button>
-                        <div id='viewer-claude-picker' class='hidden absolute right-0 top-full mt-1 z-40 w-[400px] max-w-[92vw] bg-white border border-violet-200 rounded-xl shadow-2xl p-2 text-left'></div>
+                        <div id='viewer-claude-picker' class='hidden fixed z-[70] w-[400px] max-w-[92vw] overflow-y-auto bg-white border border-violet-200 rounded-xl shadow-2xl p-2 text-left'></div>
                     </div>
                     <select id='viewer-claude-queue' class='text-xs font-bold border border-violet-300 rounded-lg px-2 py-1.5 bg-white text-slate-700' title='送り先（巡回: 承認後に自動処理 / 手動: チャットで呼んで即実行 / 待機: あとで送る）'>
                         <option value='patrol'>巡回（自動）</option>
@@ -1436,9 +1436,28 @@ public static class DashboardHtml
             if (p.classList.contains('hidden')) {
                 renderClaudeTemplatePicker();
                 p.classList.remove('hidden');
+                positionClaudeTemplatePicker();
             } else {
                 p.classList.add('hidden');
             }
+        }
+
+        // レビュー 67-1: ピッカーはモーダルの overflow-hidden に切り取られないよう fixed 配置とし、
+        // ボタンの位置から表示領域内に収まる左位置・高さ上限を計算して当てる
+        function positionClaudeTemplatePicker() {
+            const btn = document.getElementById('viewer-claude-template-btn');
+            const p = document.getElementById('viewer-claude-picker');
+            if (!btn || !p) return;
+            const r = btn.getBoundingClientRect();
+            const width = Math.min(400, window.innerWidth - 16);
+            let left = r.right - width;
+            if (left < 8) left = 8;
+            if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - width - 8);
+            const top = r.bottom + 4;
+            p.style.width = width + 'px';
+            p.style.left = left + 'px';
+            p.style.top = top + 'px';
+            p.style.maxHeight = Math.max(160, window.innerHeight - top - 12) + 'px';
         }
 
         function closeClaudeTemplatePicker() {
@@ -2467,6 +2486,7 @@ public static class DashboardHtml
         }
 
         function openPhotoViewer(itemId) {
+            closeClaudeTemplatePicker();
             const item = allItems.find(i => i.id === itemId);
             if (!item) return;
             // 開いた時点の既読状態を保持し、表示中は加工済みを確認できるようにする (32-2)。
@@ -2503,6 +2523,7 @@ public static class DashboardHtml
         }
 
         function closePhotoViewer() {
+            closeClaudeTemplatePicker();
             closePhotoLightbox();
             document.getElementById('photo-viewer-modal').classList.add('hidden');
             viewerSessionSeenMap = null;
@@ -3043,7 +3064,7 @@ public static class DashboardHtml
             }
             const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
             const tplName = tpl ? tpl.name : '';
-            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」でClaudeに送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + '\n\n対象ファイル:\n' + listText)) return;
+            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」で Muse に送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + '\n\n対象ファイル:\n' + listText)) return;
             await postViewerClaudeJob(item, photos, targets, queue, queueLabel, { templateId: templateId });
         }
 
@@ -3100,13 +3121,16 @@ public static class DashboardHtml
             }
             closeClaudeCustomRegisterModal();
             const nameNote = registerName ? '\nテンプレート「' + registerName + '」として登録します' : '';
-            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトでClaudeに送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + '\n\n対象ファイル:\n' + pending.listText)) return;
+            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトで Muse に送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + '\n\n対象ファイル:\n' + pending.listText)) return;
             const extras = { promptText: pending.text };
             if (registerName) extras.registerTemplateName = registerName;
             await postViewerClaudeJob(pending.item, pending.photos, pending.targets, pending.queue, pending.queueLabel, extras);
         }
 
         async function postViewerClaudeJob(item, photos, targets, queue, queueLabel, extras) {
+            // レビュー 67-3 付記: 送信中は送信ボタンを無効化して連続実行を防ぐ
+            const sendBtn = document.getElementById('viewer-claude-send-btn');
+            if (sendBtn) sendBtn.disabled = true;
             try {
                 const payload = { itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, origin: 'pc', queue: queue };
                 Object.assign(payload, extras);
@@ -3135,6 +3159,8 @@ public static class DashboardHtml
             } catch (e) {
                 showToast('エラー: ' + e.message);
             }
+            // 成功時は選択が消えて無効のまま、失敗時は選択が残るので現在の状態で再評価する
+            updateViewerSelectionBar(photos.length);
         }
 
         async function trashSelectedViewerPhotos() {

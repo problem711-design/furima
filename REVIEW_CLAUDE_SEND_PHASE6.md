@@ -2417,3 +2417,28 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 - **判定：差し戻し（`67-1`〜`67-3` を是正のうえ再レビューへ）**
 - 版番号は同一フェーズの是正サイクルのため `v1.4 Build 16`（`versionCode = 1416`）据え置きでよい。是正コミット後に再レビューを実施する。
+
+## 68. 実装担当エージェント回答（§67 指摘 67-1〜67-3・付記への是正）（2026-11-18）
+
+§67 の指摘 3 件はいずれも実コードで検証し、正当と認めて是正した。付記 3 点も併せて対応した。版番号は同一フェーズの是正サイクルのため v1.4 Build 16 / 1416 据え置き。
+
+### 68.1 67-1（PC ピッカーのクリップ／はみ出し・閉じ忘れ）への是正
+- `#viewer-claude-picker` を `absolute` から `fixed` 配置へ変更し、モーダルカード（`overflow-hidden`）の切り抜きから切り離した。開くたびに `positionClaudeTemplatePicker()` がボタンの表示矩形から幅（最大 400px・画面幅−16px で上限）と左位置（画面内に収まるようクランプ）と上位置を計算し、高さ上限は「ビューポート下端までの残り」から算出して当てる。あわせてピッカー自体に `overflow-y-auto` を付け、テンプレート多数・手打ち展開時も内部スクロールで全行へ到達できるようにした。
+- `openPhotoViewer()` / `closePhotoViewer()` の双方で `closeClaudeTemplatePicker()` を呼ぶようにし、開きっぱなしのまま別商品へ移る状態を無くした。
+
+### 68.2 67-2（登録直後の自己上書き消滅・PUT の時刻非単調性）への是正
+- **サーバー**: `SyncStore.SaveDefaultSettingsMonotonic` を新設した。`settingsUpdatedAt = Math.Max(保持中の値 + 1, 現在時刻)` を `_configLock` 内で採番してから保存する。`HandleUpdateSettings`（PUT /api/settings）はこのメソッド経由に切り替え、ロック外での無条件の現在時刻代入をやめた。これにより、スマホ由来の大きな `settingsUpdatedAt` が保存された後でもサーバー側の値は逆行しない。
+- **スマホ**: 登録直後の取り直し専用に `PcServerClient.fetchServerSettingsAfterTemplateRegistration` を新設した。この経路では **push を一切行わない**。サーバーが新しければ丸ごと取り込み、ローカルが新しければ `promptTemplates` と `settingsUpdatedAt` だけをサーバーへ合わせ（他の設定項目はローカルの未同期分を保持）、登録結果を必ず手元へ反映する。`FleaMarketViewModel.sendPhotosToClaude` はこの取り直しの完了を待ってから `onSuccess` を呼ぶよう変更し、直後の再表示との競合も無くした。
+
+### 68.3 67-3（登録名の改行残留）への是正
+- Android: 仮入れ（`registerName` の初期値）を「改行を空白へ置換してから先頭 20 文字」に変更し、確定時にも同じ正規化（改行→空白＋前後空白除去）を適用した。
+- サーバー: `TryRegisterPromptTemplate` でも改行（CRLF / CR / LF）を空白へ置換してから Trim・同名検査・保存を行うようサニタイズを追加した（他クライアント経由の登録でもタイトルに改行が残らない）。
+
+### 68.4 付記への対応
+- 確認ダイアログ文言 2 箇所（テンプレート送信・手打ち送信）を「…で Muse に送ります。」へ統一した。
+- Android の「プロンプトを手打ち」行は、行全体のタップでも切り替わるようにした（チェックボックス本体のみだった判定を拡張）。
+- PC の `postViewerClaudeJob` は送信中 `#viewer-claude-send-btn` を無効化し、終了後に現在の選択状態で再評価して戻すようにした（連続実行防止）。
+
+### 68.5 検証
+- JS: `node --check`（verbatim 復元後）エラー 0 件、ゴールデンテスト 13/13 合格を再確認した。
+- C# / Android のコンパイルと単体テストは、push 後の CI（csc ビルド・`assembleDebug`・`testDebugUnitTest`・JS テスト）で確認する。

@@ -289,6 +289,25 @@ public static class SyncStore
         }
     }
 
+    // フェーズ 6-8 是正 (レビュー 67-2): 設定の更新保存。settingsUpdatedAt は保持中の値と
+    // 現在時刻のどちらより大きい値へ _configLock 内で単調増加させてから保存する。
+    // クライアント時計の進み具合に引きずられてサーバー側の値が逆行するのを防ぐ。
+    public static void SaveDefaultSettingsMonotonic(DefaultSettingsConfig settings)
+    {
+        if (settings == null) return;
+        lock (_configLock)
+        {
+            long existing = 0;
+            if (_currentConfig != null && _currentConfig.defaultSettings != null)
+            {
+                existing = _currentConfig.defaultSettings.settingsUpdatedAt;
+            }
+            long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            settings.settingsUpdatedAt = Math.Max(existing + 1, now);
+            SaveDefaultSettings(settings);
+        }
+    }
+
     // フェーズ 6-8 (§40.4): 設定の比較〜保存を _configLock 内で不可分に行う。
     // incoming の settingsUpdatedAt が保持中より新しい場合だけ保存し、保存したら true を返す。
     public static bool SaveDefaultSettingsIfNewer(DefaultSettingsConfig incoming)
@@ -314,7 +333,8 @@ public static class SyncStore
     public static bool TryRegisterPromptTemplate(string name, string content, out string error)
     {
         error = null;
-        string trimmed = (name ?? "").Trim();
+        // レビュー 67-3: 改行は空白へ置換してから確定する (タイトルに改行を残さない)
+        string trimmed = (name ?? "").Replace("\r\n", " ").Replace("\r", " ").Replace("\n", " ").Trim();
         if (trimmed.Length == 0)
         {
             error = "テンプレート名が空です";

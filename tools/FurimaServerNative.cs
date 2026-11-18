@@ -3576,8 +3576,9 @@ class FurimaServerNative
                 string jsonStr = reader.ReadToEnd();
                 JObject json = JObject.Parse(jsonStr);
                 var cfg = ParseDefaultSettingsConfig(json);
-                cfg.settingsUpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                SyncStore.SaveDefaultSettings(cfg);
+                // レビュー 67-2: settingsUpdatedAt は SyncStore 側で単調増加させて保存する
+                // (クライアント由来の大きな値が保存済みでも逆行させない)
+                SyncStore.SaveDefaultSettingsMonotonic(cfg);
                 BumpSettingsRevision();
                 SendJson(res, SyncStore.GetDefaultSettings());
             }

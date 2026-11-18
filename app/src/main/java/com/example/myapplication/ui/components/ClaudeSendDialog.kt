@@ -72,7 +72,8 @@ fun ClaudeSendDialog(
             text = { Text("このプロンプトをテンプレートに登録すると、次回から一覧で選べるようになります。登録しなくても送信はできます。", fontSize = 13.sp) },
             confirmButton = {
                 TextButton(onClick = {
-                    registerName = customTrimmed.take(20)
+                    // レビュー 67-3: 仮入れタイトルは改行を空白へ置換してから先頭 20 文字を取る
+                    registerName = customTrimmed.replace("\n", " ").replace("\r", " ").take(20)
                     registerError = null
                     showRegisterConfirm = false
                     showRegisterName = true
@@ -118,7 +119,8 @@ fun ClaudeSendDialog(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val name = registerName.trim()
+                    // レビュー 67-3: 確定時も改行を空白へ正規化する (貼り付け対策)
+                    val name = registerName.replace("\n", " ").replace("\r", " ").trim()
                     when {
                         name.isEmpty() -> registerError = "タイトルを入力してください"
                         templates.any { it.name.trim().equals(name, ignoreCase = true) } ->
@@ -168,6 +170,7 @@ fun ClaudeSendDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .alpha(if (useCustom) 1f else 0.55f)
+                        .clickable { useCustom = true }
                         .padding(vertical = 2.dp)
                 ) {
                     Checkbox(

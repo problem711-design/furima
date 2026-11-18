@@ -513,6 +513,47 @@ class PcServerClient(
         }
     }
 
+    // フェーズ 6-8 是正 (レビュー 67-2): テンプレート登録直後の設定取り直し専用。
+    // 通常の fetchAndSyncServerSettings はローカルが新しければ pushSettingsToServer で
+    // ローカル設定を押し戻すため、時計の進んだ端末では登録したばかりのテンプレートを
+    // 自分の古い promptTemplates で消してしまう。ここでは push を一切行わず、
+    // サーバーが新しければ丸ごと取り込み、ローカルが新しければ promptTemplates と
+    // settingsUpdatedAt だけをサーバーへ合わせて登録結果を必ず手元へ反映する
+    // (他の設定項目はローカルの未同期分を保持する)。
+    suspend fun fetchServerSettingsAfterTemplateRegistration(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/settings").get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext false
+                val respStr = response.body?.string() ?: return@withContext false
+                val serverDto = syncSettingsAdapter.fromJson(respStr) ?: return@withContext false
+                val localSettings = repository.defaultSettings.value
+                if (serverDto.settingsUpdatedAt >= localSettings.settingsUpdatedAt) {
+                    repository.updateDefaultSettings(
+                        applyServerSettingsDto(serverDto, localSettings),
+                        stampNow = false
+                    )
+                } else {
+                    val serverApplied = applyServerSettingsDto(serverDto, localSettings)
+                    repository.updateDefaultSettings(
+                        localSettings.copy(
+                            promptTemplates = serverApplied.promptTemplates,
+                            settingsUpdatedAt = serverDto.settingsUpdatedAt
+                        ),
+                        stampNow = false
+                    )
+                }
+                true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "fetchServerSettingsAfterTemplateRegistration 例外: ${e.message}", e)
+            false
+        }
+    }
+
     fun getSavedStoreId(): String {
         return prefs.getString("pc_store_id", "") ?: ""
     }

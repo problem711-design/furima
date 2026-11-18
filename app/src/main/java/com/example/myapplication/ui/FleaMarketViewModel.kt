@@ -409,12 +409,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     pcServerClient.pushClaudeFreeTextHistory(promptText)
                 }
                 if (result.templateRegistered) {
-                    // §40.4: 登録できたら設定を取り直してテンプレート一覧へ即反映する
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            pcServerClient.fetchAndSyncServerSettings()
-                        } catch (_: Exception) {
-                        }
+                    // §40.4 / レビュー 67-2: 登録できたら設定を取り直してテンプレート一覧へ即反映する。
+                    // 通常の同期 (push あり) は使わず、登録結果を消さない専用経路で取り込み、
+                    // 完了を待ってから onSuccess を呼ぶ (直後の再表示と競合させない)
+                    try {
+                        pcServerClient.fetchServerSettingsAfterTemplateRegistration()
+                    } catch (_: Exception) {
                     }
                 }
                 onSuccess(result)
