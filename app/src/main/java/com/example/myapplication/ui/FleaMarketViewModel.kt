@@ -930,13 +930,14 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             }
             val bundleUuids = bundleItems.map { it.item.syncUuid }.filter { it.isNotBlank() }
             val counts = mutableMapOf<String, Int>()
-            for (itemWithPhotos in bundleItems) {
-                for (photo in itemWithPhotos.photos) {
-                    val md5 = photo.md5Hash
-                    if (md5.isBlank()) continue
-                    val key = claudePhotoLabelKey(top.item.syncUuid, bundleUuids, md5, jobs, seenAt, emptyMap()) ?: continue
-                    counts[key] = (counts[key] ?: 0) + 1
-                }
+            // フェーズ 6-9 是正 (61-2): 件数の母数は親自身の写真のみ。まとめ作成時に子の写真は親へ
+            // コピー済み (md5 も継承) で、子側にも残るため、集合全員を走査すると二重に数えてしまう。
+            // ジョブ照合用の UUID 集合だけは従来どおり子孫まで含める (PC の claudeItemLabel と同一規則)。
+            for (photo in top.photos) {
+                val md5 = photo.md5Hash
+                if (md5.isBlank()) continue
+                val key = claudePhotoLabelKey(top.item.syncUuid, bundleUuids, md5, jobs, seenAt, emptyMap()) ?: continue
+                counts[key] = (counts[key] ?: 0) + 1
             }
             val best = priority.firstOrNull { counts.containsKey(it) } ?: continue
             result[top.item.id] = ClaudeItemLabelSummary(best, counts[best] ?: 0)

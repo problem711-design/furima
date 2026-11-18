@@ -329,6 +329,30 @@ fun ItemEditScreen(
     }
     val claudeExcludedCount = selectedPhotoCount - claudeEligiblePhotos.size
 
+    // フェーズ 6-9 是正 (Build 14 / 61-1): グリッド側ボタンとプレビュー側ボタンで共用する送信前ガード。
+    // 検証を通過した場合のみ送信ダイアログを開き true を返す (未達時は既存と同じ Toast で案内する)。
+    fun tryOpenClaudeSendDialog(): Boolean {
+        return when {
+            itemId == 0 || hasUnsavedChanges -> {
+                Toast.makeText(context, "保存してからMuseに送ってください", Toast.LENGTH_LONG).show()
+                false
+            }
+            (loadedItem?.mergedChildCount ?: 0) > 0 -> {
+                Toast.makeText(context, "まとめ商品は個別の子商品から送信してください", Toast.LENGTH_LONG).show()
+                false
+            }
+            claudeEligiblePhotos.isEmpty() -> {
+                Toast.makeText(context, "PC同期済みの写真が選択されていません", Toast.LENGTH_LONG).show()
+                false
+            }
+            isSendingToClaude -> false
+            else -> {
+                showClaudeSendDialog = true
+                true
+            }
+        }
+    }
+
     val handleBackRequest: () -> Unit = {
         if (!isSaving) {
             if (hasUnsavedChanges) {
@@ -500,8 +524,10 @@ fun ItemEditScreen(
                 },
                 selectedCount = selectedPhotoCount,
                 onSendToClaude = {
-                    previewStartIndex = null
-                    showClaudeSendDialog = true
+                    // フェーズ 6-9 是正 (61-1): グリッド側と同じ送信前ガードを通す。通過時のみプレビューを閉じてダイアログを開く
+                    if (tryOpenClaudeSendDialog()) {
+                        previewStartIndex = null
+                    }
                 },
                 onDeletePhoto = { deleteIdx ->
                     var removedKey: String? = null
@@ -777,17 +803,7 @@ fun ItemEditScreen(
                         Text("削除", fontSize = 12.sp)
                     }
                     Button(
-                        onClick = {
-                            when {
-                                itemId == 0 || hasUnsavedChanges ->
-                                    Toast.makeText(context, "保存してからMuseに送ってください", Toast.LENGTH_LONG).show()
-                                (loadedItem?.mergedChildCount ?: 0) > 0 ->
-                                    Toast.makeText(context, "まとめ商品は個別の子商品から送信してください", Toast.LENGTH_LONG).show()
-                                claudeEligiblePhotos.isEmpty() ->
-                                    Toast.makeText(context, "PC同期済みの写真が選択されていません", Toast.LENGTH_LONG).show()
-                                else -> showClaudeSendDialog = true
-                            }
-                        },
+                        onClick = { tryOpenClaudeSendDialog() },
                         enabled = selectedPhotoCount > 0 && !isSendingToClaude
                     ) {
                         Text("Museに送る", fontSize = 12.sp)

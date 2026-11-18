@@ -21,7 +21,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -358,11 +360,8 @@ fun PhotoPreviewDialog(
 
                 // フェーズ 6-9 (Build 14): 現在表示中の写真の Muse 送信用チェック + 選択中の一括送信ボタン
                 if (selectionKeys != null && onToggleSelection != null && activePhoto.photoKey.isNotBlank()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    // フェーズ 6-9 是正 (61-3): 狭い画面幅でボタン文字が欠けないよう 2 段構成にする
+                    Column(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -391,11 +390,18 @@ fun PhotoPreviewDialog(
                             Button(
                                 onClick = onSendToClaude,
                                 shape = RoundedCornerShape(20.dp),
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                                 modifier = Modifier
-                                    .height(40.dp)
+                                    .align(Alignment.End)
+                                    .heightIn(min = 48.dp)
                                     .testTag("photo_preview_send_claude_button")
                             ) {
-                                Text("選択中 ${selectedCount}枚を Muse に送る", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    "選択中 ${selectedCount}枚を Muse に送る",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    softWrap = false
+                                )
                             }
                         }
                     }
