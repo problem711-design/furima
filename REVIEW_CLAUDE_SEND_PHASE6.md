@@ -2263,3 +2263,60 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 - **判定: 合格（バッチ 2 / 6-9・v1.4 Build 14 完了可）**。`61-1`〜`61-3` の是正を含め、設計要件の充足を確認した。
 - **次工程に向けた補足（差し戻し事項ではない）**:
   - `134ccf1` 時点では `PROGRESS.md`（L43 の現在バージョン表記および L67 の完了チェック）と配布バイナリ（`flea_market_app.apk` / `public/flea_market_app.apk` / `tools/furima-server.exe`）は Build 13 のままである。ビルド確認（CI `.github/workflows/build-check.yml` およびローカル実機確認）後にこれらを更新してバッチ 2 を締め、バッチ 3（6-10 後半・`v1.4 Build 15`）へ進まれたい。
+
+---
+
+## 64. バッチ 3（6-10 後半・v1.4 Build 15 / コミット `2c05973`・`16277aa`）コードレビュー — 差し戻し（要修正 3 件＋軽微 1 件）（2026-11-18）
+
+バッチ 3 の実装コミット `2c05973`、CI テスト追従コミット `16277aa`（`.github/workflows/build-check.yml`）、および関連仕様（計画 §37・§37.4・§40.3・§41.3・§41.5・§42.1、回答 §56）を通読し、実コード照合と静的検証を実施した（※ `REVIEW_PROGRESS_PHASE6.md` は計画 §39 により凍結中のため、本ファイルのみに追記する）。
+
+### 64.1 実装確認済み・良好な点（要件充足）
+
+- **開始待ち（`startwait`）分離と純粋関数抽出**:
+  - `ClaudeLabelDerivation.kt` と `tools/DashboardHtml.cs`（L2438〜2522）で `approved` を `startwait`（`開始待ち` / `bg-sky-600` / `0xFF0284C7`）へ分離し、`processing` のみを `加工中` とする導出が 1 対 1 で一致している。
+  - `FleaMarketViewModel.buildClaudeItemLabelSummaries`（L910）および `DashboardHtml.claudeItemLabel`（L2511）の商品集約優先順位（`error > processing > approval > startwait > waiting > done`）も同一コミットで更新済み（条件 C7 充足）。
+  - PC モーダルのバッジ（`DashboardHtml.cs` L2559）および Android の状態名（`ItemEditScreen.kt` L1536）が `approved -> 開始待ち` に統一されている。
+- **ミューズカラム 5 タイル（案 A）と 2 列レイアウト**:
+  - `DashboardHtml.cs` L165〜186・L2601〜2609 の式（`加工中 = processing`、`開始待ち = approved || (queued && queue !== "waiting")`、`承認待ち = approval_pending`、`待機中 = queued && queue === "waiting"`、`エラー = isClaudeErrorJob`）および 2 列＋ `エラー` `col-span-2` を確認。`renderClaudeJobsList` の `canCancel`（L2770）も `processing` / `approved` を含む 4 状態へ拡張された。
+- **共通ゴールデン仕様表・CI テスト・版番号**:
+  - `app/src/test/resources/claude_label_fixtures.json`（13 ケース＝仕様表 10 件＋`cancelled` 部分生成・`superseded` 古いエラー・生成物 3 件）、`tools/tests/claude-label.test.mjs`、`ClaudeLabelDerivationTest.kt`（`ClaudeJobDto` / `ClaudeJobPhotoDto` 等のデフォルト引数と `build.gradle.kts` のテスト依存関係整合を確認）が揃い、`.github/workflows/build-check.yml`（`16277aa`）にも組み込まれている。
+  - 手元検証結果として `node --test tools/tests/claude-label.test.mjs` は **13/13 合格**、`DashboardHtml.cs`（179,734B）および `WebDashboardHtml.kt`（50,293B）の inline script `node --check` はエラー 0 件、`DashboardHtml.cs` の生二重引用符は 0 件、サーバー側 C# 5 非互換構文（`$"` / `?.`）は 0 件、バージョン 3 箇所（`app/build.gradle.kts` `versionCode = 1415` / `versionName = "1.4"`、`DashboardHtml.cs` `v1.4 (Build 15)`、`WebDashboardHtml.kt` `v1.4 (Build 15)`）の一致を確認した。
+- **サーバー取消拡張・ロック順序**:
+  - `ClaudeJobStore.CancelJob`（L560〜585）の `processing` 拡張と、`FurimaServerNative.HandleCancelClaudeJobLocked`（L6594〜6626）での取消前失効評価（`ApplyApprovalPendingExpiry` → `ApplyTokenExpiry` → `CancelJob`）を確認。`claudeResultWriteLock → lockObj → _jobLock`（ガード B）の順序破りはない。
+
+### 64.2 要是正事項（差し戻し理由）
+
+#### 64-1（中）: `PhotoPreviewDialog` でエラー表示中に別ジョブの「ジョブを取り消す」ボタンが出現する
+- **該当箇所**: `app/src/main/java/com/example/myapplication/ui/components/PhotoPreviewDialog.kt` L369〜406、`app/src/main/java/com/example/myapplication/data/server/ClaudeLabelDerivation.kt` L68〜88
+- **事象**:
+  - 一覧・編集・詳細の各グリッドでは、`ItemDetailScreen.kt` L765 と `ItemEditScreen.kt` L925 が `claudeLabelKey == "processing" || claudeLabelKey == "approval" || claudeLabelKey == "startwait" || claudeLabelKey == "waiting"` の場合にのみ `claudePhotoLabelSourceJob` を呼び、`error` や `done` には取消タップを付けていない。
+  - 一方 `PhotoPreviewDialog.kt` L370〜392 では `activeLabelKey = onResolvePhotoLabel(activeHash)` を表示したあと、`activeLabelKey` がアクティブ 4 状態のどれであるかを判定せず無条件に `onResolveLabelSourceJob?.invoke(activeHash)` を呼んでいる。
+  - `ClaudeLabelDerivation.labelSourceJob`（L70 コメントは「アクティブでない (エラー・加工済み・ラベルなし) 場合は null」と記述）自体は `priority`（`processing` / `approval_pending` / `approved` / `queued`）のみで検索しており未解決エラーの有無を見ていないため、**仕様表ケース #9（同一写真に未解決の `done_with_errors` と別ジョブの `processing` が並存）** の写真をプレビューで開くと、左に **`エラー`** バッジを出しつつ右に隠れた `processing` ジョブ用の **`ジョブを取り消す`** ボタンが並んで表示される。
+- **問題点**: 計画 §40.3 条件 C3（取消対象は表示中のチップを決定したジョブそのものでなければならない）およびグリッド側ガードとの不整合。利用者が「エラーの解消」と誤認して別ジョブを取り消す誤操作を招く。
+- **是正**: `PhotoPreviewDialog.kt` L391 周辺で `activeLabelKey == "processing" || activeLabelKey == "approval" || activeLabelKey == "startwait" || activeLabelKey == "waiting"` のときに限り `onResolveLabelSourceJob` と取消ボタンを表示するようガードを追加すること（あわせて `ClaudeLabelDerivation.labelSourceJob` のコメントまたはシグネチャを実態と揃えるとさらに堅い）。
+
+#### 64-2（中）: `FleaMarketViewModel.cancelClaudeJobFromLabel` の二重 GET と通信失敗時の古いキャッシュフォールバック
+- **該当箇所**: `app/src/main/java/com/example/myapplication/ui/FleaMarketViewModel.kt` L1131〜1144
+- **事象**:
+  - L1132 で `refreshClaudeJobStates(url, token)`（内部で `GET /api/claude/jobs` を呼び成否の `Boolean` を返す）を実行して戻り値を捨てた直後、L1136 でもう一度 `pcServerClient.fetchClaudeJobs(url, token)` を実行しており、取消のたびにジョブ一覧 GET が 2 回連続で発生している。
+  - さらに L1135〜1139 では `fetchClaudeJobs` が `null` または例外（オフライン・サーバー未接続・タイムアウト）を返した場合に `_claudeJobsForLabels.value`（古いキャッシュ）へフォールバックし、そのまま `claudePhotoLabelSourceJob(..., freshJobs)` の `source.jobId != jobId` チェックを通過して `postClaudeJobCancel` へ進んでしまう。
+- **問題点**: 通信失敗や一時エラーで最新状態を取得できていないにもかかわらず、古い手元キャッシュだけで「源泉ジョブが変わっていない」と判定して取り消しを送信しており、計画 §40.3 の「送信直前に最新状態で源泉を再導出し、変わっていれば取り消さない」保護が通信不安定時に素通りする。
+- **是正**: `val refreshed = try { refreshClaudeJobStates(url, token) } catch (_: Exception) { false }` で成否を受け取り、`!refreshed` なら通信失敗メッセージ（例：`"最新のジョブ状態を取得できなかったため、取り消しませんでした。接続を確認してください。"`）を出して早期リターンし、取得成功時のみ更新済みの `_claudeJobsForLabels.value` で源泉を再検証すること（二重の `fetchClaudeJobs` 呼び出しも解消される）。
+
+#### 64-3（中）: `RecordClaudeJobPhotoError` が同一写真のエラー重複でも `false` を返し、写真取得が HTTP 400（状態不一致打ち切り）へ誤分岐する
+- **該当箇所**: `tools/FurimaServerNative.cs` L5439〜5458、L5518〜5524、L5538〜5544
+- **事象**:
+  - `RecordClaudeJobPhotoError` の戻り値に `added`（新規追加したか）を使っており、L5444 の状態ガード（`approved` / `processing` 以外なら `return false;`）だけでなく、L5446〜5449 の重複エラーガード（`j.errors` に同じ `sourceMd5` が既にあれば `return false;`）でも `false` を返す。
+  - そのため、写真ファイル欠損（404）や非対応形式（415）が発生した `processing` 中のジョブに対し同一写真の `GET /api/claude/jobs/{jobId}/photos/{md5}` がリトライされると、2 回目はジョブが `processing` で実行可能かつ単にエラー記録が重複しているだけにもかかわらず、`!RecordClaudeJobPhotoError(...)` が真となり L5521 / L5541 から **HTTP 400 `"ジョブが実行可能な状態ではありません (status: processing)"`** が返る。
+- **問題点**: 計画 §42.1 手順 8 では HTTP 400 を「状態不一致・取消による静かなジョブ打ち切り」トリガとしているため、1 枚の写真エラーの再取得でジョブ全体が打ち切られる矛盾（メッセージ文面自体も `status` が `processing` なのに「実行可能な状態ではありません」と破綻）を生む。
+- **是正**: `RecordClaudeJobPhotoError` は「ジョブが見つかり `status` が `approved` または `processing` であること（実行可能な状態にあること）」を `bool` で返し（新規追加時のみ `added = true` として `SaveJobsLocked`・`BumpClaudeRevision()` を実行し、既存重複時は再保存せず `true` を返す）、非実行状態（`cancelled` 等）のときだけ `false` を返して HTTP 400 へ分岐させること。
+
+#### 64-4（軽微・任意対応）: `HandleGetClaudeJobPhoto` の確定点ロック内での `ApplyTokenExpiry` 評価
+- **該当箇所**: `tools/FurimaServerNative.cs` L5553〜5561
+- **事象**: `HandlePostClaudeJobResult`（L5880）・`HandlePostClaudeJobError`（L6109）・`HandleCancelClaudeJobLocked`（L6603）はいずれも `claudeResultWriteLock` 取得後の `fresh` に対して `ApplyTokenExpiry` を呼んでいるが、`HandleGetClaudeJobPhoto` のみロック直前（L5556〜5557）に呼んでおりロック内の `fresh`（L5561）では再評価していない。
+- **是正提案**: L5553〜5558 の `ApplyApprovalPendingExpiry` / `ApplyTokenExpiry` を `lock (claudeResultWriteLock)` 内の `fresh` 取得後へ移すと、他ハンドラと揃って境界瞬間の競合窓が完全に消える（ガード B にも適合）。
+
+### 64.3 判定・次アクション
+
+- **判定：差し戻し（上記 `64-1`〜`64-3` を同一 Batch 3 / Build 15 内で是正後に再レビュー）**
+- `64-1`〜`64-3` はいずれも局所修正（数行〜十数行単位）であり、完了後に今回同様 `node --test tools/tests/claude-label.test.mjs` および CI（`.github/workflows/build-check.yml` の C# ビルド・Android `assembleDebug`・`testDebugUnitTest`）の通過を確認したうえで再レビューを依頼されたい（版番号は未リリースの Batch 3 内のため `v1.4 Build 15` / `1415` 据え置きで構わない）。
