@@ -2341,3 +2341,37 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 ### 65.5 検証
 - JS 側ゴールデンテスト（`node --test tools/tests/claude-label.test.mjs`）は本是正の対象外（JS 変更なし）だが、再実行して 13/13 合格を再確認した。
 - C# / Android のコンパイルと Android 単体テストは、push 後の CI（`.github/workflows/build-check.yml`：csc ビルド・`assembleDebug`・`testDebugUnitTest`・JS テスト）で確認する。
+
+---
+
+## 66. バッチ 3 是正版（6-10 後半・v1.4 Build 15 / コミット `7211034`）再レビュー — 合格（2026-11-18）
+
+バッチ 3 の是正コミット `7211034`（回答 §65・`PROGRESS.md` 更新含む）を実コードと突き合わせて再検証し、§64 指摘 `64-1`〜`64-4` の解消と静的整合性を確認した（※ `REVIEW_PROGRESS_PHASE6.md` は計画 §39 により凍結中のため、本ファイルのみに記録する）。
+
+### 66.1 §64 指摘（`64-1`〜`64-4`）の解消確認
+
+1. **`64-1`（`PhotoPreviewDialog` の取消ボタン表示ガード）— 解消**
+   - `PhotoPreviewDialog.kt` L391〜397 にて、`activeSourceJob` の解決が `activeLabelKey == "processing" || activeLabelKey == "approval" || activeLabelKey == "startwait" || activeLabelKey == "waiting"` の場合に限定され、グリッド側（`ItemDetailScreen.kt` L765・`ItemEditScreen.kt` L925）と同一条件になった。ケース #9 のようにエラー表示中に裏で `processing` ジョブが並存しても、エラーバッジ横に別ジョブの取消ボタンが出ない。
+   - `ClaudeLabelDerivation.kt` L67〜76 の契約コメントも実態どおりに補正されている。
+
+2. **`64-2`（`FleaMarketViewModel.cancelClaudeJobFromLabel` の二重 GET・古いキャッシュフォールバック）— 解消**
+   - `FleaMarketViewModel.kt` L1131〜1142 で `refreshClaudeJobStates(url, token)`（内部の `claudeRefreshMutex` は `fromWatch = false` のため `_claudeActionInProgress` にブロックされない）の成否 `Boolean` を受け取り、`!refreshed` 時は接続確認を促すメッセージを設定して早期リターンするよう改められた。
+   - 成功時は `_claudeActionInProgress = true` 下で監視経由の横入りが抑止されたまま更新済みの `_claudeJobsForLabels.value` で `claudePhotoLabelSourceJob` を再検証でき、重複 `fetchClaudeJobs` と古いキャッシュへのフォールバックが完全に除去された。
+
+3. **`64-3`（`RecordClaudeJobPhotoError` の重複エラー時の戻り値）— 解消**
+   - `tools/FurimaServerNative.cs` L5441〜5462 にて、状態ガード（`approved` / `processing`）を通過した時点で `executable = true` を立て、同一 `sourceMd5` 重複時は保存・`BumpClaudeRevision()` を行わずに `executable`（`true`）を返す構成を確認した。非実行状態（`cancelled` 等）のときだけ `false` となり、`HandleGetClaudeJobPhoto`（L5518・L5538）が重複エラーを HTTP 400 へ誤分岐させなくなった。
+
+4. **`64-4`（`HandleGetClaudeJobPhoto` の確定点ロック内失効評価）— 解消**
+   - `tools/FurimaServerNative.cs` L5557〜5566 で `lock (claudeResultWriteLock)` 取得後の `fresh` に対して `ApplyApprovalPendingExpiry` / `ApplyTokenExpiry` を評価し、再読込した `fresh` でトークン・状態検証と遷移・応答を行う構造へ統一された。ガード B（`claudeResultWriteLock → lockObj → _jobLock`）も遵守されている。
+
+### 66.2 静的検証・版数確認
+
+- `node --test tools/tests/claude-label.test.mjs`：**13/13 合格**（再実行確認）。
+- `node --check`：`tools/DashboardHtml.cs`（179,734B）および `WebDashboardHtml.kt`（50,293B）の inline script エラー 0 件。
+- C# 5 非互換構文（`$"` / `?.`）：`tools/ClaudeJobStore.cs`・`tools/FurimaServerNative.cs` ともに 0 件。
+- バージョン 3 箇所：`app/build.gradle.kts`（`versionCode = 1415` / `versionName = "1.4"`）、`tools/DashboardHtml.cs`（`v1.4 (Build 15)`）、`WebDashboardHtml.kt`（`v1.4 (Build 15)`）で一致。
+
+### 66.3 判定・次工程への案内
+
+- **判定：合格（バッチ 3 / 6-10 後半・`v1.4 Build 15` 完了可）**
+- 運用補足（差し戻しではない）：push 後の CI（`.github/workflows/build-check.yml` の C# ビルド・Android `assembleDebug`・`testDebugUnitTest`・JS テスト）通過および実機動作確認をもって `PROGRESS.md` のバッチ 3 完了チェック・現在バージョン表記を締め、**バッチ 4（フェーズ 6-8・`v1.4 Build 16` 予定）** へ進まれたい（着手時は条件 C1：`SyncStore` `_configLock` 内での不可分な同名検査・追加・保存＋`HandleSyncItems` 原子的比較保存・事前重複チェック等を計画どおり維持すること）。
