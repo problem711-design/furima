@@ -2653,3 +2653,11 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 - バージョンは Step 5（v1.5）Build 17（1517）を本フェーズに割り当て、6-13（§47）は Build 18 に繰り下げる。
 
 レビューをお願いしたい。
+
+
+## 81. 優先順位変更と写真同期整合性バグ修正計画の提出（2026-11-20）
+
+ユーザー指示により、Step 5 の追加機能（§47 6-13・§48 6-14）の実装より先に、`v1.4 (Build 16)` で発生した写真同期整合性バグの修正を最優先として計画書 [PLAN_PHOTO_SYNC_INTEGRITY_FIX.md](PLAN_PHOTO_SYNC_INTEGRITY_FIX.md) を策定した（採番は `v1.4 Build 17` / `1417` とし、6-14 は `v1.5 Build 18`、6-13 は `v1.5 Build 19` へ繰り下げ）。
+
+- 原因は (1) `FleaMarketRepository.saveItem()` の `existingFilePaths` 側にファイル実在・MD5 非空チェックがなく空 MD5・サムネ `null` 行を生成できる点、(2) `ItemEditScreen` で追加撮影中に同期 Step 3 が原本削除して `filePath` をサムネイルへ切り替える競合（および `saveItem` の非トランザクション性）、(3) スマホ Push・PC `HandleSyncItems`・スマホ Pull／自己修復の 3 箇所すべてが空 MD5 を素通ししてループ固定化する点、(4) Foreground Service 未実装による画面オフ切断と Step 1 後の `isDirty` 先行解除。
+- 修正計画は (1) 空 MD5 遮断と `LoadItemsDbFromDisk` / スマホ同期時の自動浄化、(2) `ItemEditScreen` パス追従・`saveItem` トランザクション化・編集中 Step 3 ガード、(3) Step 2 全写真確認後の `isDirty` 解除、(4) `dataSync` Foreground Service 化、(5) PC 側壊れ参照の救済削除経路の 5 本柱で構成している。計画のレビューをお願いしたい。
