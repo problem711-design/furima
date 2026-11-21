@@ -3090,3 +3090,26 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 ### 95.5 CI 検証結果
 再実行（コミット `3d15068`、run `44888236134`）は全ジョブ成功した。初回の失敗が Robolectric のアーティファクト取得という環境起因であったことが裏付けられ、§95 の実装（Build 20）がコミット状態でビルド・全テストを通ることを確認した。
+
+## 96. 最終コードレビュー（6-15 Build 20 / §50.5: `44281e0..cf3b148`）（2026-11-21）
+
+### 96.1 結論：**承認（6-15 `v1.5 Build 20`・§50.5 ワーカー手順改訂 完了）**
+- コミット `655d164` / `3d15068` / `cf3b148`（GitHub Actions `build-check` run `44888525725` / `44888236134` 全ジョブ成功・ローカル JS テスト `15/15 PASS`）を確認した。
+- §94.2 で挙げた条件 3 点および §94.1 の非ブロッカー参考メモ（`fetchClaudeReferences` 失敗時の `null` 返却）まで漏れなく実装されており、残存する指摘事項はない。これにより **v1.5（Build 18〜20：フェーズ 6-14 / 6-13 / 6-15）の全実装とワーカー手順案（§47.12・§50.5）を承認** とする。
+
+---
+
+### 96.2 確認項目ごとの検証結果
+1. **`ClaudeJob.stampNumber = true` の既定値保証と C# 5 互換（§94.2-1）**：
+   - `tools/ClaudeJobStore.cs`（L36, L59, L408）：`ClaudeJob` に引数なしコンストラクタ `public ClaudeJob() { stampNumber = true; }` が追加され、旧 `claude_jobs.json` 読み込み時の `false` 化けを防ぎつつ、`CloneJob` にも `stampNumber` が複写されることを確認した。
+   - `tools/FurimaServerNative.cs`（L5226, L5295-5300, L5441）：`HandleCreateClaudeJob` で `JTokenType.Boolean` のみ採用・欠落時は `true` へ正規化され、`ToPublicClaudeJob` に `"stampNumber"` が出力されている。
+   - `app/src/main/java/com/example/myapplication/data/server/SyncDtos.kt`（L133, L156）・`PcServerClient.kt`（L255, L282）・`FleaMarketViewModel.kt`（L397, L413）：`stampNumber: Boolean = true` で一貫している。
+2. **UI 整合・本文キーワード注記・確認文・リセット（§94.2-2）**：
+   - `tools/DashboardHtml.cs`：`#viewer-claude-stamp-bar`（まとめ商品時は非表示）と `#viewer-claude-stamp-note` を追加し、`renderClaudeTemplateSelect()` / `onViewerClaudeCustomInput()` / `reuseClaudeFreeText()` / `updateViewerSelectionBar()` の全経路から `updateViewerStampNote()` が発火する。テンプレート・手打ち双方の最終 `confirm` へ `番号スタンプ: 振る / 振らない` が表示され、`openItemViewer()`（L2582）と `postViewerClaudeJob()` 成功時（L3509）の双方で `resetViewerStampCheck()` により `true` へ戻る。
+   - `app/src/main/java/com/example/myapplication/ui/components/ClaudeSendDialog.kt`（L79, L456-477）・`ItemEditScreen.kt`（L514, L543）：「番号を振る」チェック（既定 ON）と本文内「番号なし」注記を追加し、テンプレート送信・手打ち送信（登録あり／なし）の全経路へ `stampNumber` を引き渡している。
+3. **参考画像取得エラー区別（§94.1 メモ）**：
+   - `FleaMarketViewModel.fetchClaudeReferences()`（L438-441）が未接続・失敗時に `null` を返すようになり、`ClaudeSendDialog.kt`（L100-110）の `pickerError = true` 分岐（赤字エラー表示）が実動作することを確認した。
+4. **§50.5（§46 ワーカー手順改訂文・§43 方式）の確認**：
+   - `PLAN_CLAUDE_SEND_PHASE6.md` §50.5 の判定条件（チャット直接指示 / `stampNumber === false` / 本文内「番号なし」の OR）および欠落・`null`・`true` 時の下位互換条件はサーバー実装と完全に一致している。§47.12 とあわせてワーカー側の本番適用を承認する。
+5. **バージョン整合・CI**：
+   - `DashboardHtml.cs`、`WebDashboardHtml.kt`、`app/build.gradle.kts`（`versionCode = 1520` / `versionName = "1.5"`）の表記統一と、CI `build-check` 全ジョブ成功（初回失敗 `44887076791` が Robolectric 実行環境側の一時的アーティファクト取得失敗である点も `3d15068` で確認済み）を確認した。
