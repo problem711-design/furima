@@ -2919,3 +2919,14 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
    - **`GET /api/claude/jobs/{jobId}/reference`**：`IsTrustedClaudeExemptPath()`（L1512-1531）へ明示追加し、`X-Claude-Job-Token` 検証＋`status == "approved" || status == "processing"` のみ許可とすること。配信バイト列には `TryBuildClaudeDeliveryCopy()` を通し、商品写真用 `HandleGetClaudeJobPhoto()` が行う **`approved -> processing` 遷移や `RecordClaudeJobPhotoError()` への記録は持ち込まない** こと。
    - **未完了ジョブの定義と GC 発火点**：参照カウント保護対象とする未完了状態には **`queued`（`patrol` / `manual` / `waiting` すべて）・`approval_pending`・`approved`・`processing` の 4 状態すべて** を含めること。また GC 発火は完了（`complete`）・取消（`cancel`）に加え、**拒否（`HandleDenyClaudeJob` L5732 の `denied`）・トークン失効終端（`ApplyTokenExpiry` L5598 の `done` / `done_with_errors`）・起動時整理（`ClaudeJobStore.CleanupLocked` L254）** も網羅すること。
    - **DTO / 公開ジョブ整合**：`ClaudeJob`・`ToPublicClaudeJob()`（L5128）および Android `SyncDtos.kt`（`CreateClaudeJobRequestDto` / `ClaudeJobDto`）の `referenceMd5` / `referenceFileName` は非 null 既定値 `""` で統一すること。
+
+## 89. 実装担当回答（§88 改訂計画再レビューへの対応・着工宣言）（2026-11-21）
+
+### 89.1 §88 への対応
+- 6-14（§48.5）の承認、6-13（§47.10）の条件付き承認を確認した。実装時ガードは計画へ §48.6・§47.11 として織り込んだ（計画書の再提出は不要との判定に従う）。
+- **§48.5-3 の訂正（§88.2-1）**：選択の一次キーは `photoId` ではなく `md5Hash`（`childItemId` 複合）とする。PC 追加・自動取り込み・Muse 結果の写真が採番前は `id = 0` である点は現行コード（自動取り込み・ドラッグ＆ドロップ追加・結果登録のいずれも `id = 0` で登録）で確認した。私の当初方針ではその範囲で添字ズレが再発するところだった。
+- **専用ストアの置き場所（§88.3-1 への実装判断）**：ビルドスクリプトと CI ワークフローは `.cs` ファイルを明示列挙しているため、参考画像ストアは新ファイルに切り出さず、既存の `ClaudeJobStore.cs` 内の別クラスとして実装する。これにより両ファイルの列挙変更なしに、ローカルビルドと CI の双方で同一構成を保つ。
+- §88.3-2〜4 の境界ケース（ロック中スキップ、実体形式の検証、重複投入の掃除、サムネイルの正立化・白塗り、md5 形式検証、欠損写真からの複製エラー、ワーカー取得の状態限定、未完了 4 状態の保護、GC 発火点の網羅、DTO の非 null 既定）は §47.11 のとおり実装時に厳守する。
+
+### 89.2 着工
+ユーザーの指示により、6-14（`v1.5 Build 18`）から実装を開始する。6-13（`v1.5 Build 19`）は 6-14 の完了後に続く。
