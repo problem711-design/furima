@@ -2977,3 +2977,41 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 ### 91.5 CI 検証結果
 コミット `6b05c0d` の GitHub Actions `build-check`（run `44883366693`）は全ジョブ成功した。PC サーバー（csc コンパイル）と Android（assembleDebug + 単体テスト + JS ゴールデンテスト）の双方が緑であり、§91 の実装がコミット状態でビルド・テストを通ることを確認した。
+
+## 92. 実装レビュー（6-14 Build 18 / 6-13 Build 19: `9c96047..7cb2bfb`）（2026-11-21）
+
+### 92.1 結論：差し戻し（要修正 3 件＋任意改善 2 件）
+- コミット `b8d7ce9` / `a17592e` / `6b05c0d` / `7cb2bfb`（GitHub Actions `build-check` run `44883619284` 全ジョブ成功・JS テスト `15/15 PASS`）の実装差分を確認した。
+- §48.6・§47.11 の合意ガード（`md5Hash` 一次キー化、専用ストア分離、Move-in 走査、EXIF 正立＋白塗りサムネ、ワーカー専用ルート分離、終端 4 経路＋起動時の参照回収、ビルドスクリプト同梱）の大部分は適切に実装されているが、実機 UI とサムネ配信に **3 件の実不具合** があるため修正後に再確認とする。
+
+---
+
+### 92.2 要修正事項（3 件）
+
+1. **【中】6-14（PC ビューア）：`toggleViewerPhotoSelect()` が `renderViewerPhotos()` を呼ばない（`tools/DashboardHtml.cs` L2652-2665）**
+   - 一覧カードのチェック操作で呼ばれる `toggleViewerPhotoSelect(index, event)` が `updateViewerSelectionBar(photos.length)` のみ呼び出しており、`toggleSelectAllViewerPhotos()`（L2677）や `toggleLightboxClaudeSelect()`（L3755）と異なり `renderViewerPhotos()` を呼んでいない。
+   - **影響**：カード上でチェックを ON/OFF しても選択枠（`border-rose-500 ring-2 ring-rose-300`）や **`送信 1`, `送信 2` バッジが即時更新されず**、先の 1 枚を外しても後続の番号が詰まらない。
+   - **是正案**：`toggleViewerPhotoSelect()` 末尾で `renderViewerPhotos()` を呼ぶこと（`renderViewerPhotos()` 内で `updateViewerSelectionBar()` も実行される）。
+
+2. **【中】6-13（Android）：参考画像原寸プレビュー `Dialog` に背景 `Surface` が無い（`app/src/main/java/com/example/myapplication/ui/components/ClaudeSendDialog.kt` L265-301）**
+   - `Dialog(onDismissRequest = { pickerPreview = null })` の直下に背景なしの `Column(Modifier.fillMaxSize().padding(16.dp))` を置き、`color = MaterialTheme.colorScheme.onSurface` のテキストと `TextButton` を直接配置している。
+   - **影響**：Compose `Dialog` はウィンドウ背景が透過のため、下層に重なるピッカー `AlertDialog` や「Museに送る」ダイアログの白背景・文字の上に画像と操作 UI が透けて重なり、「戻る」「この画像にする」の視認性が著しく低下する。
+   - **是正案**：`Column` を `Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp))`（または暗背景 `Color.Black.copy(alpha = 0.92f)`＋白文字）で包むこと。あわせて `onFetchReferences` 失敗時（L95-100）に「参考画像がありません」と混同しないエラー表示を検討すること。
+
+3. **【中】6-13（サーバー）：`ServeReferenceThumb()` のキャッシュ書込失敗時 500 落ち＋同時競合（`tools/FurimaServerNative.cs` L6257-6276）**
+   - `!File.Exists(thumbPath)` 分岐で `TryBuildReferenceThumb(raw, out thumb)` によりメモリ生成した後、キャッシュ書込を `try { File.WriteAllBytes(thumbPath, thumb); } catch (Exception) { }` で握りつぶした上で、L6276 で無条件に `byte[] bytes = File.ReadAllBytes(thumbPath);` を読んでいる。
+   - **影響**：ディスク権限・一時ロック等で書込に失敗した場合、生成済みバイト列を破棄して `FileNotFoundException` / `IOException`（HTTP 500）になる。また初回並列リクエスト時に書込中のファイルを読んで競合する恐れがある。
+   - **是正案**：新規生成分岐ではメモリ上の `bytes = thumb;` をそのまま配信し（キャッシュ保存はベストエフォート書き込み＋一時ファイル置換等にする）、`File.Exists(thumbPath)` 分岐のみ `File.ReadAllBytes(thumbPath)`（失敗時は再生成フォールバック）とすること。
+
+---
+
+### 92.3 任意改善点（軽微・2 件）
+1. **手打ち送信 `confirm` への参考画像名表示（`tools/DashboardHtml.cs` L3425）**：テンプレート送信（L3365-3366）には `
+参考画像: ...` があるが、手打ち送信の最終確認 `decideClaudeCustomRegister()` にも `pending.reference` がある場合は同文面を追加すると誤添付防止に揃う。
+2. **ポーリング時の `_reference_inbox` 全量読込回避（`tools/FurimaServerNative.cs` L5930-5944 / `DashboardHtml.cs` L2861）**：`renderClaudeSummary()` が定期取得のたびに `GET /api/claude/references` → `ScanReferenceInbox()` を呼ぶため、箱に大きい非対応ファイル（`.webp` 等）が残っていると周期ごとに `File.ReadAllBytes` が走る。`ScanReferenceInbox()` 先頭で拡張子（`.jpg` / `.jpeg` / `.png`）を見て対象外ならファイルを開かずに `unsupported` へ回すと不要な I/O を避けられる（対象拡張子のみ `DetectImageMimeType` で実体検証）。
+
+---
+
+### 92.4 §47.12 ワーカー手順の変更案（§43 事前レビュー）への確認
+- **全体方針（§47.12-1〜4）**：サーバー側の `GET /api/claude/jobs/{jobId}/reference`・`done_with_errors`・`§46` 番号スタンプ規則と整合しており妥当。
+- **本番適用前のお願い（§47.12-3）**：全写真へ「参考画像の取得に失敗しました」を記録して `complete` する処理は **サーバーから確定的な欠損・非対応応答（`404 / 415` 等）が返った場合のみ** に限定し、ジョブトークン失効（`403`）や一時通信失敗時はエラー記録せず従来どおり中断・待機戻しへ任せる点を明記すること。
