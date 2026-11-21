@@ -1280,7 +1280,11 @@ class FurimaServerNative
                     if (itemBrokenRemoved)
                     {
                         item["photos"] = validPhotos;
-                        item["updatedAt"] = nowMs;
+                        // レビュー §83-3: updatedAt は引き上げない。現在時刻へ更新すると、
+                        // スマホ側の未同期 (isDirty) 編集より新しくなり、次回 Pull で
+                        // isDirty 保護 (updatedAt 比較) が破れて未同期編集が上書き消失する。
+                        // スマホへの再同期トリガーは syncedToPhone = false と
+                        // BumpDataRevision() のみで行う。
                         item["syncedToPhone"] = false;
                         cleanedBrokenPhotos = true;
                         changed = true;
@@ -4247,23 +4251,21 @@ class FurimaServerNative
                     : new List<Dictionary<string, object>>();
 
                 var matchedIndices = new HashSet<int>();
-                var removedChildPhotoIds = new HashSet<int>();
+                // §83-5: 子商品側の追従除去用に、子商品IDごとに
+                // 「親リスト内で当該子商品の写真として現れる順序 (0始まり)」と写真IDを記録する。
+                // まとめ子商品の写真は Android 側で別 ID に採番し直されるため、
+                // 親写真の id では子側を特定できない。位置 (順序) を主キーにし、
+                // id が一致する場合はそれも併用する。
+                var childFollowOrdinals = new Dictionary<int, HashSet<int>>();
+                var childFollowPhotoIds = new Dictionary<int, HashSet<int>>();
 
                 foreach (var bt in kv.Value)
                 {
                     int matchIdx = -1;
-                    if (bt.photoIndex >= 0 && bt.photoIndex < currentPhotos.Count && !matchedIndices.Contains(bt.photoIndex))
-                    {
-                        var candidate = currentPhotos[bt.photoIndex];
-                        string ch = candidate != null && candidate.ContainsKey("md5Hash") && candidate["md5Hash"] != null
-                            ? candidate["md5Hash"].ToString().Trim()
-                            : "";
-                        if (string.IsNullOrEmpty(ch))
-                        {
-                            matchIdx = bt.photoIndex;
-                        }
-                    }
-                    if (matchIdx < 0 && bt.photoId > 0)
+                    // §83-5: photoId がある場合は id 一致を最優先する。photoIndex は
+                    // 配列ずれ時に別の空 MD5 エントリを誤って指す恐れがあるため、
+                    // photoId <= 0 の場合に限って使う。
+                    if (bt.photoId > 0)
                     {
                         for (int idx = 0; idx < currentPhotos.Count; idx++)
                         {
@@ -4281,6 +4283,17 @@ class FurimaServerNative
                             }
                         }
                     }
+                    if (matchIdx < 0 && bt.photoId <= 0 && bt.photoIndex >= 0 && bt.photoIndex < currentPhotos.Count && !matchedIndices.Contains(bt.photoIndex))
+                    {
+                        var candidate = currentPhotos[bt.photoIndex];
+                        string ch = candidate != null && candidate.ContainsKey("md5Hash") && candidate["md5Hash"] != null
+                            ? candidate["md5Hash"].ToString().Trim()
+                            : "";
+                        if (string.IsNullOrEmpty(ch))
+                        {
+                            matchIdx = bt.photoIndex;
+                        }
+                    }
                     if (matchIdx >= 0)
                     {
                         matchedIndices.Add(matchIdx);
@@ -4288,10 +4301,26 @@ class FurimaServerNative
                         if (matched != null)
                         {
                             int pChildId = matched.ContainsKey("childItemId") ? ParseIntSafe(matched["childItemId"], 0) : 0;
+                            if (pChildId <= 0) pChildId = bt.childItemId;
                             int pId = matched.ContainsKey("id") ? ParseIntSafe(matched["id"], 0) : 0;
-                            if (pChildId > 0 && pChildId != itemId && pId > 0)
+                            if (pChildId > 0 && pChildId != itemId)
                             {
-                                removedChildPhotoIds.Add(pId);
+                                // 親リスト内で同じ childItemId を持つ写真の中での出現順序
+                                int ordinal = 0;
+                                for (int k = 0; k < matchIdx; k++)
+                                {
+                                    var prev = currentPhotos[k];
+                                    if (prev == null) continue;
+                                    int prevChildId = prev.ContainsKey("childItemId") ? ParseIntSafe(prev["childItemId"], 0) : 0;
+                                    if (prevChildId == pChildId) ordinal++;
+                                }
+                                if (!childFollowOrdinals.ContainsKey(pChildId)) childFollowOrdinals[pChildId] = new HashSet<int>();
+                                childFollowOrdinals[pChildId].Add(ordinal);
+                                if (pId > 0)
+                                {
+                                    if (!childFollowPhotoIds.ContainsKey(pChildId)) childFollowPhotoIds[pChildId] = new HashSet<int>();
+                                    childFollowPhotoIds[pChildId].Add(pId);
+                                }
                             }
                         }
                     }
@@ -4315,22 +4344,32 @@ class FurimaServerNative
                     removedBrokenCount += matchedIndices.Count;
                     if (itemId == firstTargetItemId) remainingCountFirstItem = updatedPhotos.Count;
 
-                    if (removedChildPhotoIds.Count > 0)
+                    if (childFollowOrdinals.Count > 0)
                     {
-                        foreach (var bt in kv.Value)
+                        // §83-5: 子商品側の追従除去。子商品は matched 写真自身の
+                        // childItemId から特定する (リクエストの childItemId が 0 でも効く)。
+                        // 子商品の写真リストは親リスト内の当該子商品ぶんの並びと対応するため、
+                        // 同じ出現順序の位置にある空 MD5 写真を除去する (id 一致時も除去)。
+                        foreach (var childKv in childFollowOrdinals)
                         {
-                            if (bt.childItemId <= 0 || bt.childItemId == itemId) continue;
-                            var childItem = itemsDb.Find(c => ParseIntSafe(c["id"]) == bt.childItemId);
+                            int childId = childKv.Key;
+                            var childItem = itemsDb.Find(c => ParseIntSafe(c["id"]) == childId);
                             if (childItem == null || !childItem.ContainsKey("photos") || childItem["photos"] == null) continue;
                             var childPhotos = SyncStore.NormalizePhotosList(childItem["photos"]);
+                            var ordinals = childKv.Value;
+                            HashSet<int> followPhotoIds;
+                            childFollowPhotoIds.TryGetValue(childId, out followPhotoIds);
                             var updatedChildPhotos = new List<Dictionary<string, object>>();
                             bool childChanged = false;
-                            foreach (var cp in childPhotos)
+                            for (int ci = 0; ci < childPhotos.Count; ci++)
                             {
+                                var cp = childPhotos[ci];
                                 if (cp == null) continue;
                                 string ch = cp.ContainsKey("md5Hash") && cp["md5Hash"] != null ? cp["md5Hash"].ToString().Trim() : "";
                                 int cpId = cp.ContainsKey("id") ? ParseIntSafe(cp["id"], 0) : 0;
-                                if (string.IsNullOrEmpty(ch) && cpId > 0 && removedChildPhotoIds.Contains(cpId))
+                                bool isBrokenTarget = string.IsNullOrEmpty(ch) &&
+                                    (ordinals.Contains(ci) || (followPhotoIds != null && cpId > 0 && followPhotoIds.Contains(cpId)));
+                                if (isBrokenTarget)
                                 {
                                     childChanged = true;
                                     continue;

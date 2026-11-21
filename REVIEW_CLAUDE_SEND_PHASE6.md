@@ -2754,3 +2754,37 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 - C# 5 構文静的チェック：`tools/FurimaServerNative.cs`・`tools/DashboardHtml.cs`（C# 部分）で非互換構文（`$""`・`?.`・`nameof(`）混入 0 件。
 - 版番号 3 箇所一致確認：`app/build.gradle.kts`（`1417` / `"1.4"`）・`tools/DashboardHtml.cs`（`v1.4 (Build 17)`）・`WebDashboardHtml.kt`（`v1.4 (Build 17)`）。
 - ※ローカルコンテナでは Kotlin 単体テスト（`gradle :app:testDebugUnitTest`）が時間制約により未完了、および Windows `csc` 実コンパイルは未実施のため、修正コミット後に CI 含めて最終検証すること。
+
+## 84. 実装担当回答（レビュー §83 差し戻し 83-1〜83-7 への修正）（2026-11-21）
+
+§83 の指摘 7 件はすべて現行コードで再現・確認したうえで修正した。版番号は同一バッチの修正として `v1.4 Build 17`（`1417`）のまま据え置く。
+
+### 84.1 個別の修正内容
+1. **83-1（FGS 開始/停止競合・CancellationException 握りつぶし）**
+   - `PcSyncForegroundService`：開始登録（`lastStartId`・`activeTaskCount`・停止済みフラグ）を `onStartCommand` の入口で単一ロック内に原子化した。タスク側の完了処理は `finally` から `finishTask()` を呼び、ロック内で件数を再検証して 0 になった場合だけ停止する。停止処理はコレクタ停止 → `STOP_FOREGROUND_REMOVE` → 通知の明示キャンセルの順とし、`stopSelfResult(lastStartId)` で新しい開始がある場合はサービスを存続させる。`onTimeout` の強制停止は `forceTeardown()` に一本化し、タスク側と二重に走らないよう停止済みフラグで排他した。
+   - `runSyncViaService()` は `deferred.await()` を `try/finally` で囲み、呼び出し側キャンセル時も `pendingRequests` のエントリを残さないようにした。
+   - `SyncCoordinator.executeFullSync()` は `CancellationException` を再スローするよう変更した。あわせて同じ欠陥クラスとして、同一呼び出し経路上の `PcServerClient.syncDeltaToPcServer()` の外側 `catch` と FGS タスク側の `catch` にも再スローを追加した（キャンセルが通常のエラー結果に化けると、上記の伝播修正が途中で止まるため）。
+2. **83-2（Step 2 失敗時の成功誤報）**
+   - `PcServerClient.syncDeltaToPcServer()`：写真送信の HTTP 失敗・`stored != true`・応答不正を件数とハッシュで集計し、未解決ローカル写真のある商品と未確認ハッシュの残る商品を未完了として数える。未完了が残る場合は進捗を `SyncPhase.ERROR` とし、`PcSyncResult(isSuccess = false)`（理由メッセージ付き）を返す。これにより `SyncCoordinator` は最終同期時刻を更新せず、`fetchServerItems()` へも進まない。`isDirty` の維持条件は従来どおり。
+   - `PhotoSyncIntegrityBuild17Test` の該当期待値を `assertTrue(res1.isSuccess)` から `assertFalse(...)` へ更新した。
+3. **83-3（起動時浄化の updatedAt 引き上げ）**
+   - `FurimaServerNative.LoadItemsDbFromDisk()` の空 MD5 浄化で `item["updatedAt"] = nowMs` の書き換えをやめた。再同期のトリガーは `syncedToPhone = false` と `BumpDataRevision()` のみとし、スマホ側 `isDirty` 編集の `updatedAt` 比較による保護が破れないようにした。
+4. **83-4（復旧不能行の永続 isDirty・FGS 再起動ループ）**
+   - 隔離/浄化ルールを定めた：原本消失・MD5 未確定のままサムネイルだけが残った行は「復旧不能行」として、`cleanupGhostBlankMd5Photos()` で完全ゴーストとあわせて浄化する（編集中アイテムは従来どおり保護、原本が実在する写真には触れない）。他行から参照されていないサムネイル実ファイルもあわせて破棄する。
+   - 浄化件数（完全ゴースト／復旧不能の内訳）はリポジトリに記録し、`syncDeltaToPcServer()` 開始時に同期進捗メッセージで UI へ通知して消費する。
+   - 未同期写真数の判定は浄化後に数える `getUnsyncedPhotosCountAfterGhostCleanup()` へ切り替えた（自動同期・再接続ハンドシェイクの両経路）。これで壊れ行が残っても次回同期の開始時点で解消し、常時 `> 0` による FGS 再起動ループは起きない。新規テストで浄化と件数の収束を検証する。
+5. **83-5（photoIndex 優先の誤一致・まとめ子商品の取り残し）**
+   - `TrashPhotosFromTargets()` の壊れ参照照合を、`photoId > 0` の場合は id 一致を最優先に変更した。`photoIndex` は `photoId <= 0` の場合に限って使う。
+   - 子商品側の追従除去は、リクエストの `childItemId` ではなく、一致した親写真自身の `childItemId` から子商品を特定するよう変更した（`childItemId == 0` 指定でも効く）。子側の写真特定は、別 ID に採番し直される前提で「親リスト内で当該子商品の写真として現れる出現順序」を主キーとし、id が一致する場合はそれも併用する。除去対象は空 MD5 の写真に限定する安全条件は維持した。
+6. **83-6（自動同期の遅延発火リスク・重複キュー）**
+   - 自動同期専用の固定スロット `runAutoSyncViaService()` を新設した。実行中の自動同期がある間、後続トリガーはサービス開始を積み上げず既存の実行へ相乗りし、実行中に来たトリガーは完了後に追走実行する（世代カウンタで判定）。`triggerAutoSync()` の写真あり経路はこちらへ切り替えた。
+   - 遅延発火後にバックグラウンド制限（`ForegroundServiceStartNotAllowedException`）で起動できない場合は、WakeLock なしの直接同期へ落とさず保留し、`SyncCoordinator` の保留フラグ経由でハートビートが 15 秒以上の間隔を空けて再試行する。その他の起動失敗は従来どおり直接同期へフォールバックする。
+7. **83-7（Pull 反映の編集中未参照）**
+   - `mergeServerItemsFromJson()` は、対象アイテムが編集中（`isItemEditingActive`）の場合は Pull 反映自体を保留し、次回同期へ回すようにした（`isDirty` 保護より前段で判定）。
+
+### 84.2 検証結果
+- **JS テスト (`node --test tools/tests/*.mjs`)**：**15/15 合格**（本修正ではダッシュボード JS に変更なし）。
+- **C# 静的検査**：`tools/FurimaServerNative.cs` の括弧・丸括弧・角括弧バランス一致、C# 5 非互換構文（`$"` / `?.` / `nameof` / インライン `out` 宣言）の混入なし（新規コードの `out` は事前宣言した変数への受け渡しのみ）。
+- **Kotlin 静的検査**：変更 6 ファイルすべて括弧バランス一致。ローカル環境に Gradle / JDK が無いため、Android ビルド・単体テスト（更新した期待値と新規テストを含む）と Windows の C# 実コンパイルは、本コミット後の GitHub Actions `build-check` で検証する。
+
+再レビューをお願いしたい。

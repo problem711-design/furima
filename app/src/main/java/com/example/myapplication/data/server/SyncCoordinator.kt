@@ -2,6 +2,7 @@ package com.example.myapplication.data.server
 
 import android.content.Context
 import com.example.myapplication.data.FleaMarketRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,6 +35,25 @@ class SyncCoordinator private constructor(context: Context) {
 
     @Volatile var lastKnownDataRevision: Long = -1L
     @Volatile var lastKnownSettingsRevision: Long = -1L
+
+    // レビュー §83-6: バックグラウンド制限で Foreground Service を起動できなかった
+    // 自動同期の保留フラグ。ハートビート側が間隔を空けて再試行する。
+    @Volatile private var pendingAutoSyncRetry: Boolean = false
+    @Volatile private var lastAutoSyncRetryAttemptAt: Long = 0L
+
+    fun requestPendingAutoSyncRetry() {
+        pendingAutoSyncRetry = true
+    }
+
+    /** 保留中の自動同期があり、かつ前回試行から十分な間隔が空いていれば true を返して保留を消費する。 */
+    fun consumePendingAutoSyncRetry(minIntervalMs: Long = 15_000L): Boolean {
+        if (!pendingAutoSyncRetry) return false
+        val now = System.currentTimeMillis()
+        if (now - lastAutoSyncRetryAttemptAt < minIntervalMs) return false
+        lastAutoSyncRetryAttemptAt = now
+        pendingAutoSyncRetry = false
+        return true
+    }
 
     fun setPcServerConnected(connected: Boolean) {
         _isPcServerConnected.value = connected
@@ -121,6 +141,9 @@ class SyncCoordinator private constructor(context: Context) {
                     )
                     pushRes
                 }
+            } catch (e: CancellationException) {
+                // レビュー §83-1: キャンセルをエラー結果へ変換せず伝播させる
+                throw e
             } catch (e: Exception) {
                 val errMsg = e.localizedMessage ?: e.message ?: "同期中に通信エラーが発生しました"
                 _syncStatusState.value = PcSyncProgress(

@@ -1461,7 +1461,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                         wasConnected = true
                         val hasLocalDirty = repository.getDao().getDirtyItemsCount() > 0 ||
                             repository.getPendingDeletedUuids().isNotEmpty()
-                        val hasUnsyncedPhotos = repository.getDao().getUnsyncedPhotosCount() > 0
+                        // §83-4: 壊れ行を浄化してから数える (壊れ行で常時 > 0 にならないように)
+                        val hasUnsyncedPhotos = repository.getUnsyncedPhotosCountAfterGhostCleanup() > 0
                         if (hasLocalDirty || hasUnsyncedPhotos) {
                             val syncRes = PcSyncForegroundService.runSyncViaService(
                                 context = getApplication(),
@@ -1555,6 +1556,15 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                             }
                         }
                     }
+                    // §83-6: バックグラウンド制限で保留された自動同期を、接続中に間隔を空けて再試行する
+                    if (connected && syncCoordinator.consumePendingAutoSyncRetry()) {
+                        PcSyncForegroundService.runAutoSyncViaService(
+                            context = getApplication(),
+                            url = url,
+                            token = token,
+                            initialMessage = "自動同期を再開中..."
+                        )
+                    }
                     // フェーズ 6-5 是正 (34-4-2): 既読カウンタの変化検知は syncMutex の外で
                     // ジョブ状態を取り直す (写真同期にブロックされない経路)
                     if (connected && hb.labelSeenRevision > 0L && hb.labelSeenRevision != lastKnownLabelSeenRevision) {
@@ -1583,9 +1593,11 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         autoSyncJob?.cancel()
         autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
             delay(500)
-            val hasUnsyncedPhotos = repository.getDao().getUnsyncedPhotosCount() > 0
+            // §83-4: 壊れ行を浄化してから数える (壊れ行で常時 > 0 にならないように)
+            val hasUnsyncedPhotos = repository.getUnsyncedPhotosCountAfterGhostCleanup() > 0
             val result = if (hasUnsyncedPhotos) {
-                PcSyncForegroundService.runSyncViaService(
+                // §83-6: 自動同期は重複統合 (コアレス) 付きの専用経路を使う
+                PcSyncForegroundService.runAutoSyncViaService(
                     context = getApplication(),
                     url = url,
                     token = token,

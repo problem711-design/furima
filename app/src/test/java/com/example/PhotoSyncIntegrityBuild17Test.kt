@@ -319,6 +319,55 @@ class PhotoSyncIntegrityBuild17Test {
     }
 
     @Test
+    fun `cleanupGhostBlankMd5Photos removes unrecoverable thumbnail-only rows and unsynced count settles`() = runBlocking {
+        val itemId = repository.saveItem(
+            title = "復旧不能行の浄化検証",
+            description = "原本消失・サムネのみ生存の空MD5行",
+            status = "DRAFT",
+            price = 1500,
+            soldPrice = 0,
+            shippingCost = 210,
+            feeRatePercent = 5,
+            expenseCost = 55,
+            useCustomSettings = false,
+            imageUris = emptyList()
+        ).toInt()
+
+        val thumbOnlyFile = createTempJpegFile("thumb_only_survivor.jpg")
+        val missingOriginalPath = File(context.filesDir, "item_photos/unrecoverable_missing.jpg").absolutePath
+
+        repository.getDao().insertPhotos(
+            listOf(
+                PhotoEntity(
+                    itemId = itemId,
+                    filePath = missingOriginalPath,
+                    thumbnailPath = thumbOnlyFile.absolutePath,
+                    md5Hash = "",
+                    displayOrder = 0
+                )
+            )
+        )
+
+        // 浄化前は未同期カウントに残り続ける
+        assertEquals(1, repository.getDao().getUnsyncedPhotosCount())
+
+        val removed = repository.cleanupGhostBlankMd5Photos()
+        assertEquals(1, removed)
+        assertEquals(0, repository.getItemById(itemId)!!.photos.size)
+
+        // §83-4: 浄化後は未同期カウントが 0 に落ち着く (自動同期が再起動し続けない)
+        assertEquals(0, repository.getUnsyncedPhotosCountAfterGhostCleanup())
+
+        // 通知用サマリに復旧不能 1 件が記録され、消費すると 0 に戻る
+        val (ghostCount, unrecoverableCount) = repository.consumeGhostCleanupSummary()
+        assertEquals(0, ghostCount)
+        assertEquals(1, unrecoverableCount)
+        val (ghostCount2, unrecoverableCount2) = repository.consumeGhostCleanupSummary()
+        assertEquals(0, ghostCount2)
+        assertEquals(0, unrecoverableCount2)
+    }
+
+    @Test
     fun `syncDeltaToPcServer skips blank md5, keeps isDirty when upload fails, clears isDirty on upload ok, and protects editing Step 3`() = runBlocking {
         val validImg = createTempJpegFile("sync_valid_item.jpg")
         val itemId = repository.saveItem(
@@ -369,9 +418,10 @@ class PhotoSyncIntegrityBuild17Test {
                 else -> 404 to """{"status":"error"}"""
             }
         }) { baseUrl ->
-            // 1. Step2 写真送信失敗時: isDirty は true のまま維持され、原本も消えない
+            // 1. Step2 写真送信失敗時: isDirty は true のまま維持され、原本も消えない。
+            // §83-2: Step 2 失敗は同期結果も失敗として返る (旧期待値は成功扱いだった)
             val res1 = pcServerClient.syncDeltaToPcServer(baseUrl, "tok")
-            assertTrue(res1.isSuccess)
+            assertFalse("Step2失敗時は同期結果も失敗であるべき", res1.isSuccess)
             val afterFail = repository.getItemById(itemId)!!
             assertTrue("Step2失敗時はisDirty=trueを維持すべき", afterFail.item.isDirty)
             assertFalse(afterFail.photos.first().isOriginalDeleted)

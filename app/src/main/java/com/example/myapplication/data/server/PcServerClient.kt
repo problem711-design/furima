@@ -14,6 +14,7 @@ import com.example.myapplication.data.local.statusLabelOf
 import com.example.myapplication.data.local.TextTemplate
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType
@@ -720,6 +721,17 @@ class PcServerClient(
             val savedStoreId = getSavedStoreId()
             val dao = repository.getDao()
             repository.cleanupGhostBlankMd5Photos()
+            // §83-4: 浄化で壊れ写真行を除去した場合は、同期進捗メッセージで UI へ通知する
+            val (cleanedGhostCount, cleanedUnrecoverableCount) = repository.consumeGhostCleanupSummary()
+            if (cleanedGhostCount > 0 || cleanedUnrecoverableCount > 0) {
+                onProgress(
+                    PcSyncProgress(
+                        phase = SyncPhase.SYNCING_ITEMS,
+                        progressPercent = 6,
+                        detailMessage = "壊れた写真参照を除去しました (完全ゴースト ${cleanedGhostCount}件・復旧不能 ${cleanedUnrecoverableCount}件)"
+                    )
+                )
+            }
 
             // まとめ子商品・ゴミ箱内商品を含む全商品を取得して状態伝播する
             val itemsWithPhotos = dao.getAllItemsWithPhotosForSync()
@@ -916,6 +928,10 @@ class PcServerClient(
 
             // 2. neededHashes のうち、元ファイルがあるものを POST /api/sync/photo で個別送信
             val newlyStoredHashes = mutableSetOf<String>()
+            // §83-2: Step 2 の送信失敗 (HTTP 失敗・stored != true・応答不正) を集計し、
+            // 最終結果へ反映する (旧実装は警告ログのみで成功扱いだった)
+            var failedUploadCount = 0
+            val failedUploadHashes = mutableSetOf<String>()
             val photosToUpload = photoFileMap.values
                 .distinctBy { it.second.lowercase() }
                 .filter { (file, md5) -> neededHashesSet.contains(md5) && file.exists() }
@@ -974,8 +990,15 @@ class PcServerClient(
                         val photoRespDto = syncPhotoResponseAdapter.fromJson(photoRespStr)
                         if (photoRespDto != null && photoRespDto.stored && photoRespDto.hash != null) {
                             newlyStoredHashes.add(photoRespDto.hash.lowercase())
+                        } else {
+                            // §83-2: HTTP 成功でも stored でなければ未完了として集計する
+                            failedUploadCount++
+                            failedUploadHashes.add(md5)
+                            android.util.Log.w("PC_SYNC", "写真保存未確認 (MD5 $md5): stored=${photoRespDto?.stored}")
                         }
                     } else {
+                        failedUploadCount++
+                        failedUploadHashes.add(md5)
                         android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5 $md5): HTTP ${photoResp.code}")
                     }
                 }
@@ -997,10 +1020,14 @@ class PcServerClient(
 
             val allConfirmedHashes = syncedHashesSet + newlyStoredHashes
 
+            // §83-2: 未完了の商品 (未解決ローカル写真・未確認ハッシュ) を集計する
+            val incompleteItemIds = mutableSetOf<Int>()
+
             // 写真アップロード完了を確認できた商品だけ isDirty を解除する
             for ((itemId, pushedUpdatedAt) in pushedUpdatedAtById) {
                 if (hasUnresolvedLocalPhotoByItemId[itemId] == true) {
                     Log.w("PHOTO_INTEGRITY", "syncDeltaToPcServer: keeping isDirty=true for itemId=$itemId (unresolved blank-MD5 photo)")
+                    incompleteItemIds.add(itemId)
                     continue
                 }
                 val expectedHashes = expectedHashesByItemId[itemId].orEmpty()
@@ -1010,6 +1037,7 @@ class PcServerClient(
                     }
                 } else {
                     Log.w("PHOTO_INTEGRITY", "syncDeltaToPcServer: keeping isDirty=true for itemId=$itemId (unconfirmed photos remain)")
+                    incompleteItemIds.add(itemId)
                 }
             }
 
@@ -1085,6 +1113,33 @@ class PcServerClient(
                 }
             }
 
+            // §83-2: Step 2 の失敗・未確認が残る場合は成功と報告しない
+            // (SyncCoordinator が SyncPhase.ERROR へ遷移し、最終同期時刻を更新しない)
+            if (failedUploadCount > 0 || incompleteItemIds.isNotEmpty()) {
+                val reason = "写真送信が未完了です (送信失敗 ${failedUploadCount}件・未確認 ${incompleteItemIds.size}商品)。再同期してください"
+                onProgress(
+                    PcSyncProgress(
+                        phase = SyncPhase.ERROR,
+                        currentPhotoIndex = totalUploadCount,
+                        totalPhotoCount = totalUploadCount,
+                        bytesSent = uploadedBytesSoFar,
+                        totalBytes = if (totalUploadCount > 0) totalUploadBytes else 0L,
+                        progressPercent = 100,
+                        detailMessage = "送信未完了 (${itemsWithPhotos.size}件)",
+                        errorDetail = reason
+                    )
+                )
+                return@withContext PcSyncResult(
+                    isSuccess = false,
+                    errorMessage = reason,
+                    syncedItemsCount = itemsWithPhotos.size,
+                    syncedPhotosCount = syncedPhotoCount,
+                    freedMb = (freedBytes / (1024 * 1024)).toInt(),
+                    missingOriginalPhotosCount = missingOriginalCount,
+                    storeId = respStoreId
+                )
+            }
+
             onProgress(
                 PcSyncProgress(
                     phase = SyncPhase.SUCCESS,
@@ -1104,6 +1159,9 @@ class PcServerClient(
                 missingOriginalPhotosCount = missingOriginalCount,
                 storeId = respStoreId
             )
+        } catch (e: CancellationException) {
+            // §83-1: キャンセルを通信エラー結果へ変換せず伝播させる
+            throw e
         } catch (e: Exception) {
             android.util.Log.e("PC_SYNC", "プロトコル v4 同期例外: ${e.message}", e)
             val errMsg = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
@@ -1294,6 +1352,13 @@ class PcServerClient(
                 val existing = byUuid ?: if (!isIdCollision) byId else null
 
                 val serverUpdatedAt = if (obj.has("updatedAt") && !obj.isNull("updatedAt")) obj.optLong("updatedAt", 0L) else 0L
+
+                // §83-7: 編集中アイテムは Pull 反映自体を保留する (saveItem の
+                // トランザクション外画像 I/O 中に写真・フィールドが置換されるのを防ぐ)。
+                // 次回同期で改めて反映される。
+                if (existing != null && repository.isItemEditingActive(existing.item.id)) {
+                    return@withDbMutationTransaction
+                }
 
                 // isDirty 保護：ローカルに未送信の変更があり、ローカル updatedAt がサーバーより新しい／同等なら上書きしない
                 if (existing != null && existing.item.isDirty &&

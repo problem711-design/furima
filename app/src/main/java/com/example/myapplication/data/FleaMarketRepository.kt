@@ -90,16 +90,38 @@ class FleaMarketRepository(private val context: Context) {
         return false
     }
 
+    // レビュー §83-4: 直近のゴースト浄化の内訳 (同期進捗メッセージでの UI 通知用)。
+    // PcServerClient.syncDeltaToPcServer が消費して表示し、表示後にクリアする。
+    @Volatile var lastGhostCleanupGhostCount: Int = 0
+        private set
+    @Volatile var lastGhostCleanupUnrecoverableCount: Int = 0
+        private set
+
+    /** 浄化内訳を 1 回だけ取り出す (取り出すと 0 に戻る)。 */
+    fun consumeGhostCleanupSummary(): Pair<Int, Int> {
+        val ghost = lastGhostCleanupGhostCount
+        val unrecoverable = lastGhostCleanupUnrecoverableCount
+        lastGhostCleanupGhostCount = 0
+        lastGhostCleanupUnrecoverableCount = 0
+        return ghost to unrecoverable
+    }
+
     /**
-     * ローカル DB に残存する「md5Hash が空かつ実ファイルもサムネイルも存在しない完全ゴースト」を安全に除去する。
-     * 実体ファイルが存在する写真には絶対に触れない。
+     * ローカル DB に残存する空 MD5 の壊れ写真行を安全に除去する。
+     * - 完全ゴースト: 実ファイルもサムネイルも存在しない行。
+     * - 復旧不能行 (§83-4): 原本ファイルが消失し MD5 も未確定のまま、サムネイルだけが残った行。
+     *   原本が無い以上ハッシュを確定できず、未同期カウントに残り続けると自動同期が
+     *   無限に再起動するため、隔離せず浄化し、件数は UI 通知用に記録する。
+     * 実体ファイル (原本) が存在する写真には絶対に触れない。編集中アイテムも保護する。
      */
     suspend fun cleanupGhostBlankMd5Photos(): Int = withContext(Dispatchers.IO) {
-        withDbMutationTransaction {
+        val orphanThumbPaths = mutableListOf<String>()
+        val removedTotal = withDbMutationTransaction {
             val candidates = dao.getBlankMd5Photos()
             if (candidates.isEmpty()) return@withDbMutationTransaction 0
 
             val ghostIds = mutableListOf<Int>()
+            val unrecoverableIds = mutableListOf<Int>()
             val affectedItemIds = mutableSetOf<Int>()
             for (photo in candidates) {
                 if (photo.md5Hash.isNotBlank()) continue
@@ -111,11 +133,22 @@ class FleaMarketRepository(private val context: Context) {
                 if (!origExists && !thumbExists) {
                     ghostIds.add(photo.id)
                     affectedItemIds.add(photo.itemId)
+                } else if (!origExists && thumbExists) {
+                    // §83-4: 原本消失・MD5 未確定・サムネイルのみ生存 = 復旧不能行として浄化する
+                    unrecoverableIds.add(photo.id)
+                    affectedItemIds.add(photo.itemId)
+                    val thumbPath = photo.thumbnailPath
+                    if (!thumbPath.isNullOrBlank() &&
+                        dao.getPhotosReferencingPath(thumbPath).none { it.id != photo.id }
+                    ) {
+                        orphanThumbPaths.add(thumbPath)
+                    }
                 }
             }
-            if (ghostIds.isEmpty()) return@withDbMutationTransaction 0
+            val allIds = ghostIds + unrecoverableIds
+            if (allIds.isEmpty()) return@withDbMutationTransaction 0
 
-            dao.deletePhotosByIds(ghostIds)
+            dao.deletePhotosByIds(allIds)
             val now = System.currentTimeMillis()
             for (affectedItemId in affectedItemIds) {
                 val remaining = dao.getPhotosByItemId(affectedItemId)
@@ -126,9 +159,35 @@ class FleaMarketRepository(private val context: Context) {
                     dao.updatePhotos(reindexed)
                 }
             }
-            Log.w("PHOTO_INTEGRITY", "Cleaned up ${ghostIds.size} orphan blank-MD5 ghost photo(s) across ${affectedItemIds.size} item(s)")
-            ghostIds.size
+            if (ghostIds.isNotEmpty()) {
+                Log.w("PHOTO_INTEGRITY", "Cleaned up ${ghostIds.size} orphan blank-MD5 ghost photo(s) across ${affectedItemIds.size} item(s)")
+            }
+            if (unrecoverableIds.isNotEmpty()) {
+                Log.w("PHOTO_INTEGRITY", "Cleaned up ${unrecoverableIds.size} unrecoverable blank-MD5 photo row(s) (original missing, thumbnail only)")
+                lastGhostCleanupUnrecoverableCount += unrecoverableIds.size
+            }
+            if (ghostIds.isNotEmpty()) {
+                lastGhostCleanupGhostCount += ghostIds.size
+            }
+            allIds.size
         }
+        // 他の写真行から参照されていないサムネイル実ファイルは、行の除去に合わせて破棄する
+        for (thumbPath in orphanThumbPaths) {
+            try {
+                File(thumbPath).delete()
+            } catch (_: Exception) {
+            }
+        }
+        removedTotal
+    }
+
+    /**
+     * §83-4: 未同期写真数の判定前にゴースト浄化を行い、壊れ行で常時 > 0 にならないようにする。
+     * 自動同期・再接続ハンドシェイクの判定はこちらを使う。
+     */
+    suspend fun getUnsyncedPhotosCountAfterGhostCleanup(): Int {
+        cleanupGhostBlankMd5Photos()
+        return dao.getUnsyncedPhotosCount()
     }
 
     fun addPendingDeletedUuid(uuid: String) {

@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import com.example.myapplication.MainActivity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,12 @@ class PcSyncForegroundService : Service() {
     private val activeJobs = ConcurrentHashMap<String, Job>()
     @Volatile private var lastStartId: Int = 0
 
+    // レビュー §83-1: 開始登録・完了・停止判定を単一ロックで直列化し、
+    // 先行タスクの終了処理が後続タスクの通知・WakeLock・サービス自体を
+    // 奪わないようにする。teardownDone は新しい開始登録でリセットされる。
+    private val stateLock = Any()
+    private var teardownDone = false
+
     override fun onCreate() {
         super.onCreate()
         syncCoordinator = SyncCoordinator.getInstance(applicationContext)
@@ -48,7 +55,14 @@ class PcSyncForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        lastStartId = startId
+        // §83-1: 開始登録 (startId・件数・停止済みフラグ) をエントリで原子的に行う。
+        // 先行タスクの終了処理は、この登録より前には新しい開始を見逃さず、
+        // 登録より後では件数が残っているため停止に進まない。
+        synchronized(stateLock) {
+            lastStartId = startId
+            activeTaskCount.incrementAndGet()
+            teardownDone = false
+        }
         ensureNotificationChannel()
         val initialProgress = syncCoordinator.syncStatusState.value
         val initialNotification = buildSyncNotification(initialProgress)
@@ -70,40 +84,47 @@ class PcSyncForegroundService : Service() {
                     PcSyncResult(isSuccess = false, errorMessage = "PCサーバーURLが設定されていません")
                 )
             }
-            if (activeTaskCount.get() == 0) {
-                stopForegroundAndSelf(lastStartId)
-            }
+            // この開始コマンド分の登録を即座に完了扱いにする
+            // (他に実行中タスクが無ければ finishTask が停止まで進める)
+            finishTask()
             return START_NOT_STICKY
         }
 
         acquireWakeLockIfNeeded()
         startProgressNotificationCollectorIfNeeded()
 
-        activeTaskCount.incrementAndGet()
         val taskKey = requestId.ifBlank { UUID.randomUUID().toString() }
         val job = serviceScope.launch {
-            val result = try {
-                syncCoordinator.executeFullSync(
-                    url = url,
-                    token = token,
-                    initialMessage = initialMessage,
-                    updateConnectedOnResult = true
-                )
-            } catch (e: Exception) {
-                PcSyncResult(
-                    isSuccess = false,
-                    errorMessage = e.localizedMessage ?: e.message ?: "同期中にエラーが発生しました"
-                )
+            try {
+                val result = try {
+                    syncCoordinator.executeFullSync(
+                        url = url,
+                        token = token,
+                        initialMessage = initialMessage,
+                        updateConnectedOnResult = true
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    PcSyncResult(
+                        isSuccess = false,
+                        errorMessage = e.localizedMessage ?: e.message ?: "同期中にエラーが発生しました"
+                    )
+                }
+
+                if (requestId.isNotBlank()) {
+                    pendingRequests.remove(requestId)?.complete(result)
+                }
+            } catch (e: CancellationException) {
+                if (requestId.isNotBlank()) {
+                    pendingRequests.remove(requestId)?.complete(
+                        PcSyncResult(isSuccess = false, errorMessage = "同期がキャンセルされました")
+                    )
+                }
+                throw e
             } finally {
                 activeJobs.remove(taskKey)
-            }
-
-            if (requestId.isNotBlank()) {
-                pendingRequests.remove(requestId)?.complete(result)
-            }
-
-            if (activeTaskCount.decrementAndGet() <= 0) {
-                stopForegroundAndSelf(lastStartId)
+                finishTask()
             }
         }
         activeJobs[taskKey] = job
@@ -115,7 +136,9 @@ class PcSyncForegroundService : Service() {
         activeJobs.values.forEach { it.cancel() }
         activeJobs.clear()
         completeAllPendingWithError("同期タイムアウトのためフォアグラウンドサービスを停止しました")
-        stopForegroundAndSelf(lastStartId)
+        // §83-1: 停止は forceTeardown に一本化する (キャンセルされたタスク側の
+        // finishTask と二重に走っても teardownDone で抑止される)
+        forceTeardown()
     }
 
     override fun onDestroy() {
@@ -184,7 +207,33 @@ class PcSyncForegroundService : Service() {
         }
     }
 
-    private fun stopForegroundAndSelf(targetStartId: Int) {
+    /**
+     * §83-1: 1 件のタスク完了を記録する。全タスクが終わった場合だけ、
+     * ロック内で再検証してから停止処理を行う。
+     */
+    private fun finishTask() {
+        synchronized(stateLock) {
+            if (teardownDone) return
+            if (activeTaskCount.decrementAndGet() > 0) return
+            teardownDone = true
+            teardownLocked()
+        }
+    }
+
+    /** §83-1: タイムアウト・空リクエスト時の強制停止。タスク側の finishTask とは teardownDone で排他する。 */
+    private fun forceTeardown() {
+        synchronized(stateLock) {
+            if (teardownDone) return
+            teardownDone = true
+            activeTaskCount.set(0)
+            teardownLocked()
+        }
+    }
+
+    /** stateLock を保持した状態でのみ呼ぶこと。 */
+    private fun teardownLocked() {
+        // 先に進捗コレクタを止め、最後に通知を明示キャンセルして、
+        // notify() と STOP_FOREGROUND_REMOVE の競合による通知残留を防ぐ
         progressCollectorJob?.cancel()
         progressCollectorJob = null
         releaseWakeLock()
@@ -192,10 +241,14 @@ class PcSyncForegroundService : Service() {
             ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {
         }
-        if (targetStartId > 0) {
-            stopSelf(targetStartId)
-        } else {
-            stopSelf()
+        try {
+            notificationManager.cancel(NOTIFICATION_ID)
+        } catch (_: Exception) {
+        }
+        // より新しい開始コマンドが来ていれば stopSelfResult が false を返し、サービスは存続する
+        // (その開始側が startForeground・WakeLock・コレクタを取り直す)
+        if (!stopSelfResult(lastStartId)) {
+            Log.i("PC_SYNC_FGS", "Newer start command exists; keeping service alive")
         }
     }
 
@@ -292,7 +345,99 @@ class PcSyncForegroundService : Service() {
                 )
             }
 
-            return deferred.await()
+            // §83-1: 呼び出し側がキャンセルされても pendingRequests にエントリを残さない
+            try {
+                return deferred.await()
+            } finally {
+                pendingRequests.remove(requestId)
+            }
+        }
+
+        // §83-6: 自動同期専用の固定スロット。実行中の自動同期がある間、
+        // 後続トリガーは新しいサービス開始を積み上げず既存の実行へ相乗りし、
+        // 実行中に来たトリガーは完了後に 1 回だけ追走実行する (コアレス)。
+        private const val AUTO_SYNC_REQUEST_ID = "auto-sync-slot"
+        private val autoSyncStateLock = Any()
+        private var autoSyncTriggerGeneration = 0L
+        private var autoSyncSlotGeneration = 0L
+
+        private fun isForegroundServiceStartNotAllowed(e: Exception): Boolean {
+            // android.app.ForegroundServiceStartNotAllowedException (API 31+)。
+            // 旧 API でのクラス解決を避けるため単純名で判定する。
+            return e.javaClass.simpleName == "ForegroundServiceStartNotAllowedException"
+        }
+
+        suspend fun runAutoSyncViaService(
+            context: Context,
+            url: String,
+            token: String,
+            initialMessage: String = "自動同期を開始..."
+        ): PcSyncResult {
+            val appContext = context.applicationContext
+            synchronized(autoSyncStateLock) { autoSyncTriggerGeneration++ }
+
+            while (true) {
+                val slot = synchronized(autoSyncStateLock) {
+                    val existing = pendingRequests[AUTO_SYNC_REQUEST_ID]
+                    if (existing != null && !existing.isCompleted) {
+                        Triple(existing, autoSyncSlotGeneration, false)
+                    } else {
+                        val created = CompletableDeferred<PcSyncResult>()
+                        pendingRequests[AUTO_SYNC_REQUEST_ID] = created
+                        autoSyncSlotGeneration = autoSyncTriggerGeneration
+                        Triple(created, autoSyncSlotGeneration, true)
+                    }
+                }
+                val deferred = slot.first
+                val slotGeneration = slot.second
+                val shouldStart = slot.third
+
+                if (shouldStart) {
+                    val intent = Intent(appContext, PcSyncForegroundService::class.java).apply {
+                        putExtra(EXTRA_REQUEST_ID, AUTO_SYNC_REQUEST_ID)
+                        putExtra(EXTRA_URL, url)
+                        putExtra(EXTRA_TOKEN, token)
+                        putExtra(EXTRA_INITIAL_MESSAGE, initialMessage)
+                    }
+                    try {
+                        ContextCompat.startForegroundService(appContext, intent)
+                    } catch (e: Exception) {
+                        if (isForegroundServiceStartNotAllowed(e)) {
+                            // §83-6: バックグラウンド制限時は WakeLock なしの直接同期へ
+                            // 落とさず保留し、ハートビート側の再試行に委ねる。
+                            // 相乗り中の呼び出し側を待たせ続けないよう、保留結果で完了させる。
+                            Log.w("PC_SYNC_FGS", "Auto sync deferred: FGS start not allowed in background")
+                            SyncCoordinator.getInstance(appContext).requestPendingAutoSyncRetry()
+                            val deferredResult = PcSyncResult(
+                                isSuccess = false,
+                                errorMessage = "バックグラウンド状態のため自動同期を保留しました"
+                            )
+                            deferred.complete(deferredResult)
+                            pendingRequests.remove(AUTO_SYNC_REQUEST_ID, deferred)
+                            return deferredResult
+                        }
+                        pendingRequests.remove(AUTO_SYNC_REQUEST_ID, deferred)
+                        Log.w("PC_SYNC_FGS", "Auto sync startForegroundService failed, falling back to direct sync: ${e.message}")
+                        val direct = SyncCoordinator.getInstance(appContext).executeFullSync(
+                            url = url,
+                            token = token,
+                            initialMessage = initialMessage,
+                            updateConnectedOnResult = true
+                        )
+                        deferred.complete(direct)
+                        return direct
+                    }
+                }
+
+                // スロットの所有権はサービス側 (完了時に除去される)。
+                // 呼び出し側がキャンセルされてもスロットは残し、サービス側の実行を継続させる。
+                val result = deferred.await()
+                val settled = synchronized(autoSyncStateLock) {
+                    autoSyncTriggerGeneration <= slotGeneration
+                }
+                if (settled) return result
+                // 実行中に新しいトリガーが来ていた場合は追走する
+            }
         }
     }
 }
