@@ -1237,6 +1237,8 @@ class FurimaServerNative
             long cutoffMs = nowMs - (30L * 24L * 60L * 60L * 1000L);
             HashSet<int> purgeIds = new HashSet<int>();
             List<string> purgeUuids = new List<string>();
+            bool cleanedBrokenPhotos = false;
+            int brokenRemovedCount = 0;
 
             foreach (var item in itemsDb)
             {
@@ -1244,6 +1246,46 @@ class FurimaServerNative
                 bool hadUuid = item.ContainsKey("syncUuid") && item["syncUuid"] != null && !string.IsNullOrEmpty(item["syncUuid"].ToString().Trim());
                 string uuid = EnsureItemSyncUuid(item);
                 if (!hadUuid) changed = true;
+
+                // Build 17: 空MD5かつ実ファイル参照不能な壊れ写真参照を起動時に自動浄化
+                if (item.ContainsKey("photos") && item["photos"] != null)
+                {
+                    var rawPhotos = SyncStore.NormalizePhotosList(item["photos"]);
+                    var validPhotos = new List<Dictionary<string, object>>();
+                    bool itemBrokenRemoved = false;
+                    foreach (var p in rawPhotos)
+                    {
+                        if (p == null)
+                        {
+                            itemBrokenRemoved = true;
+                            brokenRemovedCount++;
+                            continue;
+                        }
+                        string h = p.ContainsKey("md5Hash") && p["md5Hash"] != null
+                            ? p["md5Hash"].ToString().Trim().ToLower()
+                            : "";
+                        string fp = p.ContainsKey("filePath") && p["filePath"] != null
+                            ? p["filePath"].ToString().Trim()
+                            : "";
+                        bool hasRealFile = !string.IsNullOrEmpty(fp) && File.Exists(fp);
+                        if (string.IsNullOrEmpty(h) && !hasRealFile)
+                        {
+                            itemBrokenRemoved = true;
+                            brokenRemovedCount++;
+                            continue;
+                        }
+                        p["displayOrder"] = validPhotos.Count;
+                        validPhotos.Add(p);
+                    }
+                    if (itemBrokenRemoved)
+                    {
+                        item["photos"] = validPhotos;
+                        item["updatedAt"] = nowMs;
+                        item["syncedToPhone"] = false;
+                        cleanedBrokenPhotos = true;
+                        changed = true;
+                    }
+                }
 
                 bool legacyDeleted = false;
                 if (item.ContainsKey("isDeleted") && item["isDeleted"] != null)
@@ -1275,6 +1317,25 @@ class FurimaServerNative
                     if (id > 0) purgeIds.Add(id);
                     if (!string.IsNullOrEmpty(uuid)) purgeUuids.Add(uuid);
                 }
+            }
+
+            if (cleanedBrokenPhotos)
+            {
+                try
+                {
+                    string emptyMd5Backup = itemsJsonFile + ".bak_empty_md5";
+                    if (File.Exists(itemsJsonFile) && !File.Exists(emptyMd5Backup))
+                    {
+                        File.Copy(itemsJsonFile, emptyMd5Backup, false);
+                        Console.WriteLine("[整合性修復] 初回バックアップを作成しました: " + emptyMd5Backup);
+                    }
+                }
+                catch (Exception bakEx)
+                {
+                    Console.WriteLine("[警告] 空MD5浄化前バックアップ作成失敗: " + bakEx.Message);
+                }
+                BumpDataRevision();
+                Console.WriteLine("[整合性修復] 空MD5の壊れ写真参照 " + brokenRemovedCount + "件を除外しました");
             }
 
             // 期限切れ親まとめ商品の子商品も一括削除対象に含める
@@ -2225,9 +2286,13 @@ class FurimaServerNative
                                 {
                                     int pId = ParseIntSafe(photo["id"], 0);
                                     string md5Hash = (photo.Value<string>("md5Hash") ?? "").Trim().ToLower();
+                                    if (string.IsNullOrEmpty(md5Hash))
+                                    {
+                                        Console.WriteLine("[警告] 空MD5の写真エントリを同期受信時に除外しました (itemId=" + assignedId + ", photoId=" + pId + ")");
+                                        continue;
+                                    }
 
-                                    bool existsOnServer = !string.IsNullOrEmpty(md5Hash) &&
-                                                          hashToFilePathMap.ContainsKey(md5Hash) &&
+                                    bool existsOnServer = hashToFilePathMap.ContainsKey(md5Hash) &&
                                                           File.Exists(hashToFilePathMap[md5Hash]);
 
                                     if (existsOnServer)
@@ -4122,6 +4187,8 @@ class FurimaServerNative
         public int itemId;
         public string md5Hash;
         public int childItemId;
+        public int photoIndex = -1;
+        public int photoId = 0;
     }
 
     private static bool IsHashReferencedByAnyItemLocked(string hash)
@@ -4141,9 +4208,10 @@ class FurimaServerNative
         return false;
     }
 
-    private static int TrashPhotosFromTargets(List<PhotoTrashTarget> targets, out int remainingCountFirstItem)
+    private static int TrashPhotosFromTargets(List<PhotoTrashTarget> targets, out int remainingCountFirstItem, out int removedBrokenCount)
     {
         remainingCountFirstItem = 0;
+        removedBrokenCount = 0;
         if (targets == null || targets.Count == 0) return 0;
 
         var newTrashEntries = new List<PhotoTrashEntry>();
@@ -4154,6 +4222,136 @@ class FurimaServerNative
 
         lock (lockObj)
         {
+            int firstTargetItemId = targets[0] != null ? targets[0].itemId : 0;
+
+            // 1. 空MD5の壊れた写真参照（ゴミ箱退避対象外・インデックスずれ防止のため元のリスト基準で一括解決）
+            var brokenByItem = new Dictionary<int, List<PhotoTrashTarget>>();
+            foreach (var t in targets)
+            {
+                if (t == null || t.itemId <= 0) continue;
+                if (string.IsNullOrEmpty(t.md5Hash) && (t.photoIndex >= 0 || t.photoId > 0))
+                {
+                    if (!brokenByItem.ContainsKey(t.itemId)) brokenByItem[t.itemId] = new List<PhotoTrashTarget>();
+                    brokenByItem[t.itemId].Add(t);
+                }
+            }
+
+            foreach (var kv in brokenByItem)
+            {
+                int itemId = kv.Key;
+                var item = itemsDb.Find(i => ParseIntSafe(i["id"]) == itemId);
+                if (item == null) continue;
+
+                var currentPhotos = item.ContainsKey("photos") && item["photos"] != null
+                    ? SyncStore.NormalizePhotosList(item["photos"])
+                    : new List<Dictionary<string, object>>();
+
+                var matchedIndices = new HashSet<int>();
+                var removedChildPhotoIds = new HashSet<int>();
+
+                foreach (var bt in kv.Value)
+                {
+                    int matchIdx = -1;
+                    if (bt.photoIndex >= 0 && bt.photoIndex < currentPhotos.Count && !matchedIndices.Contains(bt.photoIndex))
+                    {
+                        var candidate = currentPhotos[bt.photoIndex];
+                        string ch = candidate != null && candidate.ContainsKey("md5Hash") && candidate["md5Hash"] != null
+                            ? candidate["md5Hash"].ToString().Trim()
+                            : "";
+                        if (string.IsNullOrEmpty(ch))
+                        {
+                            matchIdx = bt.photoIndex;
+                        }
+                    }
+                    if (matchIdx < 0 && bt.photoId > 0)
+                    {
+                        for (int idx = 0; idx < currentPhotos.Count; idx++)
+                        {
+                            if (matchedIndices.Contains(idx)) continue;
+                            var candidate = currentPhotos[idx];
+                            if (candidate == null) continue;
+                            string ch = candidate.ContainsKey("md5Hash") && candidate["md5Hash"] != null
+                                ? candidate["md5Hash"].ToString().Trim()
+                                : "";
+                            int cid = candidate.ContainsKey("id") ? ParseIntSafe(candidate["id"], 0) : 0;
+                            if (string.IsNullOrEmpty(ch) && cid == bt.photoId)
+                            {
+                                matchIdx = idx;
+                                break;
+                            }
+                        }
+                    }
+                    if (matchIdx >= 0)
+                    {
+                        matchedIndices.Add(matchIdx);
+                        var matched = currentPhotos[matchIdx];
+                        if (matched != null)
+                        {
+                            int pChildId = matched.ContainsKey("childItemId") ? ParseIntSafe(matched["childItemId"], 0) : 0;
+                            int pId = matched.ContainsKey("id") ? ParseIntSafe(matched["id"], 0) : 0;
+                            if (pChildId > 0 && pChildId != itemId && pId > 0)
+                            {
+                                removedChildPhotoIds.Add(pId);
+                            }
+                        }
+                    }
+                }
+
+                if (matchedIndices.Count > 0)
+                {
+                    var updatedPhotos = new List<Dictionary<string, object>>();
+                    for (int idx = 0; idx < currentPhotos.Count; idx++)
+                    {
+                        if (matchedIndices.Contains(idx)) continue;
+                        var dictCopy = currentPhotos[idx];
+                        if (dictCopy == null) continue;
+                        dictCopy["displayOrder"] = updatedPhotos.Count;
+                        updatedPhotos.Add(dictCopy);
+                    }
+                    item["photos"] = updatedPhotos;
+                    item["updatedAt"] = now;
+                    item["syncedToPhone"] = false;
+                    anyRemoved = true;
+                    removedBrokenCount += matchedIndices.Count;
+                    if (itemId == firstTargetItemId) remainingCountFirstItem = updatedPhotos.Count;
+
+                    if (removedChildPhotoIds.Count > 0)
+                    {
+                        foreach (var bt in kv.Value)
+                        {
+                            if (bt.childItemId <= 0 || bt.childItemId == itemId) continue;
+                            var childItem = itemsDb.Find(c => ParseIntSafe(c["id"]) == bt.childItemId);
+                            if (childItem == null || !childItem.ContainsKey("photos") || childItem["photos"] == null) continue;
+                            var childPhotos = SyncStore.NormalizePhotosList(childItem["photos"]);
+                            var updatedChildPhotos = new List<Dictionary<string, object>>();
+                            bool childChanged = false;
+                            foreach (var cp in childPhotos)
+                            {
+                                if (cp == null) continue;
+                                string ch = cp.ContainsKey("md5Hash") && cp["md5Hash"] != null ? cp["md5Hash"].ToString().Trim() : "";
+                                int cpId = cp.ContainsKey("id") ? ParseIntSafe(cp["id"], 0) : 0;
+                                if (string.IsNullOrEmpty(ch) && cpId > 0 && removedChildPhotoIds.Contains(cpId))
+                                {
+                                    childChanged = true;
+                                    continue;
+                                }
+                                cp["displayOrder"] = updatedChildPhotos.Count;
+                                updatedChildPhotos.Add(cp);
+                            }
+                            if (childChanged)
+                            {
+                                childItem["photos"] = updatedChildPhotos;
+                                childItem["updatedAt"] = now;
+                                childItem["syncedToPhone"] = false;
+                            }
+                        }
+                    }
+
+                    Console.WriteLine("[救済削除] 空MD5の壊れた写真参照 " + matchedIndices.Count + "件をリストから直接除外しました (itemId=" + itemId + ")");
+                }
+            }
+
+            // 2. 通常のMD5確定写真（写真ゴミ箱へ移動）
             for (int tIdx = 0; tIdx < targets.Count; tIdx++)
             {
                 var target = targets[tIdx];
@@ -4207,7 +4405,7 @@ class FurimaServerNative
                     updatedPhotos.Add(dictCopy);
                 }
 
-                if (tIdx == 0)
+                if (target.itemId == firstTargetItemId)
                 {
                     remainingCountFirstItem = updatedPhotos.Count;
                 }
@@ -4365,6 +4563,8 @@ class FurimaServerNative
 
             string targetHash = "";
             int childItemId = 0;
+            int photoIndex = -1;
+            int photoId = 0;
             using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
             {
                 string jsonStr = reader.ReadToEnd();
@@ -4376,27 +4576,48 @@ class FurimaServerNative
                     {
                         childItemId = ParseIntSafe(json["childItemId"], 0);
                     }
+                    if (json["photoIndex"] != null && json["photoIndex"].Type != JTokenType.Null)
+                    {
+                        photoIndex = ParseIntSafe(json["photoIndex"], -1);
+                    }
+                    if (json["photoId"] != null && json["photoId"].Type != JTokenType.Null)
+                    {
+                        photoId = ParseIntSafe(json["photoId"], 0);
+                    }
                 }
             }
 
-            if (string.IsNullOrEmpty(targetHash))
+            if (string.IsNullOrEmpty(targetHash) && photoIndex < 0 && photoId <= 0)
             {
                 res.StatusCode = 400;
-                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "md5Hash が指定されていません" } });
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "削除対象の写真が指定されていません" } });
                 return;
             }
 
             int remainingCount;
+            int removedBrokenCount;
             int movedCount = TrashPhotosFromTargets(
-                new List<PhotoTrashTarget> { new PhotoTrashTarget { itemId = itemId, md5Hash = targetHash, childItemId = childItemId } },
-                out remainingCount
+                new List<PhotoTrashTarget>
+                {
+                    new PhotoTrashTarget
+                    {
+                        itemId = itemId,
+                        md5Hash = targetHash,
+                        childItemId = childItemId,
+                        photoIndex = photoIndex,
+                        photoId = photoId
+                    }
+                },
+                out remainingCount,
+                out removedBrokenCount
             );
 
             SendJson(res, new Dictionary<string, object>
             {
                 { "status", "ok" },
-                { "removed", movedCount > 0 },
+                { "removed", (movedCount + removedBrokenCount) > 0 },
                 { "movedToTrashCount", movedCount },
+                { "removedBrokenCount", removedBrokenCount },
                 { "remainingCount", remainingCount },
                 { "dataRevision", GetDataRevision() }
             });
@@ -4439,9 +4660,22 @@ class FurimaServerNative
                     int cid = obj["childItemId"] != null && obj["childItemId"].Type != JTokenType.Null
                         ? ParseIntSafe(obj["childItemId"], 0)
                         : 0;
-                    if (tid > 0 && !string.IsNullOrEmpty(hash))
+                    int pIdx = obj["photoIndex"] != null && obj["photoIndex"].Type != JTokenType.Null
+                        ? ParseIntSafe(obj["photoIndex"], -1)
+                        : -1;
+                    int pId = obj["photoId"] != null && obj["photoId"].Type != JTokenType.Null
+                        ? ParseIntSafe(obj["photoId"], 0)
+                        : 0;
+                    if (tid > 0 && (!string.IsNullOrEmpty(hash) || pIdx >= 0 || pId > 0))
                     {
-                        targets.Add(new PhotoTrashTarget { itemId = tid, md5Hash = hash, childItemId = cid });
+                        targets.Add(new PhotoTrashTarget
+                        {
+                            itemId = tid,
+                            md5Hash = hash,
+                            childItemId = cid,
+                            photoIndex = pIdx,
+                            photoId = pId
+                        });
                     }
                 }
             }
@@ -4454,12 +4688,14 @@ class FurimaServerNative
             }
 
             int dummyRemaining;
-            int movedCount = TrashPhotosFromTargets(targets, out dummyRemaining);
+            int removedBrokenCount;
+            int movedCount = TrashPhotosFromTargets(targets, out dummyRemaining, out removedBrokenCount);
 
             SendJson(res, new Dictionary<string, object>
             {
                 { "status", "ok" },
                 { "movedToTrashCount", movedCount },
+                { "removedBrokenCount", removedBrokenCount },
                 { "trashCount", SyncStore.GetPhotoTrashEntries().Count },
                 { "dataRevision", GetDataRevision() }
             });

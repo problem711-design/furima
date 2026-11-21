@@ -1,9 +1,14 @@
 package com.example.myapplication.ui.screens
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -39,9 +44,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -50,6 +57,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -60,10 +68,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import com.example.myapplication.data.server.SyncPhase
 import com.example.myapplication.ui.FleaMarketViewModel
 
 @Composable
@@ -352,10 +363,36 @@ fun PcSyncScreen(
             val pcAuthToken by viewModel.pcAuthToken.collectAsState()
             val isPcConnected by viewModel.isPcServerConnected.collectAsState()
             val missingOriginalItems by viewModel.missingOriginalItems.collectAsState()
+            val syncStatus by viewModel.syncStatusState.collectAsState()
 
             var inputUrl by remember(pcServerUrl) { mutableStateOf(pcServerUrl) }
             var inputToken by remember(pcAuthToken) { mutableStateOf(pcAuthToken) }
             var isSyncing by remember { mutableStateOf(false) }
+            val isSyncBusy = isSyncing ||
+                syncStatus.phase == SyncPhase.SYNCING_ITEMS ||
+                syncStatus.phase == SyncPhase.UPLOADING_PHOTOS ||
+                syncStatus.phase == SyncPhase.FETCHING_ITEMS
+
+            var hasNotificationPermission by remember {
+                mutableStateOf(
+                    Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.POST_NOTIFICATIONS
+                        ) == PackageManager.PERMISSION_GRANTED
+                )
+            }
+            val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                hasNotificationPermission = granted
+                val msg = if (granted) {
+                    "同期通知を許可しました。画面オフ中も通知バーで進捗を確認できます。"
+                } else {
+                    "通知はオフのままですが、バックグラウンド同期自体はそのまま利用できます。"
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
 
             val scanner = remember(context) {
                 val options = GmsBarcodeScannerOptions.Builder()
@@ -542,6 +579,99 @@ fun PcSyncScreen(
                         }
                     }
 
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotificationPermission) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "画面オフ中の同期進捗を通知バーに表示できます（未許可でも同期は実行されます）。",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                    lineHeight = 17.sp
+                                )
+                                Spacer(modifier = Modifier.height(8.dp))
+                                FilledTonalButton(
+                                    onClick = {
+                                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("request_sync_notification_permission_button")
+                                ) {
+                                    Text("通知を許可", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
+                    }
+
+                    if (syncStatus.phase != SyncPhase.IDLE) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = if (syncStatus.phase == SyncPhase.ERROR) {
+                                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                            }
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = syncStatus.detailMessage.ifBlank { "同期処理中..." },
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = if (syncStatus.phase == SyncPhase.ERROR) {
+                                            MaterialTheme.colorScheme.onErrorContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    if (syncStatus.phase == SyncPhase.SYNCING_ITEMS ||
+                                        syncStatus.phase == SyncPhase.UPLOADING_PHOTOS ||
+                                        syncStatus.phase == SyncPhase.FETCHING_ITEMS
+                                    ) {
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "${syncStatus.progressPercent.coerceIn(0, 100)}%",
+                                            fontSize = 11.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                if (syncStatus.phase == SyncPhase.SYNCING_ITEMS ||
+                                    syncStatus.phase == SyncPhase.UPLOADING_PHOTOS ||
+                                    syncStatus.phase == SyncPhase.FETCHING_ITEMS
+                                ) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { (syncStatus.progressPercent.coerceIn(0, 100)) / 100f },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                if (syncStatus.phase == SyncPhase.ERROR && !syncStatus.errorDetail.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = syncStatus.errorDetail.orEmpty(),
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(14.dp))
                     Row(
                         modifier = Modifier
@@ -557,7 +687,10 @@ fun PcSyncScreen(
                                     Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
                                 }
                             },
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .minimumInteractiveComponentSize()
+                                .testTag("test_pc_connection_button"),
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
                             Text("接続確認", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -585,13 +718,16 @@ fun PcSyncScreen(
                                     }
                                 }
                             },
-                            enabled = !isSyncing,
+                            enabled = !isSyncBusy,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4F46E5)),
-                            modifier = Modifier.weight(1.4f),
+                            modifier = Modifier
+                                .weight(1.4f)
+                                .minimumInteractiveComponentSize()
+                                .testTag("manual_sync_button"),
                             contentPadding = PaddingValues(vertical = 12.dp)
                         ) {
                             Text(
-                                if (isSyncing) "同期中..." else "差分同期＆容量解放",
+                                if (isSyncBusy) "同期中..." else "差分同期＆容量解放",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold,
                                 maxLines = 1

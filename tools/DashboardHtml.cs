@@ -203,7 +203,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 16)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 17)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -3163,40 +3163,76 @@ public static class DashboardHtml
             updateViewerSelectionBar(photos.length);
         }
 
+        function buildViewerTrashTargets(itemId, photos, selectedIndices) {
+            const normalTargets = [];
+            const brokenTargets = [];
+            const indices = Array.from(selectedIndices || []);
+            indices.forEach(idx => {
+                const p = photos && photos[idx];
+                if (!p) return;
+                if (p.md5Hash) {
+                    normalTargets.push({
+                        itemId: itemId,
+                        md5Hash: p.md5Hash,
+                        childItemId: p.childItemId || 0
+                    });
+                } else {
+                    brokenTargets.push({
+                        itemId: itemId,
+                        md5Hash: '',
+                        childItemId: p.childItemId || 0,
+                        photoIndex: idx,
+                        photoId: p.id || 0
+                    });
+                }
+            });
+            return {
+                targets: normalTargets.concat(brokenTargets),
+                normalCount: normalTargets.length,
+                brokenCount: brokenTargets.length
+            };
+        }
+
         async function trashSelectedViewerPhotos() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             const photos = (item && item.photos) ? item.photos : [];
             if (!item || selectedViewerPhotoIndices.size === 0) return;
 
-            const targets = [];
-            selectedViewerPhotoIndices.forEach(idx => {
-                const p = photos[idx];
-                if (p && p.md5Hash) {
-                    targets.push({
-                        itemId: item.id,
-                        md5Hash: p.md5Hash,
-                        childItemId: p.childItemId || 0
-                    });
-                }
-            });
-            if (targets.length === 0) {
-                showToast('MD5ハッシュ未確定の写真は移動できません（先に同期してください）');
+            const plan = buildViewerTrashTargets(item.id, photos, selectedViewerPhotoIndices);
+            if (plan.targets.length === 0) {
+                showToast('削除対象の写真が見つかりませんでした');
                 return;
             }
-            if (!confirm('選択した写真 ' + targets.length + '枚を写真ゴミ箱へ移動しますか？（写真ゴミ箱から復元可能です）')) return;
+            let confirmMsg = '';
+            if (plan.normalCount > 0 && plan.brokenCount > 0) {
+                confirmMsg = '選択した写真 ' + plan.targets.length + '枚を処理します。\n・通常写真 ' + plan.normalCount + '枚：写真ゴミ箱へ移動（復元可能）\n・実体がない壊れた写真参照（MD5未確定） ' + plan.brokenCount + '枚：リストから直接除去（ゴミ箱には入りません）';
+            } else if (plan.brokenCount > 0) {
+                confirmMsg = '実体がない壊れた写真参照（MD5未確定） ' + plan.brokenCount + '枚を商品リストから直接除去しますか？（写真ゴミ箱には入りません）';
+            } else {
+                confirmMsg = '選択した写真 ' + plan.normalCount + '枚を写真ゴミ箱へ移動しますか？（写真ゴミ箱から復元可能です）';
+            }
+            if (!confirm(confirmMsg)) return;
 
             try {
                 const res = await fetch('/api/photos/trash-batch', {
                     method: 'POST',
                     headers: getHeaders(),
-                    body: JSON.stringify({ targets })
+                    body: JSON.stringify({ targets: plan.targets })
                 });
                 const data = await res.json();
                 if (!res.ok || data.status === 'error') {
                     throw new Error(data.message || '削除に失敗しました');
                 }
                 selectedViewerPhotoIndices.clear();
-                showToast((data.movedToTrashCount || targets.length) + '枚の写真を写真ゴミ箱へ移動しました');
+                const movedCnt = data.movedToTrashCount || 0;
+                const brokenCnt = data.removedBrokenCount || 0;
+                if (movedCnt > 0 && brokenCnt > 0) {
+                    showToast(movedCnt + '枚を写真ゴミ箱へ移動し、壊れた写真参照 ' + brokenCnt + '件を除去しました');
+                } else if (brokenCnt > 0) {
+                    showToast('壊れた写真参照 ' + brokenCnt + '件をリストから除去しました');
+                } else {
+                    showToast((movedCnt || plan.normalCount) + '枚の写真を写真ゴミ箱へ移動しました');
+                }
                 await fetchItems();
                 refreshPhotoTrashCount();
                 if (currentViewerItemId === item.id) {
@@ -3411,29 +3447,39 @@ public static class DashboardHtml
             const item = allItems.find(i => i.id === currentViewerItemId);
             if (!item || !lightboxPhotos || !lightboxPhotos[lightboxIndex]) return;
             const photo = lightboxPhotos[lightboxIndex];
-            if (!photo.md5Hash) {
-                showToast('MD5ハッシュ未確定の写真は移動できません');
-                return;
-            }
-            if (!confirm('表示中のこの写真を写真ゴミ箱へ移動しますか？（写真ゴミ箱から復元可能です）')) return;
+            const isBroken = !photo.md5Hash;
+            const confirmMsg = isBroken
+                ? '表示中の実体がない壊れた写真参照（MD5未確定）を商品リストから直接除去しますか？（写真ゴミ箱には入りません）'
+                : '表示中のこの写真を写真ゴミ箱へ移動しますか？（写真ゴミ箱から復元可能です）';
+            if (!confirm(confirmMsg)) return;
+
+            const targetPayload = isBroken
+                ? {
+                    itemId: item.id,
+                    md5Hash: '',
+                    childItemId: photo.childItemId || 0,
+                    photoIndex: lightboxIndex,
+                    photoId: photo.id || 0
+                }
+                : {
+                    itemId: item.id,
+                    md5Hash: photo.md5Hash,
+                    childItemId: photo.childItemId || 0
+                };
 
             try {
                 const res = await fetch('/api/photos/trash-batch', {
                     method: 'POST',
                     headers: getHeaders(),
                     body: JSON.stringify({
-                        targets: [{
-                            itemId: item.id,
-                            md5Hash: photo.md5Hash,
-                            childItemId: photo.childItemId || 0
-                        }]
+                        targets: [targetPayload]
                     })
                 });
                 const data = await res.json();
                 if (!res.ok || data.status === 'error') {
                     throw new Error(data.message || '移動に失敗しました');
                 }
-                showToast('写真を写真ゴミ箱へ移動しました');
+                showToast(isBroken ? '壊れた写真参照をリストから除去しました' : '写真を写真ゴミ箱へ移動しました');
                 selectedViewerPhotoIndices.clear();
                 await fetchItems();
                 refreshPhotoTrashCount();

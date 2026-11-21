@@ -146,4 +146,13 @@ interface ItemDao {
 
     @Query("UPDATE photos SET thumbnailPath = :thumbPath, isOriginalDeleted = :isOriginalDeleted, filePath = :newFilePath WHERE id = :photoId")
     suspend fun updatePhotoRepairedThumbnail(photoId: Int, thumbPath: String, isOriginalDeleted: Boolean, newFilePath: String)
+
+    @Query("SELECT * FROM photos WHERE md5Hash = ''")
+    suspend fun getBlankMd5Photos(): List<PhotoEntity>
+
+    @Query("SELECT COUNT(*) FROM photos WHERE isPcSynced = 0 AND isOriginalDeleted = 0")
+    suspend fun getUnsyncedPhotosCount(): Int
+
+    @Query("SELECT * FROM photos WHERE filePath = :path OR thumbnailPath = :path")
+    suspend fun getPhotosReferencingPath(path: String): List<PhotoEntity>
 }

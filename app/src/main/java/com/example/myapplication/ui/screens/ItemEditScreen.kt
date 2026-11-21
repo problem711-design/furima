@@ -71,6 +71,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -270,18 +271,99 @@ fun ItemEditScreen(
         isInitialized = true
     }
 
-    // Build 13 (13-5): 同期が完了したら写真エンティティだけを再読込し、
-    // 「Museに送る」対象判定 (md5Hash / isPcSynced) を画面を開き直さずに最新化する。
-    // 編集フィールドや existingFilePaths / newImageUris には触れない。
+    DisposableEffect(itemId) {
+        if (itemId != 0) {
+            viewModel.setItemEditingActive(itemId, true)
+        }
+        onDispose {
+            if (itemId != 0) {
+                viewModel.setItemEditingActive(itemId, false)
+            }
+        }
+    }
+
+    // Build 13 (13-5) ＆ Build 17: 同期完了時に写真エンティティと実体パスを再照合し、
+    // Step 3 で原本からサムネイルパスへ切り替わった場合も画面側リストを追従させる。
     LaunchedEffect(lastSyncSuccessAt) {
         if (itemId != 0 && lastSyncSuccessAt != null && isInitialized) {
             val itemWithPhotos = viewModel.getItemById(itemId)
             if (itemWithPhotos != null) {
-                itemWithPhotos.photos.forEach { photo ->
+                loadedItem = itemWithPhotos.item
+                val reloadedPhotos = itemWithPhotos.photos
+                val photosById = reloadedPhotos.associateBy { it.id }
+
+                fun resolveMatchingPhoto(oldPath: String): PhotoEntity? {
+                    val prevEntity = loadedPhotosByPath[oldPath]
+                    if (prevEntity != null) {
+                        photosById[prevEntity.id]?.let { return it }
+                        if (prevEntity.md5Hash.isNotBlank()) {
+                            reloadedPhotos.firstOrNull { it.md5Hash == prevEntity.md5Hash }?.let { return it }
+                        }
+                    }
+                    val oldName = File(oldPath).name
+                    val thumbName = "THUMB_$oldName"
+                    return reloadedPhotos.firstOrNull {
+                        it.filePath == oldPath ||
+                            it.thumbnailPath == oldPath ||
+                            File(it.filePath).name == thumbName ||
+                            (it.thumbnailPath != null && File(it.thumbnailPath).name == oldName)
+                    }
+                }
+
+                val pathReplacements = mutableMapOf<String, String>()
+                for (i in existingFilePaths.indices) {
+                    val oldPath = existingFilePaths[i]
+                    val matched = resolveMatchingPhoto(oldPath) ?: continue
+                    val displayPath = matched.displayFile?.absolutePath ?: matched.filePath
+                    val targetPath = if (File(matched.filePath).exists()) matched.filePath else displayPath
+                    if (targetPath.isNotBlank()) {
+                        loadedPhotosByPath[targetPath] = matched
+                        if (targetPath != oldPath) {
+                            existingFilePaths[i] = targetPath
+                            pathReplacements[oldPath] = targetPath
+                        }
+                    }
+                }
+
+                reloadedPhotos.forEach { photo ->
                     val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
                     val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
                     if (targetPath.isNotBlank()) {
                         loadedPhotosByPath[targetPath] = photo
+                    }
+                }
+
+                initialExistingFilePaths = initialExistingFilePaths.map { initPath ->
+                    pathReplacements[initPath] ?: run {
+                        val matched = resolveMatchingPhoto(initPath)
+                        val displayPath = matched?.displayFile?.absolutePath ?: matched?.filePath
+                        val targetPath = if (matched != null && File(matched.filePath).exists()) matched.filePath else displayPath
+                        if (!targetPath.isNullOrBlank()) targetPath else initPath
+                    }
+                }
+
+                if (pathReplacements.isNotEmpty()) {
+                    for (idx in selectedPhotoKeys.indices) {
+                        val key = selectedPhotoKeys[idx]
+                        if (key.startsWith("path:")) {
+                            val oldP = key.removePrefix("path:")
+                            val newP = pathReplacements[oldP]
+                            if (newP != null) {
+                                selectedPhotoKeys[idx] = "path:$newP"
+                            }
+                        }
+                    }
+                    val deletedPreview = lastDeletedPreviewPhoto
+                    if (deletedPreview is DeletedEditPhoto.Existing) {
+                        val newP = pathReplacements[deletedPreview.path]
+                        if (newP != null) {
+                            lastDeletedPreviewPhoto = deletedPreview.copy(path = newP)
+                        }
+                    }
+                    pathReplacements.keys.forEach { oldP ->
+                        if (!existingFilePaths.contains(oldP)) {
+                            loadedPhotosByPath.remove(oldP)
+                        }
                     }
                 }
             }
@@ -1413,6 +1495,13 @@ fun ItemEditScreen(
                             useCustomSettings = useCustomSettings,
                             imageUris = newImageUris.toList(),
                             existingFilePaths = existingFilePaths.toList(),
+                            onSkippedInvalidPhotos = { skippedCount ->
+                                Toast.makeText(
+                                    context,
+                                    "読み込めない空の写真 ${skippedCount}枚を除外して保存しました",
+                                    Toast.LENGTH_LONG
+                                ).show()
+                            },
                             onError = { msg ->
                                 isSaving = false
                                 Toast.makeText(context, "保存エラー: $msg", Toast.LENGTH_LONG).show()

@@ -2,6 +2,8 @@ package com.example.myapplication.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
+import androidx.room.withTransaction
 import com.example.myapplication.data.local.AppDatabase
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemDao
@@ -14,8 +16,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 enum class BatchPriceMode {
     NONE,
@@ -41,10 +46,90 @@ class FleaMarketRepository(private val context: Context) {
     private val photoStorageManager = PhotoStorageManager(context)
     private val defaultSettingsManager = DefaultSettingsManager(context)
 
+    // DB読み書きの短いクリティカルセクション専用の排他ロック (画像I/O・ネットワーク通信では保持しない)
+    private val dbMutationMutex = Mutex()
+    private val editingItemCounts = ConcurrentHashMap<Int, Int>()
+
     val defaultSettings: StateFlow<DefaultSettings> = defaultSettingsManager.settings
 
     private val syncTombstonePrefs =
         context.getSharedPreferences("flea_market_sync_tombstones", Context.MODE_PRIVATE)
+
+    fun setItemEditingActive(itemId: Int, active: Boolean) {
+        if (itemId <= 0) return
+        if (active) {
+            editingItemCounts.compute(itemId) { _, count -> (count ?: 0) + 1 }
+        } else {
+            editingItemCounts.computeIfPresent(itemId) { _, count ->
+                val next = count - 1
+                if (next > 0) next else null
+            }
+        }
+    }
+
+    fun isItemEditingActive(itemId: Int): Boolean = (editingItemCounts[itemId] ?: 0) > 0
+
+    suspend fun <T> withDbMutationLock(block: suspend () -> T): T = dbMutationMutex.withLock {
+        block()
+    }
+
+    suspend fun <T> withDbMutationTransaction(block: suspend () -> T): T = dbMutationMutex.withLock {
+        db.withTransaction {
+            block()
+        }
+    }
+
+    suspend fun isFilePathProtectedByEditingOrDirty(filePath: String): Boolean {
+        if (filePath.isBlank()) return false
+        val refs = dao.getPhotosReferencingPath(filePath)
+        for (ref in refs) {
+            if (isItemEditingActive(ref.itemId)) return true
+            val item = dao.getItemWithPhotosById(ref.itemId)?.item
+            if (item == null || item.isDirty || item.deletedAt != null) return true
+        }
+        return false
+    }
+
+    /**
+     * ローカル DB に残存する「md5Hash が空かつ実ファイルもサムネイルも存在しない完全ゴースト」を安全に除去する。
+     * 実体ファイルが存在する写真には絶対に触れない。
+     */
+    suspend fun cleanupGhostBlankMd5Photos(): Int = withContext(Dispatchers.IO) {
+        withDbMutationTransaction {
+            val candidates = dao.getBlankMd5Photos()
+            if (candidates.isEmpty()) return@withDbMutationTransaction 0
+
+            val ghostIds = mutableListOf<Int>()
+            val affectedItemIds = mutableSetOf<Int>()
+            for (photo in candidates) {
+                if (photo.md5Hash.isNotBlank()) continue
+                if (isItemEditingActive(photo.itemId)) continue
+                val origExists = photo.filePath.isNotBlank() &&
+                    File(photo.filePath).let { it.exists() && it.isFile && it.length() > 0L }
+                val thumbExists = !photo.thumbnailPath.isNullOrBlank() &&
+                    File(photo.thumbnailPath).let { it.exists() && it.isFile && it.length() > 0L }
+                if (!origExists && !thumbExists) {
+                    ghostIds.add(photo.id)
+                    affectedItemIds.add(photo.itemId)
+                }
+            }
+            if (ghostIds.isEmpty()) return@withDbMutationTransaction 0
+
+            dao.deletePhotosByIds(ghostIds)
+            val now = System.currentTimeMillis()
+            for (affectedItemId in affectedItemIds) {
+                val remaining = dao.getPhotosByItemId(affectedItemId)
+                if (remaining.isNotEmpty()) {
+                    val reindexed = remaining.mapIndexed { idx, p ->
+                        p.copy(displayOrder = idx, updatedAt = now)
+                    }
+                    dao.updatePhotos(reindexed)
+                }
+            }
+            Log.w("PHOTO_INTEGRITY", "Cleaned up ${ghostIds.size} orphan blank-MD5 ghost photo(s) across ${affectedItemIds.size} item(s)")
+            ghostIds.size
+        }
+    }
 
     fun addPendingDeletedUuid(uuid: String) {
         val clean = uuid.trim()
@@ -185,6 +270,22 @@ class FleaMarketRepository(private val context: Context) {
         return dao.getItemWithPhotosById(id)
     }
 
+    private sealed class PreparedSavePhoto {
+        data class ExistingRef(
+            val matchedPhotoId: Int,
+            val origLookupPath: String,
+            val resolvedMd5: String,
+            val generatedThumbPath: String?,
+            val fallbackEntity: PhotoEntity
+        ) : PreparedSavePhoto()
+
+        data class NewPhoto(
+            val filePath: String,
+            val thumbnailPath: String?,
+            val md5Hash: String
+        ) : PreparedSavePhoto()
+    }
+
     suspend fun saveItem(
         id: Int = 0,
         title: String,
@@ -197,88 +298,85 @@ class FleaMarketRepository(private val context: Context) {
         expenseCost: Int,
         useCustomSettings: Boolean,
         imageUris: List<Uri>,
-        existingFilePaths: List<String> = emptyList()
+        existingFilePaths: List<String> = emptyList(),
+        onSkippedInvalidPhotos: (Int) -> Unit = {}
     ): Long = withContext(Dispatchers.IO) {
-        val existingItem = if (id != 0) dao.getItemWithPhotosById(id)?.item else null
-        val now = System.currentTimeMillis()
-        val soldAt = if (isSoldFamilyStatus(status)) {
-            existingItem?.soldAt ?: now
-        } else {
-            null
-        }
-        val preservedUuid = existingItem?.syncUuid?.takeIf { it.isNotBlank() }
-            ?: java.util.UUID.randomUUID().toString()
-
-        val item = ItemEntity(
-            id = id,
-            title = title,
-            description = description,
-            status = status,
-            price = price,
-            soldPrice = soldPrice,
-            shippingCost = shippingCost,
-            feeRatePercent = feeRatePercent,
-            expenseCost = expenseCost,
-            useCustomSettings = useCustomSettings,
-            isShared = existingItem?.isShared ?: false,
-            mergedParentId = existingItem?.mergedParentId,
-            mergedChildCount = existingItem?.mergedChildCount ?: 0,
-            mergedChildTitles = existingItem?.mergedChildTitles ?: "",
-            originalTotalBundlePrice = existingItem?.originalTotalBundlePrice ?: 0,
-            discountAmount = existingItem?.discountAmount ?: 0,
-            bundleLevel = existingItem?.bundleLevel ?: 0,
-            createdAt = existingItem?.createdAt ?: now,
-            updatedAt = now,
-            soldAt = soldAt,
-            syncUuid = preservedUuid,
-            deletedAt = existingItem?.deletedAt,
-            isDirty = true
-        )
-
-        val itemId = if (id == 0) {
-            dao.insertItem(item).toInt()
-        } else {
-            dao.updateItem(item)
-            id
-        }
-
+        // 1. 重いファイルI/O（画像コピー・リサイズ・サムネ生成・MD5計算）を DB トランザクションの前に完了させる
         val currentSettings = defaultSettings.value
-        val existingPhotos = if (id != 0) dao.getPhotosByItemId(itemId) else emptyList()
-        val existingByFilePath = existingPhotos.filter { it.filePath.isNotBlank() }.associateBy { it.filePath }
-        val existingByThumbPath = existingPhotos.filter { !it.thumbnailPath.isNullOrBlank() }.associateBy { it.thumbnailPath!! }
+        val existingPhotosSnapshot = if (id != 0) dao.getPhotosByItemId(id) else emptyList()
+        val snapByFilePath = existingPhotosSnapshot.filter { it.filePath.isNotBlank() }.associateBy { it.filePath }
+        val snapByThumbPath = existingPhotosSnapshot.filter { !it.thumbnailPath.isNullOrBlank() }.associateBy { it.thumbnailPath!! }
+        val snapByThumbName = existingPhotosSnapshot.filter { !it.thumbnailPath.isNullOrBlank() }
+            .associateBy { File(it.thumbnailPath!!).name }
 
-        val newPhotoEntities = mutableListOf<PhotoEntity>()
-        var orderIndex = 0
+        val preparedPhotos = mutableListOf<PreparedSavePhoto>()
+        var skippedInvalidCount = 0
 
-        // 既存写真の保持
         for (path in existingFilePaths) {
-            val existing = existingByFilePath[path] ?: existingByThumbPath[path]
-            val md5 = if (existing != null && existing.md5Hash.isNotBlank()) {
-                existing.md5Hash
-            } else {
-                photoStorageManager.calculateMd5(File(path))
+            if (path.isBlank()) {
+                skippedInvalidCount++
+                continue
             }
+            val thumbFallbackName = "THUMB_${File(path).name}"
+            val existing = snapByFilePath[path] ?: snapByThumbPath[path] ?: snapByThumbName[thumbFallbackName]
             if (existing != null) {
-                newPhotoEntities.add(existing.copy(displayOrder = orderIndex++, md5Hash = md5, updatedAt = System.currentTimeMillis()))
+                var resolvedMd5 = existing.md5Hash.trim()
+                val readableFile = existing.displayFile
+                    ?: File(path).takeIf { it.exists() && it.isFile && it.length() > 0L }
+                if (resolvedMd5.isBlank() && readableFile != null) {
+                    resolvedMd5 = photoStorageManager.calculateMd5(readableFile)
+                }
+                if (resolvedMd5.isBlank()) {
+                    Log.w("PHOTO_INTEGRITY", "saveItem: skipped existing photo with blank MD5 & missing file (id=${existing.id}, path=$path)")
+                    skippedInvalidCount++
+                    continue
+                }
+                val generatedThumb = if (existing.thumbnailPath.isNullOrBlank() && readableFile != null) {
+                    photoStorageManager.createThumbnail(
+                        readableFile,
+                        currentSettings.thumbnailMaxDimension,
+                        currentSettings.thumbnailQuality
+                    )
+                } else {
+                    null
+                }
+                preparedPhotos.add(
+                    PreparedSavePhoto.ExistingRef(
+                        matchedPhotoId = existing.id,
+                        origLookupPath = path,
+                        resolvedMd5 = resolvedMd5,
+                        generatedThumbPath = generatedThumb,
+                        fallbackEntity = existing
+                    )
+                )
             } else {
+                val file = File(path)
+                if (!file.exists() || !file.isFile || file.length() <= 0L) {
+                    Log.w("PHOTO_INTEGRITY", "saveItem: skipped missing/empty existingFilePath=$path")
+                    skippedInvalidCount++
+                    continue
+                }
+                val md5 = photoStorageManager.calculateMd5(file)
+                if (md5.isBlank()) {
+                    Log.w("PHOTO_INTEGRITY", "saveItem: skipped existingFilePath with blank MD5=$path")
+                    skippedInvalidCount++
+                    continue
+                }
                 val thumb = photoStorageManager.createThumbnail(
-                    File(path),
+                    file,
                     currentSettings.thumbnailMaxDimension,
                     currentSettings.thumbnailQuality
                 )
-                newPhotoEntities.add(
-                    PhotoEntity(
-                        itemId = itemId,
+                preparedPhotos.add(
+                    PreparedSavePhoto.NewPhoto(
                         filePath = path,
                         thumbnailPath = thumb,
-                        md5Hash = md5,
-                        displayOrder = orderIndex++
+                        md5Hash = md5
                     )
                 )
             }
         }
 
-        // 新規写真の保存
         for (uri in imageUris) {
             val savedResult = photoStorageManager.savePhotoFromUri(
                 title,
@@ -287,157 +385,294 @@ class FleaMarketRepository(private val context: Context) {
                 thumbMaxDim = currentSettings.thumbnailMaxDimension
             )
             if (savedResult != null) {
-                val md5 = photoStorageManager.calculateMd5(File(savedResult.first))
-                newPhotoEntities.add(
-                    PhotoEntity(
-                        itemId = itemId,
+                val origFile = File(savedResult.first)
+                val md5 = if (origFile.exists() && origFile.isFile && origFile.length() > 0L) {
+                    photoStorageManager.calculateMd5(origFile)
+                } else {
+                    ""
+                }
+                if (md5.isBlank()) {
+                    Log.w("PHOTO_INTEGRITY", "saveItem: URI save yielded empty/unreadable file, discarding ${savedResult.first}")
+                    try { origFile.delete() } catch (_: Exception) {}
+                    try { savedResult.second?.let { File(it).delete() } } catch (_: Exception) {}
+                    skippedInvalidCount++
+                    continue
+                }
+                preparedPhotos.add(
+                    PreparedSavePhoto.NewPhoto(
                         filePath = savedResult.first,
                         thumbnailPath = savedResult.second,
-                        md5Hash = md5,
-                        displayOrder = orderIndex++
+                        md5Hash = md5
                     )
                 )
+            } else {
+                skippedInvalidCount++
+                Log.w("PHOTO_INTEGRITY", "saveItem: savePhotoFromUri returned null for uri=$uri")
             }
         }
 
-        if (id != 0 && existingPhotos.isNotEmpty()) {
-            val keptPaths = newPhotoEntities.flatMap {
-                listOfNotNull(
-                    it.filePath.takeIf { p -> p.isNotBlank() },
-                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
-                )
-            }.toSet()
-            val removedPhotos = existingPhotos.filter { old ->
-                (old.filePath.isNotBlank() && !keptPaths.contains(old.filePath)) ||
-                    (!old.thumbnailPath.isNullOrBlank() && !keptPaths.contains(old.thumbnailPath))
+        // 2. DB 読み書きは dbMutationMutex + Room Transaction で原子的に実行
+        val filesToDeleteAfterTx = mutableListOf<File>()
+        val removedMd5sToRecord = mutableListOf<String>()
+        val savedMd5sToRelease = mutableListOf<String>()
+        lateinit var preservedUuid: String
+
+        val resolvedItemId = withDbMutationTransaction {
+            val existingItem = if (id != 0) dao.getItemWithPhotosById(id)?.item else null
+            val now = System.currentTimeMillis()
+            val soldAt = if (isSoldFamilyStatus(status)) {
+                existingItem?.soldAt ?: now
+            } else {
+                null
             }
-            if (removedPhotos.isNotEmpty()) {
-                // レビュー 24-7: 編集保存で外れた写真も未Push削除として記録する (deletePhotosByIds と同経路の扱い)
-                for (removed in removedPhotos) {
-                    if (removed.md5Hash.isNotBlank()) {
-                        recordPendingPhotoDeletion(preservedUuid, removed.md5Hash)
+            preservedUuid = existingItem?.syncUuid?.takeIf { it.isNotBlank() }
+                ?: java.util.UUID.randomUUID().toString()
+
+            val item = ItemEntity(
+                id = id,
+                title = title,
+                description = description,
+                status = status,
+                price = price,
+                soldPrice = soldPrice,
+                shippingCost = shippingCost,
+                feeRatePercent = feeRatePercent,
+                expenseCost = expenseCost,
+                useCustomSettings = useCustomSettings,
+                isShared = existingItem?.isShared ?: false,
+                mergedParentId = existingItem?.mergedParentId,
+                mergedChildCount = existingItem?.mergedChildCount ?: 0,
+                mergedChildTitles = existingItem?.mergedChildTitles ?: "",
+                originalTotalBundlePrice = existingItem?.originalTotalBundlePrice ?: 0,
+                discountAmount = existingItem?.discountAmount ?: 0,
+                bundleLevel = existingItem?.bundleLevel ?: 0,
+                createdAt = existingItem?.createdAt ?: now,
+                updatedAt = now,
+                soldAt = soldAt,
+                syncUuid = preservedUuid,
+                deletedAt = existingItem?.deletedAt,
+                isDirty = true
+            )
+
+            val itemId = if (id == 0) {
+                dao.insertItem(item).toInt()
+            } else {
+                dao.updateItem(item)
+                id
+            }
+
+            val latestExistingPhotos = if (id != 0) dao.getPhotosByItemId(itemId) else emptyList()
+            val latestById = latestExistingPhotos.associateBy { it.id }
+            val latestByFilePath = latestExistingPhotos.filter { it.filePath.isNotBlank() }.associateBy { it.filePath }
+            val latestByThumbPath = latestExistingPhotos.filter { !it.thumbnailPath.isNullOrBlank() }.associateBy { it.thumbnailPath!! }
+            val latestByThumbName = latestExistingPhotos.filter { !it.thumbnailPath.isNullOrBlank() }
+                .associateBy { File(it.thumbnailPath!!).name }
+
+            val newPhotoEntities = mutableListOf<PhotoEntity>()
+            var orderIndex = 0
+            for (prepared in preparedPhotos) {
+                when (prepared) {
+                    is PreparedSavePhoto.ExistingRef -> {
+                        val thumbFallbackName = "THUMB_${File(prepared.origLookupPath).name}"
+                        val latest = latestById[prepared.matchedPhotoId]
+                            ?: latestByFilePath[prepared.origLookupPath]
+                            ?: latestByThumbPath[prepared.origLookupPath]
+                            ?: latestByThumbName[thumbFallbackName]
+                            ?: prepared.fallbackEntity
+                        val finalMd5 = latest.md5Hash.trim().ifBlank { prepared.resolvedMd5 }
+                        val finalThumb = latest.thumbnailPath?.takeIf { it.isNotBlank() } ?: prepared.generatedThumbPath
+                        newPhotoEntities.add(
+                            latest.copy(
+                                itemId = itemId,
+                                thumbnailPath = finalThumb,
+                                md5Hash = finalMd5,
+                                displayOrder = orderIndex++,
+                                updatedAt = now
+                            )
+                        )
+                    }
+                    is PreparedSavePhoto.NewPhoto -> {
+                        newPhotoEntities.add(
+                            PhotoEntity(
+                                itemId = itemId,
+                                filePath = prepared.filePath,
+                                thumbnailPath = prepared.thumbnailPath,
+                                md5Hash = prepared.md5Hash,
+                                displayOrder = orderIndex++,
+                                updatedAt = now
+                            )
+                        )
                     }
                 }
-                val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+            }
+
+            if (id != 0 && latestExistingPhotos.isNotEmpty()) {
+                val keptIds = newPhotoEntities.mapNotNull { it.id.takeIf { pid -> pid != 0 } }.toSet()
+                val keptPaths = newPhotoEntities.flatMap {
                     listOfNotNull(
                         it.filePath.takeIf { p -> p.isNotBlank() },
                         it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
                     )
                 }.toSet()
-                for (removed in removedPhotos) {
-                    if (removed.filePath.isNotBlank() &&
-                        !keptPaths.contains(removed.filePath) &&
-                        !otherReferencedPaths.contains(removed.filePath)
-                    ) {
-                        try {
-                            File(removed.filePath).delete()
-                        } catch (_: Exception) {
+                val removedPhotos = latestExistingPhotos.filter { old ->
+                    !keptIds.contains(old.id) && (
+                        (old.filePath.isNotBlank() && !keptPaths.contains(old.filePath)) ||
+                            (!old.thumbnailPath.isNullOrBlank() && !keptPaths.contains(old.thumbnailPath))
+                        )
+                }
+                if (removedPhotos.isNotEmpty()) {
+                    for (removed in removedPhotos) {
+                        if (removed.md5Hash.isNotBlank()) {
+                            removedMd5sToRecord.add(removed.md5Hash)
                         }
                     }
-                    if (!removed.thumbnailPath.isNullOrBlank() &&
-                        !keptPaths.contains(removed.thumbnailPath) &&
-                        !otherReferencedPaths.contains(removed.thumbnailPath)
-                    ) {
-                        try {
-                            File(removed.thumbnailPath).delete()
-                        } catch (_: Exception) {
+                    val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+                        listOfNotNull(
+                            it.filePath.takeIf { p -> p.isNotBlank() },
+                            it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                        )
+                    }.toSet()
+                    for (removed in removedPhotos) {
+                        if (removed.filePath.isNotBlank() &&
+                            !keptPaths.contains(removed.filePath) &&
+                            !otherReferencedPaths.contains(removed.filePath)
+                        ) {
+                            filesToDeleteAfterTx.add(File(removed.filePath))
+                        }
+                        if (!removed.thumbnailPath.isNullOrBlank() &&
+                            !keptPaths.contains(removed.thumbnailPath) &&
+                            !otherReferencedPaths.contains(removed.thumbnailPath)
+                        ) {
+                            filesToDeleteAfterTx.add(File(removed.thumbnailPath))
                         }
                     }
                 }
             }
+
+            dao.deletePhotosByItemId(itemId)
+            if (newPhotoEntities.isNotEmpty()) {
+                dao.insertPhotos(newPhotoEntities)
+            }
+            for (savedPhoto in newPhotoEntities) {
+                if (savedPhoto.md5Hash.isNotBlank()) {
+                    savedMd5sToRelease.add(savedPhoto.md5Hash)
+                }
+            }
+            itemId
         }
 
-        dao.deletePhotosByItemId(itemId)
-        dao.insertPhotos(newPhotoEntities)
-
-        // レビュー 24-7 補正: 保存後の写真一覧に同一 MD5 があれば、未Push削除の記録を解除する
-        for (savedPhoto in newPhotoEntities) {
-            if (savedPhoto.md5Hash.isNotBlank()) {
-                releasePendingPhotoDeletion(preservedUuid, savedPhoto.md5Hash)
+        // 3. トランザクション確定後の tombstone 更新・未参照ファイル削除・異常スキップ通知
+        for (md5 in removedMd5sToRecord) {
+            recordPendingPhotoDeletion(preservedUuid, md5)
+        }
+        for (md5 in savedMd5sToRelease) {
+            releasePendingPhotoDeletion(preservedUuid, md5)
+        }
+        for (f in filesToDeleteAfterTx) {
+            try {
+                if (f.exists()) f.delete()
+            } catch (_: Exception) {
             }
         }
+        if (skippedInvalidCount > 0) {
+            onSkippedInvalidPhotos(skippedInvalidCount)
+        }
 
-        return@withContext itemId.toLong()
+        return@withContext resolvedItemId.toLong()
     }
 
     suspend fun removePhotoFromItem(itemId: Int, photoId: Int): Boolean {
-        val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: return false
-        val targetPhoto = itemWithPhotos.photos.firstOrNull { it.id == photoId } ?: return false
-        val remaining = itemWithPhotos.photos.filter { it.id != photoId }
+        val filesToDelete = mutableListOf<File>()
+        var targetMd5 = ""
+        var itemUuid = ""
+        val removed = withDbMutationTransaction {
+            val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: return@withDbMutationTransaction false
+            val targetPhoto = itemWithPhotos.photos.firstOrNull { it.id == photoId } ?: return@withDbMutationTransaction false
+            val remaining = itemWithPhotos.photos.filter { it.id != photoId }
 
-        val keptPaths = remaining.flatMap {
-            listOfNotNull(
-                it.filePath.takeIf { p -> p.isNotBlank() },
-                it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
-            )
-        }.toSet()
-        val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
-            listOfNotNull(
-                it.filePath.takeIf { p -> p.isNotBlank() },
-                it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
-            )
-        }.toSet()
+            val keptPaths = remaining.flatMap {
+                listOfNotNull(
+                    it.filePath.takeIf { p -> p.isNotBlank() },
+                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                )
+            }.toSet()
+            val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+                listOfNotNull(
+                    it.filePath.takeIf { p -> p.isNotBlank() },
+                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                )
+            }.toSet()
 
-        if (targetPhoto.filePath.isNotBlank() &&
-            !keptPaths.contains(targetPhoto.filePath) &&
-            !otherReferencedPaths.contains(targetPhoto.filePath)
-        ) {
-            try {
-                File(targetPhoto.filePath).delete()
-            } catch (_: Exception) {
+            if (targetPhoto.filePath.isNotBlank() &&
+                !keptPaths.contains(targetPhoto.filePath) &&
+                !otherReferencedPaths.contains(targetPhoto.filePath)
+            ) {
+                filesToDelete.add(File(targetPhoto.filePath))
+            }
+            if (!targetPhoto.thumbnailPath.isNullOrBlank() &&
+                !keptPaths.contains(targetPhoto.thumbnailPath) &&
+                !otherReferencedPaths.contains(targetPhoto.thumbnailPath)
+            ) {
+                filesToDelete.add(File(targetPhoto.thumbnailPath))
+            }
+
+            targetMd5 = targetPhoto.md5Hash
+            itemUuid = itemWithPhotos.item.syncUuid
+            val now = System.currentTimeMillis()
+            val reindexed = remaining.mapIndexed { idx, photo ->
+                photo.copy(displayOrder = idx, updatedAt = now)
+            }
+            dao.deletePhotosByItemId(itemId)
+            if (reindexed.isNotEmpty()) {
+                dao.insertPhotos(reindexed)
+            }
+            dao.updateItem(itemWithPhotos.item.copy(updatedAt = now, isDirty = true))
+            true
+        }
+        if (removed) {
+            if (targetMd5.isNotBlank()) {
+                recordPendingPhotoDeletion(itemUuid, targetMd5)
+            }
+            for (f in filesToDelete) {
+                try {
+                    if (f.exists()) f.delete()
+                } catch (_: Exception) {
+                }
             }
         }
-        if (!targetPhoto.thumbnailPath.isNullOrBlank() &&
-            !keptPaths.contains(targetPhoto.thumbnailPath) &&
-            !otherReferencedPaths.contains(targetPhoto.thumbnailPath)
-        ) {
-            try {
-                File(targetPhoto.thumbnailPath).delete()
-            } catch (_: Exception) {
-            }
-        }
-
-        // レビュー 25-1: 詳細画面からの単体削除でも未Push削除を記録する (他の削除経路と同一)
-        if (targetPhoto.md5Hash.isNotBlank()) {
-            recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, targetPhoto.md5Hash)
-        }
-        val now = System.currentTimeMillis()
-        val reindexed = remaining.mapIndexed { idx, photo ->
-            photo.copy(displayOrder = idx, updatedAt = now)
-        }
-        dao.deletePhotosByItemId(itemId)
-        if (reindexed.isNotEmpty()) {
-            dao.insertPhotos(reindexed)
-        }
-        dao.updateItem(itemWithPhotos.item.copy(updatedAt = now, isDirty = true))
-        return true
+        return removed
     }
 
     suspend fun updateItemStatus(item: ItemEntity, newStatus: String) {
-        val now = System.currentTimeMillis()
-        // レビュー §30.4-3: 売却系の出入りを他経路 (保存・一括編集) と揃える。
-        // 売却系から外れたら売却価格・日時を消し、入った場合は未設定の売却価格を出品価格で補う。
-        val inFamily = isSoldFamilyStatus(newStatus)
-        val soldAt = if (inFamily) (item.soldAt ?: now) else null
-        val soldPrice = when {
-            !inFamily -> 0
-            item.soldPrice > 0 -> item.soldPrice
-            else -> item.price
+        withDbMutationTransaction {
+            val fresh = dao.getItemWithPhotosById(item.id)?.item ?: item
+            val now = System.currentTimeMillis()
+            // レビュー §30.4-3: 売却系の出入りを他経路 (保存・一括編集) と揃える。
+            // 売却系から外れたら売却価格・日時を消し、入った場合は未設定の売却価格を出品価格で補う。
+            val inFamily = isSoldFamilyStatus(newStatus)
+            val soldAt = if (inFamily) (fresh.soldAt ?: now) else null
+            val soldPrice = when {
+                !inFamily -> 0
+                fresh.soldPrice > 0 -> fresh.soldPrice
+                else -> fresh.price
+            }
+            val updated = fresh.copy(
+                status = newStatus,
+                soldPrice = soldPrice,
+                soldAt = soldAt,
+                updatedAt = now,
+                isDirty = true
+            )
+            dao.updateItem(updated)
         }
-        val updated = item.copy(
-            status = newStatus,
-            soldPrice = soldPrice,
-            soldAt = soldAt,
-            updatedAt = now,
-            isDirty = true
-        )
-        dao.updateItem(updated)
     }
 
     suspend fun markItemShared(itemId: Int) {
-        val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: return
-        val updated = itemWithPhotos.item.copy(isShared = true)
-        dao.updateItem(updated)
+        withDbMutationLock {
+            val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: return@withDbMutationLock
+            val updated = itemWithPhotos.item.copy(isShared = true)
+            dao.updateItem(updated)
+        }
     }
 
     /**
@@ -453,7 +688,7 @@ class FleaMarketRepository(private val context: Context) {
         newExpenseCost: Int,
         childItemIds: List<Int>,
         asStatus: String = "LISTED"
-    ): Long {
+    ): Long = withDbMutationTransaction {
         val childItems = dao.getItemsWithPhotosByIds(childItemIds)
         val childTitles = childItems.joinToString(", ") { "【${it.item.title}】¥${it.item.price}" }
         val originalTotal = childItems.sumOf { it.item.price }
@@ -508,7 +743,7 @@ class FleaMarketRepository(private val context: Context) {
         }
         dao.insertPhotos(parentPhotos)
 
-        return parentId.toLong()
+        parentId.toLong()
     }
 
     /**
@@ -517,13 +752,16 @@ class FleaMarketRepository(private val context: Context) {
      * 親商品とその写真レコードを削除し、親 syncUuid を完全削除記録へ追加する。
      */
     suspend fun unmergeItem(parentId: Int) {
-        val parent = dao.getItemWithPhotosById(parentId) ?: return
-        val now = System.currentTimeMillis()
-        dao.restoreMergedChildren(parentId, now)
-        dao.deletePhotosByItemId(parentId)
-        dao.deleteItem(parent.item)
-        if (parent.item.syncUuid.isNotBlank()) {
-            addPendingDeletedUuid(parent.item.syncUuid)
+        val deletedUuid = withDbMutationTransaction {
+            val parent = dao.getItemWithPhotosById(parentId) ?: return@withDbMutationTransaction ""
+            val now = System.currentTimeMillis()
+            dao.restoreMergedChildren(parentId, now)
+            dao.deletePhotosByItemId(parentId)
+            dao.deleteItem(parent.item)
+            parent.item.syncUuid
+        }
+        if (deletedUuid.isNotBlank()) {
+            addPendingDeletedUuid(deletedUuid)
         }
     }
 
@@ -538,10 +776,12 @@ class FleaMarketRepository(private val context: Context) {
      * 論理削除（ゴミ箱へ移動）：写真ファイルは保持し、30日間復元可能にする
      */
     suspend fun moveToTrash(itemWithPhotos: ItemWithPhotos) {
-        val now = System.currentTimeMillis()
-        dao.softDeleteItem(itemWithPhotos.item.id, now, now)
-        if (itemWithPhotos.item.mergedChildCount > 0) {
-            dao.softDeleteChildrenByParent(itemWithPhotos.item.id, now, now)
+        withDbMutationTransaction {
+            val now = System.currentTimeMillis()
+            dao.softDeleteItem(itemWithPhotos.item.id, now, now)
+            if (itemWithPhotos.item.mergedChildCount > 0) {
+                dao.softDeleteChildrenByParent(itemWithPhotos.item.id, now, now)
+            }
         }
     }
 
@@ -564,68 +804,75 @@ class FleaMarketRepository(private val context: Context) {
      */
     suspend fun deletePhotosByIds(photoIds: List<Int>): Int {
         if (photoIds.isEmpty()) return 0
-        val photos = photoIds.distinct().mapNotNull { dao.getPhotoById(it) }
-        if (photos.isEmpty()) return 0
-        val groupedByItem = photos.groupBy { it.itemId }
-        val now = System.currentTimeMillis()
-        var count = 0
+        val filesToDelete = mutableListOf<File>()
+        val pendingDeletes = mutableListOf<Pair<String, String>>()
 
-        for ((itemId, photoGroup) in groupedByItem) {
-            val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: continue
-            val removeSet = photoGroup.map { it.id }.toSet()
-            val toRemove = itemWithPhotos.photos.filter { it.id in removeSet }
-            if (toRemove.isEmpty()) continue
-            val remaining = itemWithPhotos.photos.filter { it.id !in removeSet }
+        val count = withDbMutationTransaction {
+            val photos = photoIds.distinct().mapNotNull { dao.getPhotoById(it) }
+            if (photos.isEmpty()) return@withDbMutationTransaction 0
+            val groupedByItem = photos.groupBy { it.itemId }
+            val now = System.currentTimeMillis()
+            var removedTotal = 0
 
-            val keptPaths = remaining.flatMap {
-                listOfNotNull(
-                    it.filePath.takeIf { p -> p.isNotBlank() },
-                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
-                )
-            }.toSet()
-            val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
-                listOfNotNull(
-                    it.filePath.takeIf { p -> p.isNotBlank() },
-                    it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
-                )
-            }.toSet()
+            for ((itemId, photoGroup) in groupedByItem) {
+                val itemWithPhotos = dao.getItemWithPhotosById(itemId) ?: continue
+                val removeSet = photoGroup.map { it.id }.toSet()
+                val toRemove = itemWithPhotos.photos.filter { it.id in removeSet }
+                if (toRemove.isEmpty()) continue
+                val remaining = itemWithPhotos.photos.filter { it.id !in removeSet }
 
-            for (targetPhoto in toRemove) {
-                if (targetPhoto.filePath.isNotBlank() &&
-                    !keptPaths.contains(targetPhoto.filePath) &&
-                    !otherReferencedPaths.contains(targetPhoto.filePath)
-                ) {
-                    try {
-                        File(targetPhoto.filePath).delete()
-                    } catch (_: Exception) {
+                val keptPaths = remaining.flatMap {
+                    listOfNotNull(
+                        it.filePath.takeIf { p -> p.isNotBlank() },
+                        it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                    )
+                }.toSet()
+                val otherReferencedPaths = dao.getPhotosExcludingItem(itemId).flatMap {
+                    listOfNotNull(
+                        it.filePath.takeIf { p -> p.isNotBlank() },
+                        it.thumbnailPath?.takeIf { p -> p.isNotBlank() }
+                    )
+                }.toSet()
+
+                for (targetPhoto in toRemove) {
+                    if (targetPhoto.filePath.isNotBlank() &&
+                        !keptPaths.contains(targetPhoto.filePath) &&
+                        !otherReferencedPaths.contains(targetPhoto.filePath)
+                    ) {
+                        filesToDelete.add(File(targetPhoto.filePath))
+                    }
+                    if (!targetPhoto.thumbnailPath.isNullOrBlank() &&
+                        !keptPaths.contains(targetPhoto.thumbnailPath) &&
+                        !otherReferencedPaths.contains(targetPhoto.thumbnailPath)
+                    ) {
+                        filesToDelete.add(File(targetPhoto.thumbnailPath))
+                    }
+                    if (targetPhoto.md5Hash.isNotBlank()) {
+                        pendingDeletes.add(itemWithPhotos.item.syncUuid to targetPhoto.md5Hash)
                     }
                 }
-                if (!targetPhoto.thumbnailPath.isNullOrBlank() &&
-                    !keptPaths.contains(targetPhoto.thumbnailPath) &&
-                    !otherReferencedPaths.contains(targetPhoto.thumbnailPath)
-                ) {
-                    try {
-                        File(targetPhoto.thumbnailPath).delete()
-                    } catch (_: Exception) {
-                    }
-                }
-            }
 
-            // レビュー 24-7: 削除した写真を未Push削除として記録する (送信されるまで復活防止の対象)
-            for (removedPhoto in toRemove) {
-                if (removedPhoto.md5Hash.isNotBlank()) {
-                    recordPendingPhotoDeletion(itemWithPhotos.item.syncUuid, removedPhoto.md5Hash)
+                dao.deletePhotosByIds(toRemove.map { it.id })
+                if (remaining.isNotEmpty()) {
+                    val reindexed = remaining.mapIndexed { idx, photo ->
+                        photo.copy(displayOrder = idx, updatedAt = now)
+                    }
+                    dao.updatePhotos(reindexed)
                 }
+                dao.updateItem(itemWithPhotos.item.copy(updatedAt = now, isDirty = true))
+                removedTotal += toRemove.size
             }
-            dao.deletePhotosByIds(toRemove.map { it.id })
-            if (remaining.isNotEmpty()) {
-                val reindexed = remaining.mapIndexed { idx, photo ->
-                    photo.copy(displayOrder = idx, updatedAt = now)
-                }
-                dao.updatePhotos(reindexed)
+            removedTotal
+        }
+
+        for ((uuid, md5) in pendingDeletes) {
+            recordPendingPhotoDeletion(uuid, md5)
+        }
+        for (f in filesToDelete) {
+            try {
+                if (f.exists()) f.delete()
+            } catch (_: Exception) {
             }
-            dao.updateItem(itemWithPhotos.item.copy(updatedAt = now, isDirty = true))
-            count += toRemove.size
         }
         return count
     }
@@ -634,9 +881,11 @@ class FleaMarketRepository(private val context: Context) {
      * ゴミ箱から元の出品状態へ復元
      */
     suspend fun restoreFromTrash(itemId: Int) {
-        val now = System.currentTimeMillis()
-        dao.restoreFromTrash(itemId, now)
-        dao.restoreChildrenByParent(itemId, now)
+        withDbMutationTransaction {
+            val now = System.currentTimeMillis()
+            dao.restoreFromTrash(itemId, now)
+            dao.restoreChildrenByParent(itemId, now)
+        }
     }
 
     suspend fun moveItemsToTrash(itemIds: List<Int>): Int {
@@ -669,44 +918,46 @@ class FleaMarketRepository(private val context: Context) {
     }
 
     suspend fun batchUpdateItems(itemIds: List<Int>, spec: BatchEditSpec): Int {
-        val now = System.currentTimeMillis()
-        var updatedCount = 0
-        for (id in itemIds.distinct()) {
-            val existing = dao.getItemWithPhotosById(id)?.item ?: continue
-            if (existing.deletedAt != null || existing.status == "MERGED") continue
+        return withDbMutationTransaction {
+            val now = System.currentTimeMillis()
+            var updatedCount = 0
+            for (id in itemIds.distinct()) {
+                val existing = dao.getItemWithPhotosById(id)?.item ?: continue
+                if (existing.deletedAt != null || existing.status == "MERGED") continue
 
-            val nextPrice = when (spec.priceMode) {
-                BatchPriceMode.NONE -> existing.price
-                BatchPriceMode.FIXED -> spec.priceValue.coerceAtLeast(0)
-                BatchPriceMode.DELTA_YEN -> (existing.price + spec.priceValue).coerceAtLeast(0)
-                BatchPriceMode.DELTA_PERCENT -> (existing.price + (existing.price * spec.priceValue) / 100).coerceAtLeast(0)
+                val nextPrice = when (spec.priceMode) {
+                    BatchPriceMode.NONE -> existing.price
+                    BatchPriceMode.FIXED -> spec.priceValue.coerceAtLeast(0)
+                    BatchPriceMode.DELTA_YEN -> (existing.price + spec.priceValue).coerceAtLeast(0)
+                    BatchPriceMode.DELTA_PERCENT -> (existing.price + (existing.price * spec.priceValue) / 100).coerceAtLeast(0)
+                }
+
+                val nextStatus = spec.newStatus ?: existing.status
+                val nextSoldAt = if (isSoldFamilyStatus(nextStatus)) (existing.soldAt ?: now) else null
+                val nextSoldPrice = when {
+                    !isSoldFamilyStatus(nextStatus) -> 0
+                    spec.priceMode != BatchPriceMode.NONE -> nextPrice
+                    existing.soldPrice > 0 -> existing.soldPrice
+                    else -> nextPrice
+                }
+
+                val updated = existing.copy(
+                    status = nextStatus,
+                    price = nextPrice,
+                    soldPrice = nextSoldPrice,
+                    soldAt = nextSoldAt,
+                    useCustomSettings = if (spec.applyCostPreset) spec.useCustomSettings else existing.useCustomSettings,
+                    feeRatePercent = if (spec.applyCostPreset) spec.feeRatePercent.coerceAtLeast(0) else existing.feeRatePercent,
+                    shippingCost = if (spec.applyCostPreset) spec.shippingCost.coerceAtLeast(0) else existing.shippingCost,
+                    expenseCost = if (spec.applyCostPreset) spec.expenseCost.coerceAtLeast(0) else existing.expenseCost,
+                    updatedAt = now,
+                    isDirty = true
+                )
+                dao.updateItem(updated)
+                updatedCount++
             }
-
-            val nextStatus = spec.newStatus ?: existing.status
-            val nextSoldAt = if (isSoldFamilyStatus(nextStatus)) (existing.soldAt ?: now) else null
-            val nextSoldPrice = when {
-                !isSoldFamilyStatus(nextStatus) -> 0
-                spec.priceMode != BatchPriceMode.NONE -> nextPrice
-                existing.soldPrice > 0 -> existing.soldPrice
-                else -> nextPrice
-            }
-
-            val updated = existing.copy(
-                status = nextStatus,
-                price = nextPrice,
-                soldPrice = nextSoldPrice,
-                soldAt = nextSoldAt,
-                useCustomSettings = if (spec.applyCostPreset) spec.useCustomSettings else existing.useCustomSettings,
-                feeRatePercent = if (spec.applyCostPreset) spec.feeRatePercent.coerceAtLeast(0) else existing.feeRatePercent,
-                shippingCost = if (spec.applyCostPreset) spec.shippingCost.coerceAtLeast(0) else existing.shippingCost,
-                expenseCost = if (spec.applyCostPreset) spec.expenseCost.coerceAtLeast(0) else existing.expenseCost,
-                updatedAt = now,
-                isDirty = true
-            )
-            dao.updateItem(updated)
-            updatedCount++
+            updatedCount
         }
-        return updatedCount
     }
 
     /**
@@ -731,31 +982,36 @@ class FleaMarketRepository(private val context: Context) {
         recordTombstoneForSync: Boolean
     ) {
         val item = itemWithPhotos.item
-        val otherPhotos = dao.getPhotosExcludingItem(item.id)
-        val referencedPaths = HashSet<String>()
-        for (p in otherPhotos) {
-            if (p.filePath.isNotBlank()) referencedPaths.add(p.filePath)
-            if (!p.thumbnailPath.isNullOrBlank()) referencedPaths.add(p.thumbnailPath)
-        }
-
-        val unreferencedPhotos = itemWithPhotos.photos.mapNotNull { p ->
-            val origOk = p.filePath.isNotBlank() && !referencedPaths.contains(p.filePath)
-            val thumbOk = !p.thumbnailPath.isNullOrBlank() && !referencedPaths.contains(p.thumbnailPath)
-            if (!origOk && !thumbOk) {
-                null
-            } else {
-                p.copy(
-                    filePath = if (origOk) p.filePath else "",
-                    thumbnailPath = if (thumbOk) p.thumbnailPath else null
-                )
+        val unreferencedPhotos = withDbMutationTransaction {
+            val fresh = dao.getItemWithPhotosById(item.id)
+            val targetItem = fresh?.item ?: item
+            val targetPhotos = fresh?.photos ?: itemWithPhotos.photos
+            val otherPhotos = dao.getPhotosExcludingItem(targetItem.id)
+            val referencedPaths = HashSet<String>()
+            for (p in otherPhotos) {
+                if (p.filePath.isNotBlank()) referencedPaths.add(p.filePath)
+                if (!p.thumbnailPath.isNullOrBlank()) referencedPaths.add(p.thumbnailPath)
             }
+
+            val toDelete = targetPhotos.mapNotNull { p ->
+                val origOk = p.filePath.isNotBlank() && !referencedPaths.contains(p.filePath)
+                val thumbOk = !p.thumbnailPath.isNullOrBlank() && !referencedPaths.contains(p.thumbnailPath)
+                if (!origOk && !thumbOk) {
+                    null
+                } else {
+                    p.copy(
+                        filePath = if (origOk) p.filePath else "",
+                        thumbnailPath = if (thumbOk) p.thumbnailPath else null
+                    )
+                }
+            }
+            dao.deletePhotosByItemId(targetItem.id)
+            dao.deleteItem(targetItem)
+            toDelete
         }
         if (unreferencedPhotos.isNotEmpty()) {
             photoStorageManager.deletePhotoFiles(unreferencedPhotos)
         }
-
-        dao.deletePhotosByItemId(item.id)
-        dao.deleteItem(item)
         if (recordTombstoneForSync && item.syncUuid.isNotBlank()) {
             addPendingDeletedUuid(item.syncUuid)
         }

@@ -21,7 +21,9 @@ import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.data.local.SalesSummary
 import com.example.myapplication.data.server.LocalWebServer
 import com.example.myapplication.data.server.NetworkUtils
+import com.example.myapplication.data.server.PcSyncForegroundService
 import com.example.myapplication.data.server.PcSyncProgress
+import com.example.myapplication.data.server.SyncCoordinator
 import com.example.myapplication.data.server.SyncPhase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,7 +64,8 @@ data class GalleryExportResult(
 )
 
 class FleaMarketViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository = FleaMarketRepository(application)
+    private val syncCoordinator = SyncCoordinator.getInstance(application)
+    private val repository: FleaMarketRepository = syncCoordinator.repository
     private val webServer = LocalWebServer(application, repository)
 
     val isWebServerRunning: StateFlow<Boolean> = webServer.isRunning
@@ -361,7 +364,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         repository.updateDefaultSettings(newSettings, stampNow = true)
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
-        if (url.isNotBlank() && _isPcServerConnected.value) {
+        if (url.isNotBlank() && isPcServerConnected.value) {
             viewModelScope.launch(Dispatchers.IO) {
                 syncMutex.withLock {
                     if (pcServerClient.pushSettingsToServer(url, token)) {
@@ -394,7 +397,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         onSuccess: (com.example.myapplication.data.server.PcServerClient.ClaudeJobCreateResult) -> Unit
     ) {
         viewModelScope.launch {
-            if (!_isPcServerConnected.value) {
+            if (!isPcServerConnected.value) {
                 onError("PCサーバー未接続です")
                 return@launch
             }
@@ -429,6 +432,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         return repository.getDao().getItemsWithPhotosByIds(ids)
     }
 
+    fun setItemEditingActive(itemId: Int, active: Boolean) {
+        repository.setItemEditingActive(itemId, active)
+    }
+
     fun saveItem(
         id: Int,
         title: String,
@@ -442,11 +449,13 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         useCustomSettings: Boolean,
         imageUris: List<Uri>,
         existingFilePaths: List<String>,
+        onSkippedInvalidPhotos: (Int) -> Unit = {},
         onError: (String) -> Unit = {},
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
             try {
+                var skippedCount = 0
                 repository.saveItem(
                     id = id,
                     title = title,
@@ -459,8 +468,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     expenseCost = expenseCost,
                     useCustomSettings = useCustomSettings,
                     imageUris = imageUris,
-                    existingFilePaths = existingFilePaths
+                    existingFilePaths = existingFilePaths,
+                    onSkippedInvalidPhotos = { skippedCount = it }
                 )
+                if (skippedCount > 0) {
+                    onSkippedInvalidPhotos(skippedCount)
+                }
                 triggerAutoSync()
                 onSuccess()
             } catch (e: Exception) {
@@ -614,7 +627,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
-        if (url.isBlank() || !_isPcServerConnected.value) return@withContext null
+        if (url.isBlank() || !isPcServerConnected.value) return@withContext null
 
         val cacheDir = File(getApplication<Application>().cacheDir, "preview_originals").apply { mkdirs() }
         val outFile = File(cacheDir, "$cleanHash.jpg")
@@ -651,7 +664,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     suspend fun repairItemPhotosIfNeeded(itemId: Int): Boolean {
-        if (!_isPcServerConnected.value) return false
+        if (!isPcServerConnected.value) return false
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
         if (url.isBlank()) return false
@@ -669,7 +682,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 val storageManager = repository.getPhotoStorageManager()
                 val url = _pcServerUrl.value
                 val token = _pcAuthToken.value
-                val isOnline = _isPcServerConnected.value && url.isNotBlank()
+                val isOnline = isPcServerConnected.value && url.isNotBlank()
 
                 var saved = 0
                 var fetchedFromServer = 0
@@ -792,36 +805,46 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
      */
     fun cleanupSharedOriginalPhotos(onResult: (Int) -> Unit) {
         viewModelScope.launch {
-            val items = itemsWithPhotos.value.filter { it.item.isShared }
+            val items = itemsWithPhotos.value.filter { it.item.isShared && !it.item.isDirty }
             var totalDeleted = 0
             withContext(Dispatchers.IO) {
                 val storageManager = repository.getPhotoStorageManager()
                 val dao = repository.getDao()
                 val deletedOrigPaths = mutableSetOf<String>()
                 for (itemWithPhotos in items) {
+                    if (repository.isItemEditingActive(itemWithPhotos.item.id)) continue
                     for (photo in itemWithPhotos.photos) {
                         val thumbPath = photo.thumbnailPath ?: continue
                         if (!File(thumbPath).exists()) continue
                         if (photo.filePath.isBlank() || photo.filePath.equals(thumbPath, ignoreCase = true)) continue
-                        if (deletedOrigPaths.contains(photo.filePath)) {
-                            dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
-                            continue
-                        }
+                        if (repository.isFilePathProtectedByEditingOrDirty(photo.filePath)) continue
                         val origFile = File(photo.filePath)
                         if (origFile.exists()) {
-                            if (photo.md5Hash.isBlank()) {
-                                val md5 = storageManager.calculateMd5(origFile)
-                                if (md5.isNotBlank()) {
-                                    dao.updatePhotoMd5Hash(photo.id, md5)
+                            var resolvedMd5 = photo.md5Hash
+                            if (resolvedMd5.isBlank()) {
+                                resolvedMd5 = storageManager.calculateMd5(origFile)
+                            }
+                            repository.withDbMutationLock {
+                                if (repository.isFilePathProtectedByEditingOrDirty(photo.filePath)) {
+                                    return@withDbMutationLock
+                                }
+                                if (photo.md5Hash.isBlank() && resolvedMd5.isNotBlank()) {
+                                    dao.updatePhotoMd5Hash(photo.id, resolvedMd5)
+                                }
+                                if (deletedOrigPaths.contains(photo.filePath)) {
+                                    dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
+                                } else if (origFile.exists() && origFile.delete()) {
+                                    deletedOrigPaths.add(photo.filePath)
+                                    totalDeleted++
+                                    dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
                                 }
                             }
-                            if (origFile.delete()) {
-                                deletedOrigPaths.add(photo.filePath)
-                                totalDeleted++
-                                dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
-                            }
                         } else if (!photo.isOriginalDeleted) {
-                            dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
+                            repository.withDbMutationLock {
+                                if (!repository.isFilePathProtectedByEditingOrDirty(photo.filePath)) {
+                                    dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
+                                }
+                            }
                         }
                     }
                 }
@@ -850,7 +873,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    private val pcServerClient = com.example.myapplication.data.server.PcServerClient(getApplication(), repository)
+    private val pcServerClient = syncCoordinator.pcServerClient
 
     private val _pcServerUrl = MutableStateFlow<String>(
         pcServerClient.getSavedServerUrl()
@@ -862,24 +885,22 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     )
     val pcAuthToken: StateFlow<String> = _pcAuthToken.asStateFlow()
 
-    private val _isPcServerConnected = MutableStateFlow<Boolean>(false)
-    val isPcServerConnected: StateFlow<Boolean> = _isPcServerConnected.asStateFlow()
-
-    private val _syncStatusState = MutableStateFlow(PcSyncProgress())
-    val syncStatusState: StateFlow<PcSyncProgress> = _syncStatusState.asStateFlow()
-
-    private val _lastSyncSuccessAt = MutableStateFlow<Long?>(null)
-    val lastSyncSuccessAt: StateFlow<Long?> = _lastSyncSuccessAt.asStateFlow()
+    val isPcServerConnected: StateFlow<Boolean> = syncCoordinator.isPcServerConnected
+    val syncStatusState: StateFlow<PcSyncProgress> = syncCoordinator.syncStatusState
+    val lastSyncSuccessAt: StateFlow<Long?> = syncCoordinator.lastSyncSuccessAt
 
     private var heartbeatJob: Job? = null
     private var claudeWatchJob: Job? = null
     // レビュー 24-4: Claude 状態の取得・反映専用の直列化 (商品同期の syncMutex とは別)
     private val claudeRefreshMutex = Mutex()
     private var autoSyncJob: Job? = null
-    private var syncSuccessResetJob: Job? = null
-    private val syncMutex = Mutex()
-    @Volatile private var lastKnownDataRevision: Long = -1L
-    @Volatile private var lastKnownSettingsRevision: Long = -1L
+    private val syncMutex get() = syncCoordinator.syncMutex
+    private var lastKnownDataRevision: Long
+        get() = syncCoordinator.lastKnownDataRevision
+        set(value) { syncCoordinator.lastKnownDataRevision = value }
+    private var lastKnownSettingsRevision: Long
+        get() = syncCoordinator.lastKnownSettingsRevision
+        set(value) { syncCoordinator.lastKnownSettingsRevision = value }
     @Volatile private var lastKnownClaudeRevision: Long = -1L
 
     // フェーズ 6-5 是正 (32-3): 既読専用カウンタの既知値 (claudeRevision とは別管理)
@@ -1033,18 +1054,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     private fun scheduleSyncSuccessResetToIdle(successTimestamp: Long) {
-        syncSuccessResetJob?.cancel()
-        syncSuccessResetJob = viewModelScope.launch {
-            delay(3500)
-            val cur = _syncStatusState.value
-            if (cur.phase == SyncPhase.SUCCESS && cur.updatedAt == successTimestamp) {
-                _syncStatusState.value = PcSyncProgress(
-                    phase = SyncPhase.IDLE,
-                    detailMessage = "同期済",
-                    updatedAt = System.currentTimeMillis()
-                )
-            }
-        }
+        syncCoordinator.scheduleSyncSuccessResetToIdle(successTimestamp)
     }
 
     private suspend fun refreshKnownRevisions(url: String, token: String) {
@@ -1442,70 +1452,59 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 if (url.isNotBlank()) {
                     val hb = pcServerClient.sendHeartbeatWithRevision(url, token)
                     val connected = hb.isConnected
-                    _isPcServerConnected.value = connected
+                    syncCoordinator.setPcServerConnected(connected)
 
                     if (!connected) {
                         wasConnected = false
                     } else if (!wasConnected) {
-                        // 再接続時ハンドシェイク 未同期ローカル変更を優先PushしてからPC差分を取得
+                        // 再接続時ハンドシェイク 未同期ローカル変更・写真があれば Foreground Service 経由で安全に同期
                         wasConnected = true
-                        syncMutex.withLock {
-                            try {
-                                pcServerClient.fetchAndSyncServerSettings(url, token)
-                                val hasLocalDirty = repository.getDao().getDirtyItemsCount() > 0 ||
-                                    repository.getPendingDeletedUuids().isNotEmpty()
-                                var pushSucceeded = true
-                                var pushError: String? = null
-                                if (hasLocalDirty) {
-                                    _syncStatusState.value = PcSyncProgress(
-                                        phase = SyncPhase.SYNCING_ITEMS,
-                                        progressPercent = 5,
-                                        detailMessage = "再接続・差分送信中..."
-                                    )
-                                    val pushRes = pcServerClient.syncDeltaToPcServer(url, token) { progress ->
-                                        _syncStatusState.value = progress
-                                    }
-                                    pushSucceeded = pushRes.isSuccess
-                                    pushError = pushRes.errorMessage
-                                }
-                                if (pushSucceeded) {
-                                    _syncStatusState.value = PcSyncProgress(
-                                        phase = SyncPhase.FETCHING_ITEMS,
-                                        progressPercent = 92,
-                                        detailMessage = "PC側最新データを取得中..."
+                        val hasLocalDirty = repository.getDao().getDirtyItemsCount() > 0 ||
+                            repository.getPendingDeletedUuids().isNotEmpty()
+                        val hasUnsyncedPhotos = repository.getDao().getUnsyncedPhotosCount() > 0
+                        if (hasLocalDirty || hasUnsyncedPhotos) {
+                            val syncRes = PcSyncForegroundService.runSyncViaService(
+                                context = getApplication(),
+                                url = url,
+                                token = token,
+                                initialMessage = "再接続・差分送信中..."
+                            )
+                            if (syncRes.isSuccess) {
+                                refreshKnownRevisions(url, token)
+                            }
+                        } else {
+                            syncMutex.withLock {
+                                try {
+                                    pcServerClient.fetchAndSyncServerSettings(url, token)
+                                    syncCoordinator.updateSyncProgress(
+                                        PcSyncProgress(
+                                            phase = SyncPhase.FETCHING_ITEMS,
+                                            progressPercent = 92,
+                                            detailMessage = "PC側最新データを取得中..."
+                                        )
                                     )
                                     val fetched = pcServerClient.fetchServerItems(url, token)
                                     refreshKnownRevisions(url, token)
                                     if (fetched) {
-                                        val now = System.currentTimeMillis()
-                                        _lastSyncSuccessAt.value = now
-                                        _syncStatusState.value = PcSyncProgress(
-                                            phase = SyncPhase.SUCCESS,
-                                            progressPercent = 100,
-                                            detailMessage = "再接続同期完了",
-                                            updatedAt = now
-                                        )
-                                        scheduleSyncSuccessResetToIdle(now)
+                                        syncCoordinator.markSyncSuccessNow("再接続同期完了")
                                     } else {
-                                        _syncStatusState.value = PcSyncProgress(
-                                            phase = SyncPhase.ERROR,
-                                            detailMessage = "PCデータ取得に失敗しました",
-                                            errorDetail = "GET /api/items の取得に失敗しました"
+                                        syncCoordinator.updateSyncProgress(
+                                            PcSyncProgress(
+                                                phase = SyncPhase.ERROR,
+                                                detailMessage = "PCデータ取得に失敗しました",
+                                                errorDetail = "GET /api/items の取得に失敗しました"
+                                            )
                                         )
                                     }
-                                } else {
-                                    _syncStatusState.value = PcSyncProgress(
-                                        phase = SyncPhase.ERROR,
-                                        detailMessage = "再接続同期に失敗しました",
-                                        errorDetail = pushError ?: "PCサーバーとの同期に失敗しました"
+                                } catch (e: Exception) {
+                                    syncCoordinator.updateSyncProgress(
+                                        PcSyncProgress(
+                                            phase = SyncPhase.ERROR,
+                                            detailMessage = "再接続同期エラー",
+                                            errorDetail = e.localizedMessage ?: e.message ?: "再接続時の同期に失敗しました"
+                                        )
                                     )
                                 }
-                            } catch (e: Exception) {
-                                _syncStatusState.value = PcSyncProgress(
-                                    phase = SyncPhase.ERROR,
-                                    detailMessage = "再接続同期エラー",
-                                    errorDetail = e.localizedMessage ?: e.message ?: "再接続時の同期に失敗しました"
-                                )
                             }
                         }
                     } else {
@@ -1515,10 +1514,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                         if (settingsChanged || dataChanged) {
                             if (syncMutex.tryLock()) {
                                 try {
-                                    _syncStatusState.value = PcSyncProgress(
-                                        phase = SyncPhase.FETCHING_ITEMS,
-                                        progressPercent = 80,
-                                        detailMessage = "PC側の更新を反映中..."
+                                    syncCoordinator.updateSyncProgress(
+                                        PcSyncProgress(
+                                            phase = SyncPhase.FETCHING_ITEMS,
+                                            progressPercent = 80,
+                                            detailMessage = "PC側の更新を反映中..."
+                                        )
                                     )
                                     if (settingsChanged) {
                                         pcServerClient.fetchAndSyncServerSettings(url, token)
@@ -1530,27 +1531,23 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                                         if (fetchOk) lastKnownDataRevision = hb.dataRevision
                                     }
                                     if (fetchOk) {
-                                        val now = System.currentTimeMillis()
-                                        _lastSyncSuccessAt.value = now
-                                        _syncStatusState.value = PcSyncProgress(
-                                            phase = SyncPhase.SUCCESS,
-                                            progressPercent = 100,
-                                            detailMessage = "PC更新を反映しました",
-                                            updatedAt = now
-                                        )
-                                        scheduleSyncSuccessResetToIdle(now)
+                                        syncCoordinator.markSyncSuccessNow("PC更新を反映しました")
                                     } else {
-                                        _syncStatusState.value = PcSyncProgress(
-                                            phase = SyncPhase.ERROR,
-                                            detailMessage = "PC更新の取得に失敗",
-                                            errorDetail = "PCサーバーからの差分取得に失敗しました"
+                                        syncCoordinator.updateSyncProgress(
+                                            PcSyncProgress(
+                                                phase = SyncPhase.ERROR,
+                                                detailMessage = "PC更新の取得に失敗",
+                                                errorDetail = "PCサーバーからの差分取得に失敗しました"
+                                            )
                                         )
                                     }
                                 } catch (e: Exception) {
-                                    _syncStatusState.value = PcSyncProgress(
-                                        phase = SyncPhase.ERROR,
-                                        detailMessage = "PC更新反映エラー",
-                                        errorDetail = e.localizedMessage ?: e.message ?: "差分取得エラー"
+                                    syncCoordinator.updateSyncProgress(
+                                        PcSyncProgress(
+                                            phase = SyncPhase.ERROR,
+                                            detailMessage = "PC更新反映エラー",
+                                            errorDetail = e.localizedMessage ?: e.message ?: "差分取得エラー"
+                                        )
                                     )
                                 } finally {
                                     syncMutex.unlock()
@@ -1566,7 +1563,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     // Claude ジョブの検知は独立した監視コルーチンへ移設した (レビュー 24-4)。
                     // 写真同期でこのループが塞がっていても検知が止まらないようにするため。
                 } else {
-                    _isPcServerConnected.value = false
+                    syncCoordinator.setPcServerConnected(false)
                     wasConnected = false
                 }
                 delay(4000)
@@ -1576,57 +1573,34 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     /**
      * ローカルデータ変更時にバックグラウンドでPC母艦へ自動差分Push（500msデバウンス・Mutex排他）
+     * 未送信写真が含まれる場合は Foreground Service で画面オフ中断を防ぐ。
      */
     fun triggerAutoSync() {
         val url = _pcServerUrl.value
         val token = _pcAuthToken.value
-        if (url.isBlank() || !_isPcServerConnected.value) return
+        if (url.isBlank() || !isPcServerConnected.value) return
 
         autoSyncJob?.cancel()
         autoSyncJob = viewModelScope.launch(Dispatchers.IO) {
             delay(500)
-            syncMutex.withLock {
-                try {
-                    _syncStatusState.value = PcSyncProgress(
-                        phase = SyncPhase.SYNCING_ITEMS,
-                        progressPercent = 5,
-                        detailMessage = "自動同期を開始..."
-                    )
-                    pcServerClient.fetchAndSyncServerSettings(url, token)
-                    val result = pcServerClient.syncDeltaToPcServer(url, token) { progress ->
-                        _syncStatusState.value = progress
-                    }
-                    if (result.isSuccess) {
-                        _syncStatusState.value = PcSyncProgress(
-                            phase = SyncPhase.FETCHING_ITEMS,
-                            progressPercent = 92,
-                            detailMessage = "PC側最新データを取得中..."
-                        )
-                        pcServerClient.fetchServerItems(url, token)
-                        refreshKnownRevisions(url, token)
-                        val now = System.currentTimeMillis()
-                        _lastSyncSuccessAt.value = now
-                        _syncStatusState.value = PcSyncProgress(
-                            phase = SyncPhase.SUCCESS,
-                            progressPercent = 100,
-                            detailMessage = "同期完了 (${result.syncedItemsCount}件)",
-                            updatedAt = now
-                        )
-                        scheduleSyncSuccessResetToIdle(now)
-                    } else {
-                        _syncStatusState.value = PcSyncProgress(
-                            phase = SyncPhase.ERROR,
-                            detailMessage = "自動同期に失敗しました",
-                            errorDetail = result.errorMessage ?: "PCサーバーとの同期に失敗しました"
-                        )
-                    }
-                } catch (e: Exception) {
-                    _syncStatusState.value = PcSyncProgress(
-                        phase = SyncPhase.ERROR,
-                        detailMessage = "自動同期エラー",
-                        errorDetail = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
-                    )
-                }
+            val hasUnsyncedPhotos = repository.getDao().getUnsyncedPhotosCount() > 0
+            val result = if (hasUnsyncedPhotos) {
+                PcSyncForegroundService.runSyncViaService(
+                    context = getApplication(),
+                    url = url,
+                    token = token,
+                    initialMessage = "自動同期を開始..."
+                )
+            } else {
+                syncCoordinator.executeFullSync(
+                    url = url,
+                    token = token,
+                    initialMessage = "自動同期を開始...",
+                    updateConnectedOnResult = false
+                )
+            }
+            if (result.isSuccess) {
+                refreshKnownRevisions(url, token)
             }
         }
     }
@@ -1688,7 +1662,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
             val url = _pcServerUrl.value
             val token = _pcAuthToken.value
             val connected = pcServerClient.checkServerStatus(url, token)
-            _isPcServerConnected.value = connected
+            syncCoordinator.setPcServerConnected(connected)
             if (connected) {
                 refreshKnownRevisions(url, token)
             }
@@ -1700,56 +1674,19 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             val url = _pcServerUrl.value
             val token = _pcAuthToken.value
-            val result = syncMutex.withLock {
-                try {
-                    _syncStatusState.value = PcSyncProgress(
-                        phase = SyncPhase.SYNCING_ITEMS,
-                        progressPercent = 5,
-                        detailMessage = "同期を開始中..."
-                    )
-                    pcServerClient.fetchAndSyncServerSettings(url, token)
-                    val pushRes = pcServerClient.syncDeltaToPcServer(url, token) { progress ->
-                        _syncStatusState.value = progress
-                    }
-                    if (pushRes.isSuccess) {
-                        _syncStatusState.value = PcSyncProgress(
-                            phase = SyncPhase.FETCHING_ITEMS,
-                            progressPercent = 92,
-                            detailMessage = "PC側最新データを取得中..."
-                        )
-                        pcServerClient.fetchServerItems(url, token)
-                        refreshKnownRevisions(url, token)
-                        val now = System.currentTimeMillis()
-                        _lastSyncSuccessAt.value = now
-                        _syncStatusState.value = PcSyncProgress(
-                            phase = SyncPhase.SUCCESS,
-                            progressPercent = 100,
-                            detailMessage = "同期完了 (${pushRes.syncedItemsCount}件)",
-                            updatedAt = now
-                        )
-                        scheduleSyncSuccessResetToIdle(now)
-                    } else {
-                        _syncStatusState.value = PcSyncProgress(
-                            phase = SyncPhase.ERROR,
-                            detailMessage = "同期に失敗しました",
-                            errorDetail = pushRes.errorMessage ?: "PCサーバーとの同期に失敗しました"
-                        )
-                    }
-                    pushRes
-                } catch (e: Exception) {
-                    val errMsg = e.localizedMessage ?: e.message ?: "同期中に通信エラーが発生しました"
-                    _syncStatusState.value = PcSyncProgress(
-                        phase = SyncPhase.ERROR,
-                        detailMessage = "同期エラー",
-                        errorDetail = errMsg
-                    )
-                    com.example.myapplication.data.server.PcSyncResult(
-                        isSuccess = false,
-                        errorMessage = errMsg
-                    )
+            val result = withContext(Dispatchers.IO) {
+                PcSyncForegroundService.runSyncViaService(
+                    context = getApplication(),
+                    url = url,
+                    token = token,
+                    initialMessage = "同期を開始中..."
+                )
+            }
+            if (result.isSuccess) {
+                withContext(Dispatchers.IO) {
+                    refreshKnownRevisions(url, token)
                 }
             }
-            _isPcServerConnected.value = result.isSuccess
             onResult(result)
         }
     }
@@ -1757,6 +1694,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     override fun onCleared() {
         super.onCleared()
         heartbeatJob?.cancel()
+        claudeWatchJob?.cancel()
+        autoSyncJob?.cancel()
         webServer.stop()
     }
 }

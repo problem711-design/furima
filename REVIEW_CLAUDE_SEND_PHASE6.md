@@ -2661,3 +2661,38 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 - 原因は (1) `FleaMarketRepository.saveItem()` の `existingFilePaths` 側にファイル実在・MD5 非空チェックがなく空 MD5・サムネ `null` 行を生成できる点、(2) `ItemEditScreen` で追加撮影中に同期 Step 3 が原本削除して `filePath` をサムネイルへ切り替える競合（および `saveItem` の非トランザクション性）、(3) スマホ Push・PC `HandleSyncItems`・スマホ Pull／自己修復の 3 箇所すべてが空 MD5 を素通ししてループ固定化する点、(4) Foreground Service 未実装による画面オフ切断と Step 1 後の `isDirty` 先行解除。
 - 修正計画は (1) 空 MD5 遮断と `LoadItemsDbFromDisk` / スマホ同期時の自動浄化、(2) `ItemEditScreen` パス追従・`saveItem` トランザクション化・編集中 Step 3 ガード、(3) Step 2 全写真確認後の `isDirty` 解除、(4) `dataSync` Foreground Service 化、(5) PC 側壊れ参照の救済削除経路の 5 本柱で構成している。計画のレビューをお願いしたい。
+
+---
+
+## 82. 実装担当エージェント回答（`v1.4 Build 17` 写真同期整合性バグ修正 ＆ 画面オフ耐性強化 実装完了報告）（2026-11-20）
+
+[PLAN_PHOTO_SYNC_INTEGRITY_FIX.md](PLAN_PHOTO_SYNC_INTEGRITY_FIX.md)（§81）に基づく **`v1.4 (Build 17)` / `versionCode = 1417`** の全 5 本柱の実装およびローカル検証を完了したため、コードレビューをお願いしたい（Step 5 の `6-14`・`6-13` には未着手）。
+
+### 82.1 実装内容サマリー
+
+1. **柱 1：空 MD5・実ファイル欠損写真の完全遮断と既存ゴーストデータの自動浄化**
+   - `FleaMarketRepository.saveItem()`：`existingFilePaths` 経路にファイル実在・非空サイズ（`> 0L`）・非空 MD5 検証を導入し、異常参照は DB へ入れずスキップして件数を `onSkippedInvalidPhotos` コールバック（`ItemEditScreen` で Toast 通知）へ返すようにした。
+   - `ItemDao.kt` / `PcServerClient.kt`：`getBlankMd5Photos()` による純ゴースト（空 MD5 かつ原本・サムネともに実ファイルなし、かつ編集中アイテム除外）の同期前自動浄化 `cleanupGhostBlankMd5Photos()` を追加。さらに `syncDeltaToPcServer()` の DTO 構築および `mergeServerItemsFromJson()` の受信取り込みの両方で `md5.isBlank()` エントリをスキップするよう統一。
+   - `tools/FurimaServerNative.cs`：`HandleSyncItems()` で空 MD5 写真参照を受信時スキップし、`LoadItemsDbFromDisk()` 起動時に初回保護バックアップ（`items_data.json.bak_empty_md5`）を作成したうえで既存の空 MD5 壊れ参照を自動除去＋`syncedToPhone = false`・`BumpDataRevision()` する処理を組み込んだ。
+2. **柱 2：「同期中の編集・追加撮影」と「Step 3 原本削除／マージ」の競合排除**
+   - `FleaMarketRepository`：`dbMutationMutex` と Room `withTransaction`（`withDbMutationTransaction`）を導入し、`saveItem()` の重い画像 I/O をトランザクション前へ前倒ししたうえで DB 更新を原子化。`existing` 照合に `THUMB_${File(path).name}` フォールバックを追加し、原本切替後の再保存でも `md5Hash`／`isOriginalDeleted` を失わないよう保護した。主要 DB 更新（`removePhotoFromItem` / `moveToTrash` / `deletePhotosByIds` / `mergeItems` / `unmergeItem` / `batchUpdateItems` / `deleteSingleItemPhysically` 等）も `dbMutationMutex`＋ファイル削除の後置きへ統一。
+   - `ItemEditScreen.kt`：`DisposableEffect(itemId)` でアクティブ編集中フラグ（`editingItemCounts`）を管理し、`LaunchedEffect(lastSyncSuccessAt)` で Step 3 によるサムネイルパス切替が起きた際も `existingFilePaths`・`initialExistingFilePaths`・`selectedPhotoKeys`・`lastDeletedPreviewPhoto`・`loadedPhotosByPath` を同期更新するよう修正。
+   - `PcServerClient.kt`・`FleaMarketViewModel.kt`：Step 3（原本削除および `cleanupSharedOriginalPhotos`）とサーバー削除 UUID 反映に、編集中チェック（`isItemEditingActive` / `isFilePathProtectedByEditingOrDirty`）・最新 `isDirty == false` 再確認・`dbMutationMutex` 内原子更新を適用した。
+3. **柱 3：`isDirty` 解除タイミングの是正**
+   - `PcServerClient.syncDeltaToPcServer()` から Step 1（`POST /api/sync/items`）直後の無条件 `markItemSyncedIfUnchanged` 呼び出しを削除し、Step 2（`POST /api/sync/photo`）完了後に当該アイテムの期待 MD5 集合すべてが `allConfirmedHashes` に含まれ、かつ未解決ローカル写真がないと確認できた場合のみ `isDirty = false` へ戻すよう変更した（Step 2 失敗・中断時は `isDirty = true` を維持）。
+4. **柱 4：画面オフ時の同期切断対策（`dataSync` Foreground Service 化）**
+   - `SyncCoordinator.kt` を新設して `repository` / `pcServerClient` / `syncMutex` / `isPcServerConnected` / `syncStatusState` / `lastSyncSuccessAt` をアプリ単一インスタンスへ集約。
+   - `PcSyncForegroundService.kt`（`foregroundServiceType="dataSync"`・タイムアウト付き `PARTIAL_WAKE_LOCK`・低優先通知チャネル・進捗スロットル更新・Android 15+ `onTimeout` 対応・サービス起動不可時の直接同期フォールバック）と `AndroidManifest.xml` 権限宣言を追加。
+   - `FleaMarketViewModel.kt` の手動同期（`syncDeltaToPcServer`）・変更/写真付き再接続同期・写真付き自動同期（`triggerAutoSync`）を Foreground Service 経由へ移行（軽量ハートビート等は通知を出さず従来どおり実行）。`PcSyncScreen.kt` に同期進捗インジケータおよび Android 13+ 向け任意の通知許可ボタン（拒否時も同期非ブロック）を追加した。
+5. **柱 5：PC ダッシュボードの救済削除経路 ＆ 版番号統一**
+   - `tools/DashboardHtml.cs`（`buildViewerTrashTargets` 抽出、`trashSelectedViewerPhotos` / `trashCurrentLightboxPhoto`）および `tools/FurimaServerNative.cs`（`PhotoTrashTarget` へ `photoIndex`・`photoId` 追加、`TrashPhotosFromTargets` のインデックスずれ防止一括除去、`HandleDeletePhoto` / `HandleTrashPhotosBatch` 拡張）により、空 MD5 の壊れ参照もゴミ箱フォルダを経由せずリストから直接除去できるよう対応。
+   - `app/build.gradle.kts`（`versionCode = 1417`）・`tools/DashboardHtml.cs`（`v1.4 (Build 17)`）・`WebDashboardHtml.kt`（`v1.4 (Build 17)`）の 3 箇所を統一更新。
+
+### 82.2 検証結果
+- **Android コンパイル (`compile_applet`)**：成功。
+- **Android 単体 / Robolectric テスト (`gradle :app:testDebugUnitTest`)**：**21/21 合格**（新設 `PhotoSyncIntegrityBuild17Test` の 5 ケース：`saveItem` 欠損・0 バイトスキップ、`THUMB_` フォールバック継承、ゴースト浄化と実ファイル/編集中保護、Step 2 失敗時 `isDirty` 維持と編集中 Step 3 抑止、`mergeServerItemsFromJson` 空 MD5 除外、および既存 16 件すべて合格）。
+- **PC ダッシュボード JS テスト (`node --test tools/tests/*.mjs`)**：**15/15 合格**（既存ラベル 13 ケース＋新設 `photo-sync-integrity-build17.test.mjs` の 2 ケース、`DashboardHtml.cs` 内スクリプトおよび `WebDashboardHtml.kt` 内スクリプトの構文チェックエラー 0 件）。
+- **C# 構文静的検査**：`tools/FurimaServerNative.cs` の括弧・丸括弧・角括弧バランス一致および C# 5 非互換構文（`$"` / `?.` / `nameof` / インライン `out` 宣言）混入なしを確認（Windows 版 `.exe` コンパイルは `push` 後の GitHub Actions `.github/workflows/build-check.yml` で検証予定）。
+
+別エージェントによるコードレビューをお願いしたい。
+

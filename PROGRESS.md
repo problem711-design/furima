@@ -11,7 +11,7 @@
 > - **現行実装計画書 (フェーズ 4 / 重大バグ修復 ➔ PC写真ギャラリー改良＆写真ゴミ箱[案A] ➔ 同期ステータス％表示＆メモリ安定化)**: [PLAN_SYNC_STATUS_AND_MEMORY.md](PLAN_SYNC_STATUS_AND_MEMORY.md)
 > - **現行実装計画書 (フェーズ 5 / 「Museに送る」一括画像加工連携)**: [PLAN_CLAUDE_SEND_PHASE5.md](PLAN_CLAUDE_SEND_PHASE5.md)（2026-11-16 策定・**協議済み（計画書 §10 に協議結果を記録）** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE5.md](REVIEW_CLAUDE_SEND_PHASE5.md)）
 > - **次期実装計画書 (フェーズ 6 / 「Museに送る」運用自動化・見える化・出品ステータス拡張)**: [PLAN_CLAUDE_SEND_PHASE6.md](PLAN_CLAUDE_SEND_PHASE6.md)（2026-11-16 策定・**大枠完全合意（計画書 §9・§10・§12）。旧体系では 6-1a／6-1b を Build 14・15、§12 修正を Build 16、ビルドエラー修正を Build 17 として実施。その後ユーザー指示で新体系へ移行: ステップ1（6-2・6-3）= v1.1、ステップ2（6-4）= v1.2、ステップ3（6-5〜6-7）= v1.3、Build はサブフェーズごとに 1 から付番。現在はステップ3（6-5 合格・6-6 は §39 却下を受け是正合意待ち）** / 事前レビュー: [REVIEW_CLAUDE_SEND_PHASE6.md](REVIEW_CLAUDE_SEND_PHASE6.md)）
-> - **緊急バグ修正実装計画書 (`v1.4 Build 17` / 写真同期整合性バグ修正＆画面オフ耐性強化)**: [PLAN_PHOTO_SYNC_INTEGRITY_FIX.md](PLAN_PHOTO_SYNC_INTEGRITY_FIX.md)（2026-11-20 策定・Step 5 追加機能より最優先で実施）
+> - **緊急バグ修正実装計画書 (`v1.4 Build 17` / 写真同期整合性バグ修正＆画面オフ耐性強化)**: [PLAN_PHOTO_SYNC_INTEGRITY_FIX.md](PLAN_PHOTO_SYNC_INTEGRITY_FIX.md)（2026-11-20 策定・実装完了／レビュー依頼 §82）
 > - **フェーズ 6 コードレビュー進捗・引き継ぎ台帳**: [REVIEW_PROGRESS_PHASE6.md](REVIEW_PROGRESS_PHASE6.md)（**2026-11-18 凍結**。記録は [REVIEW_CLAUDE_SEND_PHASE6.md](REVIEW_CLAUDE_SEND_PHASE6.md) に一本化済み（計画 §39）。台帳は過去分の参照用）
 
 ---
@@ -41,7 +41,7 @@
 
 ## 全体ロードマップ (第2世代アーキテクチャ)
 
-現在のバージョン：**`v1.4` (Build 16)** （新体系: ステップ1 = 6-2＋6-3 **完了**、ステップ2 = 6-4 **完了**（§31 段階2レビュー合格）。ステップ3 = 6-5・6-6 **完了**。ステップ3完了レビュー §48 合格、横断監査 §49 の 49-1〜49-5 は Build 13 で是正し、再レビュー §51 で全件解消・合格。ユーザーのビルド確認と実機での全フロー動作確認も完了し、**フェーズ 6 は完了**した。ステップ 4（v1.4）は §38 の実装順で進行中：バッチ 1（6-10 の運用変更部分）**完了**、バッチ 2（6-9・Build 14）**完了**（再レビュー §63 合格・CI ビルド確認済み）、バッチ 3（6-10・Build 15）**完了**（再レビュー §66 合格・CI 通過済み）。バッチ 4（6-8・Build 16）**完了**（再レビュー §69 合格・CI 通過済み）。これでステップ 4（v1.4）の全バッチが完了した追加フェーズ 6-8〜6-10（§35〜§37）は最終実装案レビュー §52 で条件付き合意済み。§38 の実装順（バッチ 1=運用変更／バッチ 2=Build 14／バッチ 3=Build 15／バッチ 4=Build 16）で、各バッチの着手条件（§52 の C1〜C7）を満たして進める / 旧体系は v1.0.0 Build 17 まで）
+現在のバージョン：**`v1.4` (Build 17)** （新体系: ステップ1 = 6-2＋6-3 **完了**、ステップ2 = 6-4 **完了**（§31 段階2レビュー合格）。ステップ3 = 6-5・6-6 **完了**。ステップ3完了レビュー §48 合格、横断監査 §49 の 49-1〜49-5 は Build 13 で是正し、再レビュー §51 で全件解消・合格。ユーザーのビルド確認と実機での全フロー動作確認も完了し、**フェーズ 6 は完了**した。ステップ 4（v1.4）は §38 の実装順でバッチ 1〜4（Build 14〜16）が完了し、さらに `v1.4 Build 16` で顕在化した写真同期整合性バグの緊急修正を最優先で実施して **`v1.4` (Build 17) の実装・単体テストを完了**した（別エージェントによるレビュー待ち / `PLAN_PHOTO_SYNC_INTEGRITY_FIX.md`・`REVIEW_CLAUDE_SEND_PHASE6.md` §82）。Step 5 の追加機能 `6-14`（`v1.5 Build 18`）および `6-13`（`v1.5 Build 19`）は本修正のレビュー合格・反映後に着手する）
 
 > **履歴の所在**: フェーズ 6 以前のロードマップ叙述と更新履歴は `PROGRESS_ARCHIVE_PHASE3-5.md` に切り離した（2026-11-18）。フェーズ 1〜2 の詳細は `PROGRESS_ARCHIVE_PHASE1.md` / `PROGRESS_ARCHIVE_PHASE2.md`、フェーズ 5 の計画・レビューは `PLAN_CLAUDE_SEND_PHASE5.md` / `REVIEW_CLAUDE_SEND_PHASE5.md` を参照。
 
@@ -88,6 +88,16 @@
 ---
 
 ## 更新履歴 (Changelog)
+
+### [2026-11-20] 写真同期整合性バグ修正 ＆ 画面オフ耐性強化 (バージョン 1.4 Build 17)
+- `PLAN_PHOTO_SYNC_INTEGRITY_FIX.md` の 5 本柱を最優先バッチとして実装完了した（詳細報告は `REVIEW_CLAUDE_SEND_PHASE6.md` §82）。
+- **柱 1（空 MD5・欠損写真の遮断と自動浄化）**: `FleaMarketRepository.saveItem()` の `existingFilePaths` 経路へファイル実在・サイズ・非空 MD5 検証と異常件数コールバック（`ItemEditScreen` で Toast 通知）を追加し、`PcServerClient.syncDeltaToPcServer`・`mergeServerItemsFromJson`・`FurimaServerNative.HandleSyncItems` の全送受信経路で空 MD5 を除外した。さらにスマホ同期前の純ゴースト自動浄化（`cleanupGhostBlankMd5Photos`）と PC 起動時 `LoadItemsDbFromDisk` の初回バックアップ（`.bak_empty_md5`）付き自動除去を追加した。
+- **柱 2（同期と編集中保存の競合排除）**: `ItemEditScreen` のアクティブ編集ガード（`DisposableEffect`）と `LaunchedEffect(lastSyncSuccessAt)` でのサムネイル切替パス追従、`saveItem()` の重い画像 I/O 先行化・Room `withTransaction` 化・`dbMutationMutex` 導入・`THUMB_` 照合フォールバック、`PcServerClient` Step 3 原本削除での編集中／`isDirty`／共有パス保護を実施した。
+- **柱 3（`isDirty` 解除タイミング是正）**: `syncDeltaToPcServer` における Step 1 直後の先行 `isDirty = false` 解除を廃止し、Step 2（`POST /api/sync/photo`）後に全期待 MD5 がサーバー保存確認済みと検証できた商品のみ解除する形に改めた。
+- **柱 4（画面オフ切断対策）**: `SyncCoordinator` によるアプリ全体状態共有と `dataSync` 種別の `PcSyncForegroundService`（`PARTIAL_WAKE_LOCK`・進捗通知・起動失敗時フォールバック）を新設し、手動同期・未送信変更/写真あり再接続同期・写真付き自動同期をサービス経由へ統合、`PcSyncScreen` へ進捗表示と任意の通知許可導線を追加した。
+- **柱 5（PC ダッシュボードの救済削除経路）**: `DashboardHtml.cs`（選択一括削除・拡大ビューア削除）と `FurimaServerNative.cs`（`TrashPhotosFromTargets` / `HandleDeletePhoto` / `HandleTrashPhotosBatch`）で、実体のない空 MD5 参照も確認付きで商品リストから直接除去できるよう拡張した。
+- **採番**: `v1.4 (Build 17)` / `versionCode 1417`（`app/build.gradle.kts`・`DashboardHtml.cs`・`WebDashboardHtml.kt` の 3 箇所統一）。Step 5 追加機能 `6-14` は `v1.5 Build 18`、`6-13` は `v1.5 Build 19` へ繰り下げ済み。
+- **検証**: Android コンパイル（`compile_applet`）・Android 単体/Robolectric テスト（21/21 合格）・JS テスト＆構文検証（15/15 合格、`WebDashboardHtml` 構文 OK）・C# 5 括弧/構文静的検証を確認。別エージェントへコードレビュー依頼中。
 
 ### [2026-11-17] コードレビュー修正一括 (バージョン 1.1 Build 5)
 - ステップ1総括レビュー（台帳 §5）の指摘 24-1〜24-8 を、レビュー §25〜§27 の往復で全面合意のうえ一括修正した（詳細は計画 §24）。
