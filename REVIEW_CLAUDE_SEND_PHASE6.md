@@ -2814,3 +2814,45 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 - **CI 検証**：`af1a219` 記録の GitHub Actions `build-check`（run `44865821799`）全ジョブ成功を確認。
 - **レビュー側ローカル検証**：`node --test tools/tests/*.mjs` **15/15 PASS**、`DashboardHtml.cs`／`WebDashboardHtml.kt` スクリプト `node --check` 0 エラー、`FurimaServerNative.cs` C# 5 非互換構文 0 件を確認。
 - **参考メモ（非ブロッカー）**：`PcSyncForegroundService` の `onTimeout` 経路（`forceTeardown()` の `activeTaskCount.set(0)` と旧タスク `finally -> finishTask()` の間に新 `onStartCommand` が挟まる極限条件）で旧タスクが新タスクのカウントを減算しうる理論的競合が残るが、Android 15+ の 6 時間上限到達時のみの境界であり実運用上の阻害要因ではない。
+---
+
+## 86. 追加フェーズ 6-14（§48）・6-13（§47 / §47.7 / §47.9）実装計画レビュー（2026-11-21）
+
+現行コードベース（`f2c1787` 時点）と突合し、計画 §48（6-14）および計画 §47・§47.7・§47.9（6-13）の設計精査を行った。
+
+- **判定サマリー**：
+  - **6-14（v1.5 Build 18 / 1518）**：**条件付き着工可**（計画 §48 への小さな補記 4 点のみで着工可能）。
+  - **6-13（v1.5 Build 19 / 1519）**：**着工保留・要計画改訂**（現行サーバー／C#5／Android 実装との間に設計の穴が 6 点あり、事前改訂と再レビューが必要）。
+
+### 86.1 フェーズ 6-14（計画 §48）精査結果・実装上の注意
+
+1. **Android 選択順の既実装資産と変更点（`ItemEditScreen.kt` / `PhotoPreviewDialog.kt`）**：
+   - `ItemEditScreen.kt` L183 の `selectedPhotoKeys` は既に `mutableStateListOf<String>()` であり、`togglePhotoSelection()`（L388-396）も末尾追加／除去、Step 3 パス追従（L352）もインプレース置換でタップ順を保持している。並び順送信になっていた原因は L404 `selectedExistingPaths = existingFilePaths.filter { ... }` 経由で L408 `claudeEligiblePhotos` を組み立てている点のみであるため、`claudeEligiblePhotos` を `selectedPhotoKeys.mapNotNull { ... }` ベースへ変更するだけでよい。
+   - 他画面の確認：`ItemDetailScreen.kt` L108 の `selectedPhotoIdsForGallery`（`Set<Int>`）は端末ギャラリー保存専用で Muse 送信機能を持たないため変更不要。`WebDashboardHtml.kt` もローカル閲覧用で対象外。
+2. **PC ライトボックス操作時の背面ビューア再描画（`DashboardHtml.cs`）**：
+   - `toggleViewerPhotoSelect()`（L2576）は `selectedViewerPhotoIndices` とヘッダー集計（`updateViewerSelectionBar()`）のみ更新するため、ライトボックス（`#photo-lightbox-modal` L482）から切り替えた際は **`renderViewerPhotos()` と `updateLightboxView()`** も呼んで背面カード枠とチェック状態を同期すること（モーダル背景の `onclick='closePhotoLightbox()'` と干渉しないよう `<label onclick='event.stopPropagation()'>` 必須）。
+3. **PC ポーリング中 ＆ ライトボックス内削除時の添字ズレ対策**：
+   - `selectedViewerPhotoIndices`（L1103）が配列添字ベースのため、`fetchItems()`（L1883-1897）での裏更新や `trashCurrentLightboxPhoto()`（L3446）での削除時に選択対象が別写真へズレるリスクがある。内部選択キーを `md5Hash` 優先の識別キーへ改めるか、更新・削除時に `selectedViewerPhotoIndices` を再マップすること。まとめ親商品（`checkIsBundle(item)`）では Muse 送信不可・ゴミ箱選択可である点もライトボックス表示に反映する。
+4. **推奨 UX 改善（任意）**：
+   - §46 の番号スタンプが「受け取った順」で振るため、`ItemEditScreen`・`PhotoPreviewDialog`（L123 `selectionKeys` を順序付きコレクションへ拡張）・`DashboardHtml.cs` のカード／`#lightbox-thumbs-strip`（L3408）に送信順番号（`#1, #2`）を表示すると誤送信を防げる。
+
+### 86.2 フェーズ 6-13（計画 §47 / §47.7 / §47.9）設計の穴・必要な API／代替案
+
+1. **【高】「取り込み箱（実フォルダ）」×「削除はギャラリー側のみ」の無限再取り込み矛盾（§47.9-1）**：
+   - 元ファイルをフォルダへ残したままギャラリーから削除（登録解除）すると、次回一覧表示時の走査で「未登録画像」として再取り込みされ無限復活する。
+   - **推奨案**：取り込み箱（例：`SyncDir/_reference_inbox/`）に入れたファイルは、取り込み時に管理ディレクトリ（例：`SyncDir/_reference_photos/{md5}.{ext}`）へ **`File.Move` で移す（Move-in 方式）**。これによりギャラリー削除後の再出現を防ぎつつ、再投入での再登録も可能になる。
+2. **【高】商品写真ストアとの実体共有によるファイル破壊と索引汚染（§47.7-1）**：
+   - 現行サーバーでは (a) `TrashPhotosFromTargets()`（`FurimaServerNative.cs` L4536-4553）が `IsHashReferencedByAnyItemLocked` のみで `_photo_trash` へ移動＆`hashToFilePathMap.Remove` する、(b) `SyncStore.GetCleanupCandidates()`（`SyncStore.cs` L723-864）が売却 30 日後に参考画像保護なしで物理削除する、(c) `IsIgnoredAutoImportPath()`（`FurimaServerNative.cs` L668）が `_photo_trash` しか除外しないため `ScanAndIndexLocalPhotos()` と `/api/sync/hashes` を汚染する、の 3 点で衝突する。
+   - **推奨案**：`SyncDir/_reference_photos/` ＋ `SyncDir/claude_references.json`（専用 `ReferencePhotoStore.cs`）として商品写真ストアから完全分離し、商品からの保存も `File.Copy` で複製する。あわせて `IsIgnoredAutoImportPath()` へ参考用ディレクトリを追加する。
+3. **【高】`.webp` 対応記載 vs `TryBuildClaudeDeliveryCopy`／.NET 4.x GDI+ 非対応（§47.9-1）**：
+   - `TryBuildClaudeDeliveryCopy()`（`FurimaServerNative.cs` L5961-5966）は JPEG/PNG 以外を HTTP 415 で拒否し、C# 5 / .NET Framework 4.x（`tools/build-exe.bat`）の `System.Drawing.Image.FromStream()`（L5970）は WebP デコードを標準サポートしていない。
+   - **是正案**：取り込み・受け入れ形式を **`jpg / jpeg / png`** に統一し、`.webp` 投入時は未対応としてスキップ／警告表示する。
+4. **【高】PC サーバーのサムネイル配信機能欠如 ＆ Android `Coil` Bearer 認証要件（§47.7-1 / §47.9-2）**：
+   - PC サーバーの `ServePhotoByHash(res, hash)`（L7120-7138）はフルサイズ原本返却のみで縮小配信を持たない（サムネ API があるのは Android 側 `LocalWebServer.kt` L644 のみ）。また PC サーバーは全ルート Bearer 必須（L1495）のため、Android の `AsyncImage` へ URL を直渡しすると 401 になる。
+   - **必要な実装**：PC サーバーへ参考画像用サムネイル生成・キャッシュ（長辺 320px JPEG を `_reference_thumbs/{md5}.jpg` へ保存、例：`GET /api/claude/references/{md5}/thumb` と原寸 `GET /api/claude/references/{md5}`）を明示新設し、Android 側は `ImageRequest.Builder(context).data(...).addHeader("Authorization", "Bearer $token")` または `PcServerClient` のキャッシュダウンロード経由で表示すること。
+5. **【中】ワーカー用取得ルートの分離・エラー混入防止・ホワイトリスト・終端 GC（§47.1 / §47.4）**：
+   - `HandleGetClaudeJobPhoto()`（L5791-5951）は `job.photos` 前提で 404/415 時に `RecordClaudeJobPhotoError()` へ記録し初回アクセスで `approved -> processing` 遷移も行うため、参考画像相乗り時は商品写真と同 MD5 競合や `job.errors` 汚染を招く。
+   - **推奨案**：ワーカー用取得は専用ルート **`GET /api/claude/jobs/{jobId}/reference`** に分離し、`IsTrustedClaudeExemptPath()`（L1512-1531）へ明示追加すること。また、ジョブ作成時 `HandleCreateClaudeJob` では `^[0-9a-f]{32}$`＋参考画像コレクション登録済み＋実ファイル存在を検証（不在時は 400）し、登録解除された参照中ファイルは `HandleCompleteClaudeJobLocked`・`HandleCancelClaudeJobLocked`・`ClaudeJobStore.CleanupOnStartup` 等で参照 0 になった時点で GC すること。
+6. **【中】送信時ピッカーの起動タイミング・多段モーダル競合 ＆ 空状態・フォルダ操作（§47.7-3）**：
+   - 送信ボタン押下後は PC（`openClaudeCustomRegisterModal`＋`confirm`）・スマホ（`ClaudeSendDialog.kt` `showRegisterConfirm`＋`showRegisterName`）ともに確認ダイアログが続くため、そこにピッカーを割り込ませず、**「参考画像を添付する」チェックを ON にした時点で選択（送信エリア／ダイアログ内に選択サムネイル＋変更/外す表示、未選択なら送信前に選択促進）** とするフローを推奨する。
+   - 0 件時の空案内・`POST /api/claude/references/open-folder`（`HandleOpenFolder` L2733 同型）・`SyncDtos.kt`（`CreateClaudeJobRequestDto` / `ClaudeJobDto` の非 null `= ""` 既定値）・§43 ワーカー手順事前レビュー後の本番適用も計画へ明記すること。
