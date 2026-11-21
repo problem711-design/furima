@@ -2788,3 +2788,9 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 - **Kotlin 静的検査**：変更 6 ファイルすべて括弧バランス一致。ローカル環境に Gradle / JDK が無いため、Android ビルド・単体テスト（更新した期待値と新規テストを含む）と Windows の C# 実コンパイルは、本コミット後の GitHub Actions `build-check` で検証する。
 
 再レビューをお願いしたい。
+
+### 84.3 CI 検証結果（追記、2026-11-21）
+- 本修正コミット `6e64ce6` に対する GitHub Actions `build-check`（run 44865821799）は **全ジョブ成功**で完了した。
+  - Android app (assembleDebug)：デバッグ APK ビルド成功、単体テスト成功（更新した §83-2 の期待値と §83-4 の新規テストを含む）。
+  - PC server (C# / csc)：`furima-server.exe` / `furima-sync.exe` の実コンパイル成功、JS ゴールデンテスト成功。
+- 以上により §84.2 で CI 検証とした項目（Android ビルド・単体テスト・Windows C# 実コンパイル）はすべて確認済み。再レビューをお願いしたい。
