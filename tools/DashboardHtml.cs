@@ -207,7 +207,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.5 (Build 19)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.5 (Build 20)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -473,6 +473,13 @@ public static class DashboardHtml
                     <button type='button' onclick='clearViewerReference()' class='px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-600 font-bold'>外す</button>
                 </span>
                 <span id='viewer-claude-reference-empty' class='text-slate-500'>未選択（チェックを入れると選択画面が開きます）</span>
+            </div>
+            <div id='viewer-claude-stamp-bar' class='bg-violet-50/70 px-5 py-1.5 border-b border-violet-100 flex flex-wrap items-center gap-2 text-[11px] text-slate-700'>
+                <label class='flex items-center gap-1.5 font-bold cursor-pointer' title='結果写真の左上に受け取り順の番号を振ります'>
+                    <input type='checkbox' id='viewer-claude-stamp-check' checked class='w-3.5 h-3.5 accent-violet-600 cursor-pointer'>
+                    番号を振る
+                </label>
+                <span id='viewer-claude-stamp-note' class='hidden text-amber-600'>※本文に「番号なし」が含まれるため番号は振られません</span>
             </div>
 
             <div class='p-4 flex-1 overflow-y-auto custom-scroll space-y-4'>
@@ -2571,6 +2578,8 @@ public static class DashboardHtml
             currentViewerTab = 'group';
             selectedViewerPhotoKeys.clear();
             clearViewerReference();
+            // §94.2-2: 番号チェックは開くたびに既定 ON へ戻す (他商品への引きずり防止)
+            resetViewerStampCheck();
 
             document.getElementById('viewer-title').innerText = '写真ギャラリー: ' + (item.title || '無題');
             const isBundle = checkIsBundle(item);
@@ -2647,6 +2656,9 @@ public static class DashboardHtml
             if (bundleNote) bundleNote.classList.toggle('hidden', !isBundle);
             const refBar = document.getElementById('viewer-claude-reference-bar');
             if (refBar) refBar.classList.toggle('hidden', isBundle);
+            const stampBar = document.getElementById('viewer-claude-stamp-bar');
+            if (stampBar) stampBar.classList.toggle('hidden', isBundle);
+            if (typeof updateViewerStampNote === 'function') updateViewerStampNote();
         }
 
         function toggleViewerPhotoSelect(index, event) {
@@ -2982,6 +2994,37 @@ public static class DashboardHtml
             } catch (e) {
                 showToast('エラー: ' + e.message);
             }
+        }
+
+        // フェーズ 6-15 (§50): 番号スタンプのチェック状態と、本文キーワードによる実効判定
+        function viewerStampChecked() {
+            const el = document.getElementById('viewer-claude-stamp-check');
+            return el ? !!el.checked : true;
+        }
+
+        function viewerEffectivePromptText() {
+            if (viewerClaudeSelType === 'custom') return viewerClaudeCustomText || '';
+            const tpl = (pcSettings.promptTemplates || []).find(t => t.id === viewerClaudeSelTemplateId);
+            return tpl ? (tpl.content || '') : '';
+        }
+
+        function viewerStampEffective() {
+            if (!viewerStampChecked()) return false;
+            const text = viewerEffectivePromptText();
+            return !(text && text.indexOf('番号なし') >= 0);
+        }
+
+        function updateViewerStampNote() {
+            const note = document.getElementById('viewer-claude-stamp-note');
+            if (!note) return;
+            const text = viewerEffectivePromptText();
+            note.classList.toggle('hidden', !(text && text.indexOf('番号なし') >= 0));
+        }
+
+        function resetViewerStampCheck() {
+            const el = document.getElementById('viewer-claude-stamp-check');
+            if (el) el.checked = true;
+            updateViewerStampNote();
         }
 
         function updateViewerReferenceBar() {
@@ -3364,7 +3407,8 @@ public static class DashboardHtml
             const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
             const tplName = tpl ? tpl.name : '';
             const refNote = viewerClaudeReference ? '\n参考画像: ' + (viewerClaudeReference.displayName || viewerClaudeReference.md5) : '';
-            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」で Muse に送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + refNote + '\n\n対象ファイル:\n' + listText)) return;
+            const stampNote = '\n番号スタンプ: ' + (viewerStampEffective() ? '振る' : '振らない');
+            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」で Muse に送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + refNote + stampNote + '\n\n対象ファイル:\n' + listText)) return;
             const tplExtras = { templateId: templateId };
             if (viewerClaudeReference) { tplExtras.referenceMd5 = viewerClaudeReference.md5; tplExtras.referenceFileName = viewerClaudeReference.displayName || ''; }
             await postViewerClaudeJob(item, photos, targets, queue, queueLabel, tplExtras);
@@ -3425,7 +3469,8 @@ public static class DashboardHtml
             const nameNote = registerName ? '\nテンプレート「' + registerName + '」として登録します' : '';
             // §92.3-1: テンプレート送信の確認文と揃え、参考画像の添付も明示する
             const refNote = pending.reference ? '\n参考画像: ' + (pending.reference.displayName || pending.reference.fileName) : '';
-            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトで Muse に送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + refNote + '\n\n対象ファイル:\n' + pending.listText)) return;
+            const stampNote = '\n番号スタンプ: ' + (viewerStampEffective() ? '振る' : '振らない');
+            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトで Muse に送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + refNote + stampNote + '\n\n対象ファイル:\n' + pending.listText)) return;
             const extras = { promptText: pending.text };
             if (registerName) extras.registerTemplateName = registerName;
             if (pending.reference) { extras.referenceMd5 = pending.reference.md5; extras.referenceFileName = pending.reference.displayName || ''; }
@@ -3439,6 +3484,8 @@ public static class DashboardHtml
             try {
                 const payload = { itemId: item.id, itemUuid: item.syncUuid || '', photos: targets, origin: 'pc', queue: queue };
                 Object.assign(payload, extras);
+                // フェーズ 6-15 (§50): 番号スタンプのチェック状態をジョブへ載せる
+                payload.stampNumber = viewerStampChecked();
                 const res = await fetch('/api/claude/jobs', {
                     method: 'POST',
                     headers: getHeaders(),
@@ -3458,6 +3505,8 @@ public static class DashboardHtml
                 if (data.templateRegistered) msg += '（テンプレートに登録しました）';
                 if (data.templateRegisterError) msg += '（テンプレート登録は失敗: ' + data.templateRegisterError + '）';
                 showToast(msg);
+                // §94.2-2: 送信成功後は番号チェックを既定 ON へ戻す (次回送信への引きずり防止)
+                resetViewerStampCheck();
                 // §40.4: 登録できたら設定を取り直して一覧へ即反映する
                 if (data.templateRegistered) await fetchSettings();
                 openClaudeJobsModal(queue === 'waiting' ? ""waiting"" : ""active"");

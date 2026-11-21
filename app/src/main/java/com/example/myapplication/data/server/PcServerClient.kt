@@ -252,6 +252,7 @@ class PcServerClient(
         customPromptName: String? = null,
         registerTemplateName: String? = null,
         referenceMd5: String = "",
+        stampNumber: Boolean = true,
         referenceFileName: String = "",
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
@@ -278,6 +279,7 @@ class PcServerClient(
                 customPromptName = customPromptName,
                 registerTemplateName = registerTemplateName,
                 referenceMd5 = referenceMd5,
+                stampNumber = stampNumber,
                 referenceFileName = referenceFileName
             )
             val body = createClaudeJobRequestAdapter.toJson(reqDto)

@@ -30,6 +30,11 @@ public class ClaudeJobError
 
 public class ClaudeJob
 {
+    // フェーズ 6-15 (§50.4-1 / §94.2-1): stampNumber の既定 true はこの引数なしコンストラクタで保証する。
+    // C# 5 では自動プロパティ初期化子が使えず、素の bool 追加では旧 JSON (キーなし) の
+    // 読み込みで false (番号なし) に化けてしまうため、コンストラクタでの初期化が必須。
+    public ClaudeJob() { stampNumber = true; }
+
     public string jobId { get; set; }
     public int itemId { get; set; }
     public string itemUuid { get; set; }
@@ -51,6 +56,8 @@ public class ClaudeJob
     // フェーズ 6-13 (§47.10): 参考画像の添付 (任意・1 枚)。未指定は "" で統一する。
     public string referenceMd5 { get; set; }
     public string referenceFileName { get; set; }
+    // フェーズ 6-15 (§50): 番号スタンプの有無。既定 true (コンストラクタで保証)。
+    public bool stampNumber { get; set; }
     public long completedAt { get; set; }
     public bool acknowledged { get; set; }
     public long acknowledgedAt { get; set; }
@@ -398,6 +405,7 @@ public static class ClaudeJobStore
             errors = new List<ClaudeJobError>(),
             referenceMd5 = job.referenceMd5 ?? "",
             referenceFileName = job.referenceFileName ?? "",
+            stampNumber = job.stampNumber,
             completedAt = job.completedAt,
             acknowledged = job.acknowledged,
             acknowledgedAt = job.acknowledgedAt,

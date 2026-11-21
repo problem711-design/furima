@@ -5223,6 +5223,7 @@ class FurimaServerNative
             { "promptText", job.promptText ?? "" },
             { "referenceMd5", job.referenceMd5 ?? "" },
             { "referenceFileName", job.referenceFileName ?? "" },
+            { "stampNumber", job.stampNumber },
             { "origin", job.origin ?? "" },
             { "queue", string.IsNullOrEmpty(job.queue) ? "manual" : job.queue },
             { "status", job.status ?? "" },
@@ -5291,6 +5292,13 @@ class FurimaServerNative
             // フェーズ 6-13 (§47.10-5): 参考画像の添付 (任意・1 枚)。検証は商品解決後にロック内で行う。
             string referenceMd5 = (json.Value<string>("referenceMd5") ?? "").Trim().ToLowerInvariant();
             string referenceFileName = (json.Value<string>("referenceFileName") ?? "").Trim();
+            // フェーズ 6-15 (§50.2-2 / §94.2-1): 番号スタンプ。未指定・真偽値でない場合は true に正規化する
+            bool stampNumber = true;
+            var stampTok = json["stampNumber"];
+            if (stampTok != null && stampTok.Type == JTokenType.Boolean)
+            {
+                stampNumber = stampTok.Value<bool>();
+            }
 
             var reqPhotos = new List<ClaudeJobPhoto>();
             JArray photosArr = json["photos"] as JArray;
@@ -5430,7 +5438,8 @@ class FurimaServerNative
                                     origin = origin,
                                     queue = queue,
                                     referenceMd5 = referenceMd5,
-                                    referenceFileName = refNameSnapshot
+                                    referenceFileName = refNameSnapshot,
+                                    stampNumber = stampNumber
                                 };
                                 created = ClaudeJobStore.CreateJob(job);
                             }

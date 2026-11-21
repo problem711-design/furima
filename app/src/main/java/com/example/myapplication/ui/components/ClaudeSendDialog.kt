@@ -60,10 +60,10 @@ fun ClaudeSendDialog(
     isConnected: Boolean,
     freeTextHistory: List<String>,
     onDismiss: () -> Unit,
-    onFetchReferences: (suspend () -> List<ClaudeReferenceDto>)? = null,
+    onFetchReferences: (suspend () -> List<ClaudeReferenceDto>?)? = null,
     referenceImageUrl: ((md5: String, thumb: Boolean) -> Pair<String, String>?)? = null,
-    onSendTemplate: (TextTemplate, String, ClaudeReferenceDto?) -> Unit,
-    onSendCustom: (promptText: String, queue: String, registerTemplateName: String?, ClaudeReferenceDto?) -> Unit
+    onSendTemplate: (TextTemplate, String, ClaudeReferenceDto?, Boolean) -> Unit,
+    onSendCustom: (promptText: String, queue: String, registerTemplateName: String?, ClaudeReferenceDto?, Boolean) -> Unit
 ) {
     var useCustom by remember { mutableStateOf(templates.isEmpty()) }
     var selectedId by remember { mutableStateOf(templates.firstOrNull()?.id) }
@@ -75,6 +75,8 @@ fun ClaudeSendDialog(
     var showRegisterName by remember { mutableStateOf(false) }
     var registerName by remember { mutableStateOf("") }
     var registerError by remember { mutableStateOf<String?>(null) }
+    // フェーズ 6-15 (§50): 番号スタンプのチェック (既定 ON)
+    var stampNumber by remember { mutableStateOf(true) }
     // フェーズ 6-13 (§47.10): 参考画像の添付 (チェック ON でピッカーを開く。管理は PC のみ)
     var attachReference by remember { mutableStateOf(false) }
     var selectedReference by remember { mutableStateOf<ClaudeReferenceDto?>(null) }
@@ -95,12 +97,17 @@ fun ClaudeSendDialog(
         if (showReferencePicker) {
             pickerLoading = true
             pickerError = false
-            pickerReferences = try {
-                onFetchReferences?.invoke() ?: emptyList()
+            // §94.1 メモ: 取得失敗は null で返る (空リスト = 参考画像なし と区別する)
+            val refs = try {
+                onFetchReferences?.invoke()
             } catch (e: Exception) {
-                // §92.2-2: 取得失敗を「参考画像がありません」と混同しない
+                null
+            }
+            if (refs == null) {
                 pickerError = true
-                emptyList()
+                pickerReferences = emptyList()
+            } else {
+                pickerReferences = refs
             }
             pickerLoading = false
         }
@@ -138,7 +145,7 @@ fun ClaudeSendDialog(
                     }
                     TextButton(onClick = {
                         showRegisterConfirm = false
-                        onSendCustom(customTrimmed, queue, null, selectedReference)
+                        onSendCustom(customTrimmed, queue, null, selectedReference, stampNumber)
                     }) {
                         Text("登録しないで送信")
                     }
@@ -177,7 +184,7 @@ fun ClaudeSendDialog(
                             registerError = "同名のテンプレートが既にあります: $name"
                         else -> {
                             showRegisterName = false
-                            onSendCustom(customTrimmed, queue, name, selectedReference)
+                            onSendCustom(customTrimmed, queue, name, selectedReference, stampNumber)
                         }
                     }
                 }) {
@@ -445,6 +452,30 @@ fun ClaudeSendDialog(
                         }
                     }
                 }
+                // フェーズ 6-15 (§50): 番号スタンプのチェック (既定 ON)。
+                // 本文に「番号なし」が含まれる場合はチェック状態によらず番号なしになる (§94.2-2 の注記)
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { stampNumber = !stampNumber }
+                        .padding(vertical = 2.dp)
+                ) {
+                    Checkbox(
+                        checked = stampNumber,
+                        onCheckedChange = { stampNumber = it }
+                    )
+                    Text("番号を振る", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                val effectivePromptText = if (useCustom) customText else (selected?.content ?: "")
+                if (effectivePromptText.contains("番号なし")) {
+                    Text(
+                        "※本文に「番号なし」が含まれるため、番号は振られません",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
                 // フェーズ 6-13 (§47.10): 参考画像の添付 (チェック ON でピッカーを開く)
                 if (onFetchReferences != null) {
                     Spacer(modifier = Modifier.height(12.dp))
@@ -532,7 +563,7 @@ fun ClaudeSendDialog(
                     if (useCustom) {
                         showRegisterConfirm = true
                     } else {
-                        selected?.let { onSendTemplate(it, queue, selectedReference) }
+                        selected?.let { onSendTemplate(it, queue, selectedReference, stampNumber) }
                     }
                 },
                 enabled = sendEnabled

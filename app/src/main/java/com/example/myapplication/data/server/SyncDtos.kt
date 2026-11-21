@@ -128,7 +128,9 @@ data class CreateClaudeJobRequestDto(
     @param:Json(name = "registerTemplateName") val registerTemplateName: String? = null,
     // フェーズ 6-13 (§47.10): 参考画像の添付 (任意・1 枚)。未指定は "" で統一する
     @param:Json(name = "referenceMd5") val referenceMd5: String = "",
-    @param:Json(name = "referenceFileName") val referenceFileName: String = ""
+    @param:Json(name = "referenceFileName") val referenceFileName: String = "",
+    // フェーズ 6-15 (§50): 番号スタンプの有無。既定 true (§94.2-1)
+    @param:Json(name = "stampNumber") val stampNumber: Boolean = true
 )
 
 @JsonClass(generateAdapter = true)
@@ -151,6 +153,7 @@ data class ClaudeJobDto(
     // フェーズ 6-13 (§47.10): 参考画像の添付 (任意・1 枚)。未指定は "" で統一する
     @param:Json(name = "referenceMd5") val referenceMd5: String = "",
     @param:Json(name = "referenceFileName") val referenceFileName: String = "",
+    @param:Json(name = "stampNumber") val stampNumber: Boolean = true,
     @param:Json(name = "results") val results: List<ClaudeJobResultDto> = emptyList(),
     @param:Json(name = "errors") val errors: List<ClaudeJobErrorDto> = emptyList()
 )

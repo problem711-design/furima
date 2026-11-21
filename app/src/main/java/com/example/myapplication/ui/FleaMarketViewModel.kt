@@ -394,6 +394,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         customPromptName: String? = null,
         registerTemplateName: String? = null,
         referenceMd5: String = "",
+        stampNumber: Boolean = true,
         referenceFileName: String = "",
         onError: (String) -> Unit = {},
         onSuccess: (com.example.myapplication.data.server.PcServerClient.ClaudeJobCreateResult) -> Unit
@@ -409,6 +410,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 customPromptName = customPromptName,
                 registerTemplateName = registerTemplateName,
                 referenceMd5 = referenceMd5,
+                stampNumber = stampNumber,
                 referenceFileName = referenceFileName
             )
             if (result.success) {
@@ -432,9 +434,10 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     // フェーズ 6-13 (§47.10): 参考画像の一覧取得と表示用 URL (スマホは取得・選択のみ)
-    suspend fun fetchClaudeReferences(): List<com.example.myapplication.data.server.ClaudeReferenceDto> {
-        if (!isPcServerConnected.value) return emptyList()
-        return pcServerClient.fetchClaudeReferences()?.references ?: emptyList()
+    // §94.1 メモ: 失敗時は null を返し、「参考画像がありません」(空リスト) と区別できるようにする
+    suspend fun fetchClaudeReferences(): List<com.example.myapplication.data.server.ClaudeReferenceDto>? {
+        if (!isPcServerConnected.value) return null
+        return pcServerClient.fetchClaudeReferences()?.references
     }
 
     fun claudeReferenceImageUrl(md5: String, thumb: Boolean): Pair<String, String>? {
