@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -22,6 +23,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -79,6 +81,7 @@ fun ClaudeSendDialog(
     var showReferencePicker by remember { mutableStateOf(false) }
     var pickerReferences by remember { mutableStateOf<List<ClaudeReferenceDto>>(emptyList()) }
     var pickerLoading by remember { mutableStateOf(false) }
+    var pickerError by remember { mutableStateOf(false) }
     var pickerPreview by remember { mutableStateOf<ClaudeReferenceDto?>(null) }
     val dialogContext = LocalContext.current
     fun referenceImageModel(md5: String, thumb: Boolean): ImageRequest? {
@@ -91,9 +94,12 @@ fun ClaudeSendDialog(
     LaunchedEffect(showReferencePicker) {
         if (showReferencePicker) {
             pickerLoading = true
+            pickerError = false
             pickerReferences = try {
                 onFetchReferences?.invoke() ?: emptyList()
             } catch (e: Exception) {
+                // §92.2-2: 取得失敗を「参考画像がありません」と混同しない
+                pickerError = true
                 emptyList()
             }
             pickerLoading = false
@@ -210,6 +216,13 @@ fun ClaudeSendDialog(
                             CircularProgressIndicator()
                         }
                     }
+                    pickerError -> {
+                        Text(
+                            "参考画像の取得に失敗しました。PCサーバーとの接続を確認して、開き直してください。",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                     pickerReferences.isEmpty() -> {
                         Text(
                             "参考画像がありません。PCの管理画面（Muse連携の「参考画像」）から登録してください。",
@@ -261,40 +274,45 @@ fun ClaudeSendDialog(
     }
 
     // 参考画像の原寸プレビュー (高解像度をその場で取得して表示する)
+    // §92.2-2: Dialog はウィンドウ背景が透過するため、Surface で背景を持たせる
     val previewRef = pickerPreview
     if (previewRef != null) {
         Dialog(onDismissRequest = { pickerPreview = null }) {
-            Column(
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(16.dp),
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(16.dp)
             ) {
-                AsyncImage(
-                    model = referenceImageModel(previewRef.md5, false),
-                    contentDescription = previewRef.displayName,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                )
-                Text(
-                    previewRef.displayName.ifBlank { previewRef.fileName },
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                Row {
-                    TextButton(onClick = { pickerPreview = null }) {
-                        Text("戻る")
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    TextButton(onClick = {
-                        selectedReference = previewRef
-                        attachReference = true
-                        pickerPreview = null
-                        showReferencePicker = false
-                    }) {
-                        Text("この画像にする")
+                Column(modifier = Modifier.padding(16.dp)) {
+                    AsyncImage(
+                        model = referenceImageModel(previewRef.md5, false),
+                        contentDescription = previewRef.displayName,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                    )
+                    Text(
+                        previewRef.displayName.ifBlank { previewRef.fileName },
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Row {
+                        TextButton(onClick = { pickerPreview = null }) {
+                            Text("戻る")
+                        }
+                        Spacer(modifier = Modifier.weight(1f))
+                        TextButton(onClick = {
+                            selectedReference = previewRef
+                            attachReference = true
+                            pickerPreview = null
+                            showReferencePicker = false
+                        }) {
+                            Text("この画像にする")
+                        }
                     }
                 }
             }

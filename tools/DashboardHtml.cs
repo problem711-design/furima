@@ -2661,7 +2661,8 @@ public static class DashboardHtml
             } else {
                 selectedViewerPhotoKeys.add(key);
             }
-            updateViewerSelectionBar(photos.length);
+            // §92.2-1: 選択枠と送信順バッジを即時再描画する (renderViewerPhotos 内で選択バーも更新される)
+            renderViewerPhotos();
         }
 
         function toggleSelectAllViewerPhotos() {
@@ -3422,7 +3423,9 @@ public static class DashboardHtml
             }
             closeClaudeCustomRegisterModal();
             const nameNote = registerName ? '\nテンプレート「' + registerName + '」として登録します' : '';
-            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトで Muse に送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + '\n\n対象ファイル:\n' + pending.listText)) return;
+            // §92.3-1: テンプレート送信の確認文と揃え、参考画像の添付も明示する
+            const refNote = pending.reference ? '\n参考画像: ' + (pending.reference.displayName || pending.reference.fileName) : '';
+            if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトで Muse に送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + refNote + '\n\n対象ファイル:\n' + pending.listText)) return;
             const extras = { promptText: pending.text };
             if (registerName) extras.registerTemplateName = registerName;
             if (pending.reference) { extras.referenceMd5 = pending.reference.md5; extras.referenceFileName = pending.reference.displayName || ''; }

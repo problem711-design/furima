@@ -5924,6 +5924,13 @@ class FurimaServerNative
                 string fileName = Path.GetFileName(path);
                 if (string.IsNullOrEmpty(fileName)) continue;
                 if (fileName.StartsWith(".") || fileName.StartsWith("~")) continue;
+                // §92.3-2: 対象外拡張子はファイルを開かず未対応へ回す (ポーリング毎の全量読込を避ける)
+                string extLower = Path.GetExtension(fileName).ToLowerInvariant();
+                if (extLower != ".jpg" && extLower != ".jpeg" && extLower != ".png")
+                {
+                    unsupported.Add(fileName);
+                    continue;
+                }
                 byte[] raw;
                 try
                 {
@@ -6254,7 +6261,13 @@ class FurimaServerNative
             }
             ReferencePhotoStore.EnsureDirs();
             string thumbPath = Path.Combine(ReferencePhotoStore.GetThumbsDir(), md5 + ".jpg");
-            if (!File.Exists(thumbPath))
+            byte[] bytes = null;
+            if (File.Exists(thumbPath))
+            {
+                // キャッシュ読み込みに失敗 (競合・破損) したら再生成へフォールバックする
+                try { bytes = File.ReadAllBytes(thumbPath); } catch (Exception) { bytes = null; }
+            }
+            if (bytes == null)
             {
                 string src = ReferencePhotoStore.ResolveFilePath(md5);
                 if (string.IsNullOrEmpty(src))
@@ -6271,9 +6284,18 @@ class FurimaServerNative
                     SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "サムネイルを生成できない画像形式です" } });
                     return;
                 }
-                try { File.WriteAllBytes(thumbPath, thumb); } catch (Exception) { }
+                // §92.2-3: 生成したバイト列はメモリからそのまま配信する。キャッシュ保存は
+                // 一時ファイル経由のベストエフォートとし、失敗しても 500 にしない
+                bytes = thumb;
+                try
+                {
+                    string tmpPath = thumbPath + ".tmp";
+                    File.WriteAllBytes(tmpPath, thumb);
+                    if (File.Exists(thumbPath)) File.Delete(thumbPath);
+                    File.Move(tmpPath, thumbPath);
+                }
+                catch (Exception) { }
             }
-            byte[] bytes = File.ReadAllBytes(thumbPath);
             res.ContentType = "image/jpeg";
             res.ContentLength64 = bytes.Length;
             res.OutputStream.Write(bytes, 0, bytes.Length);
