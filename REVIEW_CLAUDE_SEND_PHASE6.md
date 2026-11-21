@@ -2881,3 +2881,41 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 6. **ピッカーのタイミング**：送信後の確認ダイアログ列へ割り込ませず、**チェック ON の時点で開く**フローへ変更した。空状態の案内、フォルダを開く操作、DTO の非 null 既定値、ワーカー手順の事前レビューも計画に明記した。
 
 改訂後の計画 §47.10 で再レビューをお願いしたい。6-13（`v1.5 Build 19`）は再レビュー通過まで着工しない。
+
+## 88. 改訂計画再レビュー（コミット `604b3b9`: §48.5・§47.10）（2026-11-21）
+
+### 88.1 結論
+- **6-14（§48.5 / `v1.5 Build 18`）**：**承認（着工可）**。§86.1 の指摘 4 点が妥当かつ最小変更に反映されている。
+- **6-13（§47.10 / `v1.5 Build 19`）**：**条件付き承認（着工可）**。§86.2 で指摘した設計の穴 6 点はすべて構造的に解消された。下記の実装時ガードをコード側へ織り込む前提で着工を許可する（計画書の再差し戻しは不要）。
+
+---
+
+### 88.2 6-14（§48.5）の実装時注意点
+1. **【中】PC 側「識別キー化」における `photoId == 0` の扱い（§48.5-3）**：
+   - §48.5-3 は「`photoId` を主、空 MD5 でなければ `md5Hash` を検証に併用。識別子を持たない旧データに限り添字再マップ」としているが、現行サーバーでは **PC で新規追加・生成された写真もスマホ同期前は `id = 0`（未採番）** となる。
+     - フォルダ自動取り込み `CommitAutoImportedPhotosBatch`（`tools/FurimaServerNative.cs` L1180：`{ "id", 0 }`）
+     - PC ブラウザのドラッグ＆ドロップ追加（同 L4158：`{ "id", 0 }`）
+     - Muse 加工結果の自動登録（同 L6362 経由で `CommitAutoImportedPhotosBatch` を呼ぶため同じく `id = 0`）
+   - したがって `photoId > 0` だけを一次キーにして `id == 0` を添字再マップへ逃がすと、PC 追加・Muse 結果の直後に添字ズレが再発する。`photoId` 有無にかかわらず **`md5Hash`（まとめ商品混在を考慮するなら `childItemId` 併用）を一次安定キー** とし、`photoId > 0` は併合照合、`md5Hash` が空の壊れた参照のみ `photoId > 0` または添字再マップへ回すこと。また JS `Set` の挿入順を崩さないこと。
+2. **ライトボックス内削除後の選択整合（§48.5-2）**：
+   - `trashCurrentLightboxPhoto()`（`tools/DashboardHtml.cs` L3483）は現在 `selectedViewerPhotoIndices.clear()` としている。識別キー化後は「削除対象キーのみ外す（または既存どおり全解除）」を決め、背面カード（`renderViewerPhotos()`）・サムネ列・選択バー（`updateViewerSelectionBar()`）と同期させること。
+
+---
+
+### 88.3 6-13（§47.10）で実装時に織り込むべき細部ガード（4 点）
+1. **【中】ビルドスクリプトと CI ワークフローの同時更新（§47.10-1）**：
+   - `tools/build-exe.bat` および `.github/workflows/build-check.yml` は、いずれも `.cs` ファイルを明示列挙して `csc.exe` に渡している（`FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs`）。
+   - 参考画像専用ストアを新ファイル（例：`ReferencePhotoStore.cs`）へ切り出す場合は、**必ず `tools/build-exe.bat` と `.github/workflows/build-check.yml` の双方へ追加** すること。
+   - あわせて `IsIgnoredAutoImportPath()`（`tools/FurimaServerNative.cs` L668-679）へ **取り込み箱・`_reference_photos`・`_reference_thumbs` の 3 パスすべて** を追加すること。
+2. **【中】取り込み箱（Move-in）走査時の境界ケース（§47.10-2 / §47.10-3）**：
+   - **コピー中ロック対策**：エクスプローラー等からの大容量画像投入中に走査が走ると `File.Move` が共有違反（`IOException`）になる。移動失敗時は元ファイルを削除・破損させず、その回はスキップして次回走査に回すこと。
+   - **マジックバイト検証**：拡張子（`jpg / jpeg / png`）だけでなく既存の `DetectImageMimeType()`（`tools/FurimaServerNative.cs` L5961）で実体を検証し、非対応形式（`.webp` 等）は削除・移動せず取り込み箱に残したまま未対応表示すること。
+   - **重複 MD5 の扱い**：既に登録済みの画像と同一 MD5 が取り込み箱へ再投入された場合、重複ファイルを箱に残し続けると走査のたびに未処理扱いになるため、既存レコード（登録名等）を維持しつつ重複側の取り込み箱ファイルを掃除する等の明確な扱いにすること。
+3. **【中】サムネイル生成・配信認証・複製保存ガード（§47.10-4）**：
+   - **320px サムネイル生成の補正**：`TryBuildClaudeDeliveryCopy()`（`tools/FurimaServerNative.cs` L5995-6015）と同様、**EXIF Orientation の正立化（`MapExifOrientationToRotateFlip`）と PNG 透過部の白塗り（`g.Clear(Color.White)`）** をサムネイル生成にも適用すること。
+   - **認証とパス検証**：`AuthenticateRequest()`（L1472）により PC 管理画面からのループバック直接アクセスは Bearer 免除される一方、Android アプリは Bearer 必須のため `Coil` に `Authorization: Bearer <token>`（またはクライアント経由取得）を付与すること。また `{md5}` を受ける全ルートで `^[0-9a-f]{32}$` を検証し、パストラバーサルを防止すること。
+   - **欠損写真の複製ガード**：30 日整理後等で実体ファイルが欠損している商品写真から「参考画像に保存」が呼ばれた場合は、空登録を作らず 404 エラーを返すこと。
+4. **【中】ワーカー専用取得ルート・未完了ジョブ定義・終端 GC 網羅（§47.10-5）**：
+   - **`GET /api/claude/jobs/{jobId}/reference`**：`IsTrustedClaudeExemptPath()`（L1512-1531）へ明示追加し、`X-Claude-Job-Token` 検証＋`status == "approved" || status == "processing"` のみ許可とすること。配信バイト列には `TryBuildClaudeDeliveryCopy()` を通し、商品写真用 `HandleGetClaudeJobPhoto()` が行う **`approved -> processing` 遷移や `RecordClaudeJobPhotoError()` への記録は持ち込まない** こと。
+   - **未完了ジョブの定義と GC 発火点**：参照カウント保護対象とする未完了状態には **`queued`（`patrol` / `manual` / `waiting` すべて）・`approval_pending`・`approved`・`processing` の 4 状態すべて** を含めること。また GC 発火は完了（`complete`）・取消（`cancel`）に加え、**拒否（`HandleDenyClaudeJob` L5732 の `denied`）・トークン失効終端（`ApplyTokenExpiry` L5598 の `done` / `done_with_errors`）・起動時整理（`ClaudeJobStore.CleanupLocked` L254）** も網羅すること。
+   - **DTO / 公開ジョブ整合**：`ClaudeJob`・`ToPublicClaudeJob()`（L5128）および Android `SyncDtos.kt`（`CreateClaudeJobRequestDto` / `ClaudeJobDto`）の `referenceMd5` / `referenceFileName` は非 null 既定値 `""` で統一すること。
