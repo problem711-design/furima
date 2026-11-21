@@ -2696,3 +2696,61 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 別エージェントによるコードレビューをお願いしたい。
 
+---
+
+## 83. コードレビュー結果（`118bff9` / `v1.4 Build 17` 写真同期整合性バグ修正・画面オフ耐性強化）（2026-11-20）
+
+- **対象コミット**：`118bff9`（`報告 §82: v1.4 (Build 17) 写真同期整合性バグ修正・画面オフ耐性強化を実装`）
+- **判定：差し戻し（要修正：高 3 件・中 3 件・軽微 1 件）**
+- **総評**：5 本柱の設計意図（空 MD5 の 3 層遮断、`dbMutationMutex`＋Room `withTransaction` 化、`isDirty` 解除の Step 2 後倒し、`dataSync` Foreground Service 化、PC 救済削除）は適切だが、実運用で **FGS 停止競合・Step 2 失敗の成功誤報・サーバー起動時浄化によるスマホ未同期編集上書き** の高リスク不具合が残っているため、修正完了後に再レビューとする。
+
+### 83.1 要修正事項
+
+1. **83-1【高】`PcSyncForegroundService` の開始/停止競合 ＆ `SyncCoordinator` での `CancellationException` 握りつぶし**
+   - **箇所**：`PcSyncForegroundService.kt`（L39, L51-119, L187-200, L262-295）、`SyncCoordinator.kt`（L124-135）
+   - **内容**：
+     - `onStartCommand`（L51, L60, L82）は `@Volatile lastStartId` を更新して `ServiceCompat.startForeground` を呼ぶ一方、`activeTaskCount.incrementAndGet()` が L82 まで遅延している。先行タスクの `finally`（L105-106）が `activeTaskCount.decrementAndGet() <= 0` を見た直後に新規 `onStartCommand` が挟まると、`stopForegroundAndSelf(lastStartId)`（L187-200）が同期・再確認なしに `progressCollectorJob?.cancel()`・`releaseWakeLock()`・`STOP_FOREGROUND_REMOVE`・`stopSelf(lastStartId)` を実行し、後続同期の通知・WakeLock を剥奪または新しい `startId` ごとサービスを停止する。
+     - `progressCollectorJob` の `notify()` と `STOP_FOREGROUND_REMOVE` の順序競合により通知が残留する恐れがあるほか、`onTimeout`（L113-119）とタスク `finally` の二重停止、`runSyncViaService()`（L273-295）でコルーチンがキャンセルされた際の `pendingRequests.remove(requestId)` 漏れ（`try/finally` 欠如）もある。
+     - `SyncCoordinator.kt`（L124-135）の `catch (e: Exception)` が `CancellationException` まで捕捉して `SyncPhase.ERROR` に変換しており、キャンセル伝播を妨げている。
+   - **修正方針**：開始〜完了・停止判定を単一ロック／直列管理（`activeTaskCount == 0` 再検証＋`progressCollectorJob` 停止待ち後の通知除去＋`stopSelfResult(targetStartId)`）へ整理し、`runSyncViaService()` を `try/finally` で確実にクリーンアップ、`SyncCoordinator` で `CancellationException` を再スローすること。
+
+2. **83-2【高】`PcServerClient.syncDeltaToPcServer()` が Step 2（写真送信）HTTP 失敗・`stored != true` 時も `isSuccess = true`（`"同期完了"`）を返す**
+   - **箇所**：`PcServerClient.kt`（L972-981, L1100）、`SyncCoordinator.kt`（L91-119）、`PhotoSyncIntegrityBuild17Test.kt`（L374）
+   - **内容**：Step 2 で `POST /api/sync/photo` が `!photoResp.isSuccessful` または `stored != true` となった場合、L972-981 は警告ログを出すだけで失敗を計上せず、L1100 が無条件に `PcSyncResult(isSuccess = true)` を返す。このため `SyncCoordinator`（L91）が `SyncPhase.SUCCESS`（`"同期完了"`）と判定して最終同期時刻の更新・`fetchServerItems()` へ進み、Step 1 で `/api/photos/{md5}` 参照を送った写真バイナリ欠損がユーザーに隠蔽される。
+   - **修正方針**：Step 2 の送信失敗・`stored != true`・未解決ローカル写真（原本欠損等）を集計し、未完了が残った場合は `isSuccess = false`（理由メッセージ付き）を返して `SyncPhase.ERROR` に遷移させること。あわせて `PhotoSyncIntegrityBuild17Test.kt` L374 の期待値（現行 `assertTrue(res1.isSuccess)`）を更新すること。
+
+3. **83-3【高】`FurimaServerNative.LoadItemsDbFromDisk()` の起動時浄化が `item["updatedAt"] = nowMs` を書き換えるためスマホ側 `isDirty = true` 編集が上書き消失する**
+   - **箇所**：`tools/FurimaServerNative.cs`（L1283, L2331）、`PcServerClient.kt`（L1300）
+   - **内容**：PC サーバー起動時の空 MD5 除去で `LoadItemsDbFromDisk()`（L1283）が `item["updatedAt"] = nowMs` を現在時刻へ引き上げている。スマホ側にオフライン／失敗中の `isDirty = true` 編集（`T1 < nowMs`）がある場合、Push 先の `HandleSyncItems`（L2331）は `Math.Max(phoneUpdatedAt, existingUpdatedAt)` で `nowMs` を残すうえ、Step 2 失敗等で `isDirty = true` が維持されたまま `mergeServerItemsFromJson()`（L1300）へ入ると `existing.item.updatedAt >= serverUpdatedAt` が `false` となり `isDirty` 保護が破られてスマホ側の未同期フィールドが上書き・`isDirty = false` 化される。
+   - **修正方針**：`LoadItemsDbFromDisk()` の起動時浄化（L1283）では `item["updatedAt"]` を `nowMs` へ更新しない（スマホ再同期は `syncedToPhone = false` と `BumpDataRevision()` のみでトリガーする）。
+
+4. **83-4【中】原本欠損・サムネのみ生存の空 MD5 や `isPcSynced = 0 && isOriginalDeleted = 0` による永続 `isDirty` / 無限 FGS 再起動ループ**
+   - **箇所**：`ItemDao.kt`（L151, L154）、`FleaMarketRepository.kt`（L97-130）、`PcServerClient.kt`（L748-767, L1002-1005）、`FleaMarketViewModel.kt`（L1464, L1586）
+   - **内容**：`PhotoEntity` が `md5Hash == ""` かつ「原本（`filePath`）欠損・サムネ（`thumbnailPath`）実在」の場合、`cleanupGhostBlankMd5Photos()` は保護して残す一方、`syncDeltaToPcServer()` は `File(photo.filePath)` 不在のためハッシュ算出不能として `hasUnresolvedLocalPhotoByItemId[itemId] = true` を設定するため `isDirty` が永続化する。さらに `getUnsyncedPhotosCount()`（`isPcSynced = 0 && isOriginalDeleted = 0`）も永遠に `> 0` のままとなり、再接続や自動同期ごとに `PcSyncForegroundService` が再起動し続ける。
+   - **修正方針**：原本欠損の空 MD5（復旧不能レコード）を永続未同期カウント・自動同期ループへ残さない隔離／浄化・UI 通知ルールを定め、`getUnsyncedPhotosCount()` が壊れ行で常時 `> 0` にならない条件を整えること。
+
+5. **83-5【中】`TrashPhotosFromTargets` の `photoIndex` 優先誤一致リスク ＆ まとめ子商品側の壊れ写真取り残し**
+   - **箇所**：`tools/FurimaServerNative.cs`（L4250-4348）、`FleaMarketRepository.kt`（L736）
+   - **内容**：
+     - 壊れ写真削除時、`bt.photoIndex` を `bt.photoId` より先に評価し（L4255-4266）、配列位置の写真が `md5Hash` 空かを見るだけで `photoId` 一致を検算しないため、3 秒ポーリング間の配列ずれで別の空 MD5 エントリを誤削除するリスクがある。
+     - 親写真削除後の子商品追従除去（L4290-4339）が親写真 `matched["id"]` を子商品 `cp["id"]` と突合しているため、Android `mergeItems()`（L736）で `id = 0` コピー（別 Room ID 採番）されたまとめ写真や `bt.childItemId == 0` 指定時に子商品側へ壊れ参照が残る。
+   - **修正方針**：`bt.photoId > 0` がある場合は `photoId` 一致を最優先し、`photoIndex` は `photoId <= 0` 時または `photoId` 検証付きの補助に限定すること。また親→子商品の追従除去は `matched["childItemId"]` 活用やインデックス・位置条件を含め別 Room ID でも取り残さないようにすること。
+
+6. **83-6【中】`triggerAutoSync()` の 500ms 遅延による画面オフ直前操作での FGS 起動制限失敗と重複キュー積上げ**
+   - **箇所**：`FleaMarketViewModel.kt`（L1578-1605）、`PcSyncForegroundService.kt`（L282-293）
+   - **内容**：`delay(500)` 中に画面オフ・バックグラウンド遷移すると `targetSdk = 35` 環境で `startForegroundService()` が `ForegroundServiceStartNotAllowedException` となり WakeLock なしのフォールバック経路へ落ちる。また連続操作時に `autoSyncJob?.cancel()` しても `pendingRequests` やサービス側のキュー済みリクエストが間引かれず重複実行が積み上がる。
+   - **修正方針**：写真付き自動同期の遅延発火によるバックグラウンド化リスクと、サービス側での重複自動同期リクエスト統合（コアレス）を改善すること。
+
+7. **83-7【軽微】`mergeServerItemsFromJson()` の `isItemEditingActive` 未参照**
+   - **箇所**：`PcServerClient.kt`（L1288-1549）
+   - **内容**：Step 3 や `cleanupGhostBlankMd5Photos()` は `isItemEditingActive` を確認しているが、Pull 反映の `mergeServerItemsFromJson()` は未編集（`isDirty == false`）アイテムについて編集中フラグを参照していない。`saveItem()` のトランザクション外画像 I/O 中に写真置換が走る余地を防ぐため、編集中アイテムの Pull 反映も保留するのが望ましい。
+
+### 83.2 補足（誤検知除外の確認事項）
+- `FleaMarketRepository.saveItem()` の `onSkippedInvalidPhotos` コールバック自体は `Dispatchers.IO` から呼ばれるが、`FleaMarketViewModel.saveItem()`（L472-476）で件数を返し `viewModelScope`（メインスレッド）上で Toast コールバックを呼び出しているため、スレッド安全性は問題なし。
+
+### 83.3 レビュー担当側での検証実施範囲
+- `node --test tools/tests/*.mjs`：**15/15 合格**（ラベル 13 件＋Build 17 テスト 2 件）。
+- JS 構文検査（`node --check`）：`tools/DashboardHtml.cs` 抽出スクリプト・`WebDashboardHtml.kt` 内スクリプトともにエラー 0 件。
+- C# 5 構文静的チェック：`tools/FurimaServerNative.cs`・`tools/DashboardHtml.cs`（C# 部分）で非互換構文（`$""`・`?.`・`nameof(`）混入 0 件。
+- 版番号 3 箇所一致確認：`app/build.gradle.kts`（`1417` / `"1.4"`）・`tools/DashboardHtml.cs`（`v1.4 (Build 17)`）・`WebDashboardHtml.kt`（`v1.4 (Build 17)`）。
+- ※ローカルコンテナでは Kotlin 単体テスト（`gradle :app:testDebugUnitTest`）が時間制約により未完了、および Windows `csc` 実コンパイルは未実施のため、修正コミット後に CI 含めて最終検証すること。
