@@ -2794,3 +2794,23 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
   - Android app (assembleDebug)：デバッグ APK ビルド成功、単体テスト成功（更新した §83-2 の期待値と §83-4 の新規テストを含む）。
   - PC server (C# / csc)：`furima-server.exe` / `furima-sync.exe` の実コンパイル成功、JS ゴールデンテスト成功。
 - 以上により §84.2 で CI 検証とした項目（Android ビルド・単体テスト・Windows C# 実コンパイル）はすべて確認済み。再レビューをお願いしたい。
+---
+
+## 85. 再レビュー結果（`6e64ce6`・`af1a219` / §83 指摘 `83-1`〜`83-7` 修正確認）（2026-11-21）
+
+- **対象コミット**：`6e64ce6`（`回答 §84: レビュー §83 差し戻し 83-1〜83-7 の修正 (v1.4 Build 17)`）、`af1a219`（`§84.3: CI 全ジョブ成功の記録`）
+- **判定：承認（`v1.4 Build 17` 修正完了・リリース／次工程へ進行可）**
+
+### 85.1 指摘 7 件の解消確認
+1. **83-1（解消確認）**：`PcSyncForegroundService.kt`（L57-132, L214-253, L349-353）にて `stateLock` 下で `lastStartId`・`activeTaskCount`・`teardownDone` の開始登録と `finishTask()` の停止判定を直列化し、`teardownLocked()` で進捗コレクタ停止 → WakeLock 解放 → `STOP_FOREGROUND_REMOVE` → `notificationManager.cancel` → `stopSelfResult(lastStartId)` の順序を保証したことを確認。`runSyncViaService()` の `try/finally` クリーンアップ、`SyncCoordinator.kt`（L144-146）・`PcServerClient.kt`（L1162-1164）・FGS タスク（L106-107, L118-124）の `CancellationException` 再スローも確認済み。
+2. **83-2（解消確認）**：`PcServerClient.kt`（L933-934, L993-1002, L1024-1041, L1118-1141）にて Step 2 失敗（HTTP 失敗・`stored != true`・応答不正）および未解決／未確認商品を収集し、残存時は `SyncPhase.ERROR`・`PcSyncResult(isSuccess = false)` を返して最終同期時刻の更新や `fetchServerItems()` 進行を遮断することを確認。`PhotoSyncIntegrityBuild17Test.kt`（L423）の期待値更新も整合。
+3. **83-3（解消確認）**：`tools/FurimaServerNative.cs`（L1280-1288）の起動時空 MD5 浄化から `item["updatedAt"] = nowMs` 更新が除去され、`syncedToPhone = false`＋`BumpDataRevision()` のみによる安全設計へ是正済み。
+4. **83-4（解消確認）**：`FleaMarketRepository.kt`（L109-190）・`FleaMarketViewModel.kt`（L1465, L1597）・`PcServerClient.kt`（L724-733）にて、原本消失・サムネのみ生存の空 MD5 行を復旧不能行として `cleanupGhostBlankMd5Photos()` で浄化（孤立サムネ実ファイル削除・進捗メッセージ通知）し、自動同期・再接続判定も `getUnsyncedPhotosCountAfterGhostCleanup()` へ統一されたことを確認。
+5. **83-5（解消確認）**：`tools/FurimaServerNative.cs`（L4268-4386）にて `bt.photoId > 0` 時の id 優先照合（`photoIndex` は `photoId <= 0` 限定）と、親写真の `childItemId`・出現順序 `childFollowOrdinals`（＋ `childFollowPhotoIds` 併用）によるまとめ子商品側の空 MD5 追従除去を確認。
+6. **83-6（解消確認）**：`PcSyncForegroundService.kt`（L370-441）・`SyncCoordinator.kt`（L41-56）・`FleaMarketViewModel.kt`（L1560-1567, L1599）にて固定スロット `"auto-sync-slot"`＋世代カウンタによるコアレス追走と、`ForegroundServiceStartNotAllowedException` 時の保留→ハートビート再試行（15 秒間隔）への分離を確認。
+7. **83-7（解消確認）**：`PcServerClient.kt`（L1356-1361）の `mergeServerItemsFromJson()` に `isItemEditingActive` チェックが追加され、編集中アイテムの Pull 反映保留を確認。
+
+### 85.2 検証状況・軽微メモ（非ブロッカー）
+- **CI 検証**：`af1a219` 記録の GitHub Actions `build-check`（run `44865821799`）全ジョブ成功を確認。
+- **レビュー側ローカル検証**：`node --test tools/tests/*.mjs` **15/15 PASS**、`DashboardHtml.cs`／`WebDashboardHtml.kt` スクリプト `node --check` 0 エラー、`FurimaServerNative.cs` C# 5 非互換構文 0 件を確認。
+- **参考メモ（非ブロッカー）**：`PcSyncForegroundService` の `onTimeout` 経路（`forceTeardown()` の `activeTaskCount.set(0)` と旧タスク `finally -> finishTask()` の間に新 `onStartCommand` が挟まる極限条件）で旧タスクが新タスクのカウントを減算しうる理論的競合が残るが、Android 15+ の 6 時間上限到達時のみの境界であり実運用上の阻害要因ではない。
