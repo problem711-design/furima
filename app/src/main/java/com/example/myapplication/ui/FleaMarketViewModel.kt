@@ -393,6 +393,8 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         promptText: String? = null,
         customPromptName: String? = null,
         registerTemplateName: String? = null,
+        referenceMd5: String = "",
+        referenceFileName: String = "",
         onError: (String) -> Unit = {},
         onSuccess: (com.example.myapplication.data.server.PcServerClient.ClaudeJobCreateResult) -> Unit
     ) {
@@ -405,7 +407,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 itemId, itemUuid, photos, templateId, queue,
                 promptText = promptText,
                 customPromptName = customPromptName,
-                registerTemplateName = registerTemplateName
+                registerTemplateName = registerTemplateName,
+                referenceMd5 = referenceMd5,
+                referenceFileName = referenceFileName
             )
             if (result.success) {
                 if (!promptText.isNullOrBlank()) {
@@ -425,6 +429,16 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 onError(result.message)
             }
         }
+    }
+
+    // フェーズ 6-13 (§47.10): 参考画像の一覧取得と表示用 URL (スマホは取得・選択のみ)
+    suspend fun fetchClaudeReferences(): List<com.example.myapplication.data.server.ClaudeReferenceDto> {
+        if (!isPcServerConnected.value) return emptyList()
+        return pcServerClient.fetchClaudeReferences()?.references ?: emptyList()
+    }
+
+    fun claudeReferenceImageUrl(md5: String, thumb: Boolean): Pair<String, String>? {
+        return pcServerClient.claudeReferenceImageUrl(md5, thumb)
     }
 
     suspend fun getSelectedItems(): List<ItemWithPhotos> {

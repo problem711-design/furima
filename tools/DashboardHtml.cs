@@ -179,9 +179,13 @@ public static class DashboardHtml
                             <p class='text-[10px] font-medium text-slate-500'>待機中</p>
                             <p id='claude-col-waiting' class='text-base font-black text-slate-800'>0件</p>
                         </button>
-                        <button type='button' onclick='openClaudeJobsModal(""waiting"")' class='col-span-2 bg-rose-50/70 p-2 rounded border border-rose-100 text-left hover:bg-rose-100/70 transition'>
+                        <button type='button' onclick='openClaudeJobsModal(""waiting"")' class='bg-rose-50/70 p-2 rounded border border-rose-100 text-left hover:bg-rose-100/70 transition'>
                             <p class='text-[10px] font-medium text-slate-500'>エラー</p>
                             <p id='claude-col-error' class='text-base font-black text-rose-900'>0件</p>
+                        </button>
+                        <button type='button' onclick='openClaudeReferencesModal()' class='bg-teal-50/70 p-2 rounded border border-teal-100 text-left hover:bg-teal-100/70 transition'>
+                            <p class='text-[10px] font-medium text-slate-500'>参考画像</p>
+                            <p id='claude-col-references' class='text-base font-black text-teal-900'>0件</p>
                         </button>
                     </div>
                     <button type='button' onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
@@ -203,7 +207,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.5 (Build 18)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.5 (Build 19)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -456,6 +460,21 @@ public static class DashboardHtml
                 </div>
             </div>
 
+            <!-- フェーズ 6-13 (§47.10): 参考画像の添付 (チェック ON でピッカーを開く) -->
+            <div id='viewer-claude-reference-bar' class='bg-teal-50/70 px-5 py-2 border-b border-teal-100 flex flex-wrap items-center gap-2 text-[11px] text-slate-700'>
+                <label class='flex items-center gap-1.5 font-bold cursor-pointer' title='参考画像を 1 枚添付して送信します'>
+                    <input type='checkbox' id='viewer-claude-reference-check' onchange='onViewerReferenceCheckChange()' class='w-3.5 h-3.5 accent-teal-600 cursor-pointer'>
+                    参考画像を添付する
+                </label>
+                <span id='viewer-claude-reference-selected' class='hidden items-center gap-2'>
+                    <img id='viewer-claude-reference-thumb' src='' class='w-8 h-8 rounded object-cover border border-teal-200'>
+                    <span id='viewer-claude-reference-name' class='font-bold text-teal-900 max-w-[240px] truncate'></span>
+                    <button type='button' onclick='openClaudeReferencePicker()' class='px-2 py-0.5 rounded bg-white border border-teal-300 text-teal-700 font-bold'>変更</button>
+                    <button type='button' onclick='clearViewerReference()' class='px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-600 font-bold'>外す</button>
+                </span>
+                <span id='viewer-claude-reference-empty' class='text-slate-500'>未選択（チェックを入れると選択画面が開きます）</span>
+            </div>
+
             <div class='p-4 flex-1 overflow-y-auto custom-scroll space-y-4'>
                 <!-- 写真ドラッグ＆ドロップ追加ゾーン -->
                 <div id='photo-drop-zone' class='border-2 border-dashed border-indigo-200 hover:border-indigo-400 bg-indigo-50/40 rounded-xl p-3 text-center transition cursor-pointer'>
@@ -497,6 +516,9 @@ public static class DashboardHtml
                     <input type='checkbox' id='lightbox-claude-select' onchange='toggleLightboxClaudeSelect()' class='w-3.5 h-3.5 accent-indigo-500 cursor-pointer'>
                     Muse選択
                 </label>
+                <button type='button' id='lightbox-save-reference-btn' onclick='saveLightboxPhotoAsReference()' class='bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5' title='この写真を参考画像コレクションへ保存する'>
+                    <i class='fa-regular fa-bookmark text-teal-300'></i> 参考に保存
+                </button>
                 <button type='button' onclick='trashCurrentLightboxPhoto()' class='bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
                     <i class='fa-solid fa-trash-can'></i> ゴミ箱へ
                 </button>
@@ -522,6 +544,35 @@ public static class DashboardHtml
                 <span>キーボード: [←]前へ / [→]次へ / [Esc]閉じる</span>
             </div>
             <div id='lightbox-thumbs-strip' class='flex gap-2 overflow-x-auto custom-scroll py-1 px-1'></div>
+        </div>
+    </div>
+
+    <!-- フェーズ 6-13: 参考画像コレクション管理モーダル (管理は PC のみ) -->
+    <div id='claude-references-modal' class='fixed inset-0 bg-black/60 z-[65] hidden flex items-center justify-center p-4' onclick='closeClaudeReferencesModal()'>
+        <div class='bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden' onclick='event.stopPropagation()'>
+            <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between'>
+                <h3 class='text-sm font-black text-slate-800 flex items-center gap-2'><i class='fa-solid fa-image text-teal-600'></i> 参考画像コレクション</h3>
+                <button type='button' onclick='closeClaudeReferencesModal()' class='text-slate-400 hover:text-slate-700 text-lg'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div class='px-5 py-2 bg-teal-50/70 border-b border-teal-100 text-[11px] text-slate-600 space-y-1'>
+                <p>追加するには、取り込み箱フォルダへ画像ファイル (jpg / png) を入れてください。この一覧を開くたびに自動で取り込まれます。商品の写真からは、拡大表示の「参考に保存」でも追加できます。</p>
+                <p class='font-mono text-[10px] break-all'>取り込み箱: <span id='claude-references-inbox-path'></span></p>
+                <p class='font-mono text-[10px] break-all'>保存先: <span id='claude-references-store-path'></span></p>
+                <p id='claude-references-unsupported' class='hidden text-rose-600 font-bold'></p>
+                <button type='button' onclick='openClaudeReferenceFolder()' class='px-2 py-1 rounded bg-white border border-teal-300 text-teal-700 font-bold'>取り込み箱フォルダを開く</button>
+            </div>
+            <div id='claude-references-grid' class='p-4 flex-1 overflow-y-auto custom-scroll grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'></div>
+        </div>
+    </div>
+
+    <!-- フェーズ 6-13: 参考画像ピッカー (送信時に 1 枚選ぶ) -->
+    <div id='claude-reference-picker-modal' class='fixed inset-0 bg-black/60 z-[75] hidden flex items-center justify-center p-4' onclick='closeClaudeReferencePicker()'>
+        <div class='bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden' onclick='event.stopPropagation()'>
+            <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between'>
+                <h3 class='text-sm font-black text-slate-800 flex items-center gap-2'><i class='fa-solid fa-image text-teal-600'></i> 参考画像を選ぶ (1 枚)</h3>
+                <button type='button' onclick='closeClaudeReferencePicker()' class='text-slate-400 hover:text-slate-700 text-lg'><i class='fa-solid fa-xmark'></i></button>
+            </div>
+            <div id='claude-reference-picker-grid' class='p-4 flex-1 overflow-y-auto custom-scroll grid grid-cols-3 sm:grid-cols-4 gap-3'></div>
         </div>
     </div>
 
@@ -2519,6 +2570,7 @@ public static class DashboardHtml
             currentViewerItemId = itemId;
             currentViewerTab = 'group';
             selectedViewerPhotoKeys.clear();
+            clearViewerReference();
 
             document.getElementById('viewer-title').innerText = '写真ギャラリー: ' + (item.title || '無題');
             const isBundle = checkIsBundle(item);
@@ -2593,6 +2645,8 @@ public static class DashboardHtml
             if (claudePickerBtn) claudePickerBtn.disabled = isBundle;
             if (claudeQueueSel) claudeQueueSel.disabled = (isBundle || !promptReady);
             if (bundleNote) bundleNote.classList.toggle('hidden', !isBundle);
+            const refBar = document.getElementById('viewer-claude-reference-bar');
+            if (refBar) refBar.classList.toggle('hidden', isBundle);
         }
 
         function toggleViewerPhotoSelect(index, event) {
@@ -2804,6 +2858,216 @@ public static class DashboardHtml
             setText('claude-col-approval', jobs.filter(j => j.status === 'approval_pending').length);
             setText('claude-col-waiting', jobs.filter(j => j.status === 'queued' && j.queue === 'waiting').length);
             setText('claude-col-error', jobs.filter(isClaudeErrorJob).length);
+            if (typeof refreshClaudeReferencesCount === 'function') refreshClaudeReferencesCount();
+        }
+
+
+        // ===== フェーズ 6-13 (§47.10): 参考画像コレクション (PC 管理 + 送信時ピッカー) =====
+        let claudeReferencesCache = [];
+        let viewerClaudeReference = null;
+
+        async function fetchClaudeReferences() {
+            try {
+                const res = await fetch('/api/claude/references', { headers: getHeaders() });
+                if (!res.ok) return null;
+                const data = await res.json();
+                if (data.status === 'error') return null;
+                claudeReferencesCache = data.references || [];
+                const el = document.getElementById('claude-col-references');
+                if (el) el.innerText = (data.count || 0) + '件';
+                return data;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        async function refreshClaudeReferencesCount() {
+            await fetchClaudeReferences();
+        }
+
+        async function openClaudeReferencesModal() {
+            const m = document.getElementById('claude-references-modal');
+            if (m) m.classList.remove('hidden');
+            const grid = document.getElementById('claude-references-grid');
+            if (grid) grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>読み込み中...</div>';
+            const data = await fetchClaudeReferences();
+            renderClaudeReferencesGrid(data);
+        }
+
+        function closeClaudeReferencesModal() {
+            const m = document.getElementById('claude-references-modal');
+            if (m) m.classList.add('hidden');
+        }
+
+        function renderClaudeReferencesGrid(data) {
+            const grid = document.getElementById('claude-references-grid');
+            if (!grid) return;
+            const inboxEl = document.getElementById('claude-references-inbox-path');
+            const storeEl = document.getElementById('claude-references-store-path');
+            if (inboxEl && data) inboxEl.innerText = data.inboxPath || '';
+            if (storeEl && data) storeEl.innerText = data.storePath || '';
+            const unsEl = document.getElementById('claude-references-unsupported');
+            if (unsEl) {
+                const uns = (data && data.unsupportedFiles) || [];
+                if (uns.length > 0) {
+                    unsEl.innerText = '未対応の形式のため取り込めなかったファイル: ' + uns.join(', ');
+                    unsEl.classList.remove('hidden');
+                } else {
+                    unsEl.classList.add('hidden');
+                }
+            }
+            const refs = claudeReferencesCache;
+            if (!refs || refs.length === 0) {
+                grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>参考画像はまだありません。取り込み箱フォルダへ画像を入れるか、商品写真の拡大表示から「参考に保存」してください。</div>';
+                return;
+            }
+            grid.innerHTML = refs.map(r => {
+                const name = escapeHtml(r.displayName || r.fileName || r.md5);
+                return `<div class='bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm'>
+                    <div class='aspect-square bg-slate-100 overflow-hidden'>
+                        <img src='/api/claude/references/${r.md5}/thumb' class='w-full h-full object-cover'>
+                    </div>
+                    <div class='p-1.5 space-y-1'>
+                        <p class='text-[10px] font-bold text-slate-700 truncate' title='${name}'>${name}</p>
+                        <button type='button' onclick='deleteClaudeReference(""${r.md5}"")' class='w-full bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 py-1 rounded font-bold text-[10px] transition'>登録を削除</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function deleteClaudeReference(md5) {
+            if (!confirm('この参考画像の登録を削除しますか？（未完了のジョブが使っている間は実ファイルが残ります）')) return;
+            try {
+                const res = await fetch('/api/claude/references/' + md5, { method: 'DELETE', headers: getHeaders() });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '削除に失敗しました');
+                showToast(data.fileRetained ? '登録を削除しました（使用中のため実ファイルはジョブ完了後に回収されます）' : '参考画像の登録を削除しました');
+                if (viewerClaudeReference && viewerClaudeReference.md5 === md5) clearViewerReference();
+                const data2 = await fetchClaudeReferences();
+                renderClaudeReferencesGrid(data2);
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        async function openClaudeReferenceFolder() {
+            try {
+                const res = await fetch('/api/claude/references/open-folder', { method: 'POST', headers: getHeaders() });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || 'フォルダを開けませんでした');
+                showToast('取り込み箱フォルダを開きました。画像を入れたら一覧を開き直してください');
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        async function saveLightboxPhotoAsReference() {
+            const photo = lightboxPhotos && lightboxPhotos[lightboxIndex];
+            if (!photo) return;
+            if (!photo.md5Hash) {
+                showToast('MD5未確定の写真は参考画像に保存できません');
+                return;
+            }
+            try {
+                const res = await fetch('/api/claude/references/from-item', {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ itemId: currentViewerItemId, md5Hash: photo.md5Hash })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status === 'error') throw new Error(data.message || '保存に失敗しました');
+                showToast(data.alreadyRegistered ? 'すでに参考画像に登録されています' : '参考画像コレクションへ保存しました');
+                refreshClaudeReferencesCount();
+            } catch (e) {
+                showToast('エラー: ' + e.message);
+            }
+        }
+
+        function updateViewerReferenceBar() {
+            const selSpan = document.getElementById('viewer-claude-reference-selected');
+            const emptySpan = document.getElementById('viewer-claude-reference-empty');
+            const check = document.getElementById('viewer-claude-reference-check');
+            if (viewerClaudeReference) {
+                if (check) check.checked = true;
+                if (selSpan) {
+                    selSpan.classList.remove('hidden');
+                    selSpan.classList.add('flex');
+                    const img = document.getElementById('viewer-claude-reference-thumb');
+                    if (img) img.src = '/api/claude/references/' + viewerClaudeReference.md5 + '/thumb';
+                    const nm = document.getElementById('viewer-claude-reference-name');
+                    if (nm) nm.innerText = viewerClaudeReference.displayName || viewerClaudeReference.md5;
+                }
+                if (emptySpan) emptySpan.classList.add('hidden');
+            } else {
+                if (check) check.checked = false;
+                if (selSpan) {
+                    selSpan.classList.add('hidden');
+                    selSpan.classList.remove('flex');
+                }
+                if (emptySpan) emptySpan.classList.remove('hidden');
+            }
+        }
+
+        function clearViewerReference() {
+            viewerClaudeReference = null;
+            updateViewerReferenceBar();
+        }
+
+        function onViewerReferenceCheckChange() {
+            const check = document.getElementById('viewer-claude-reference-check');
+            if (check && check.checked) {
+                openClaudeReferencePicker();
+            } else {
+                clearViewerReference();
+            }
+        }
+
+        async function openClaudeReferencePicker() {
+            const m = document.getElementById('claude-reference-picker-modal');
+            if (m) m.classList.remove('hidden');
+            const grid = document.getElementById('claude-reference-picker-grid');
+            if (grid) grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>読み込み中...</div>';
+            await fetchClaudeReferences();
+            renderClaudeReferencePickerGrid();
+        }
+
+        function closeClaudeReferencePicker() {
+            const m = document.getElementById('claude-reference-picker-modal');
+            if (m) m.classList.add('hidden');
+            // 未選択のまま閉じたらチェックを外す (チェック済み・未選択状態を作らない §47.10-6)
+            if (!viewerClaudeReference) {
+                const check = document.getElementById('viewer-claude-reference-check');
+                if (check) check.checked = false;
+                updateViewerReferenceBar();
+            }
+        }
+
+        function renderClaudeReferencePickerGrid() {
+            const grid = document.getElementById('claude-reference-picker-grid');
+            if (!grid) return;
+            const refs = claudeReferencesCache;
+            if (!refs || refs.length === 0) {
+                grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>参考画像がありません。先に Muse 連携カラムの「参考画像」から登録してください。</div>';
+                return;
+            }
+            grid.innerHTML = refs.map(r => {
+                const name = escapeHtml(r.displayName || r.fileName || r.md5);
+                const selected = viewerClaudeReference && viewerClaudeReference.md5 === r.md5;
+                return `<button type='button' onclick='selectClaudeReference(""${r.md5}"")' class='bg-white border ${selected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm text-left'>
+                    <div class='aspect-square bg-slate-100 overflow-hidden'>
+                        <img src='/api/claude/references/${r.md5}/thumb' class='w-full h-full object-cover'>
+                    </div>
+                    <p class='p-1.5 text-[10px] font-bold text-slate-700 truncate' title='${name}'>${name}</p>
+                </button>`;
+            }).join('');
+        }
+
+        function selectClaudeReference(md5) {
+            const found = (claudeReferencesCache || []).find(r => r.md5 === md5);
+            if (!found) return;
+            viewerClaudeReference = { md5: found.md5, displayName: found.displayName || found.fileName || '' };
+            updateViewerReferenceBar();
+            closeClaudeReferencePicker();
         }
 
         function countActiveClaudeJobs() {
@@ -3066,6 +3330,12 @@ public static class DashboardHtml
                 showToast('写真の選択状態が変わっています。選択し直してください');
                 return;
             }
+            const refCheck = document.getElementById('viewer-claude-reference-check');
+            if (refCheck && refCheck.checked && !viewerClaudeReference) {
+                showToast('参考画像が未選択です。選択してください');
+                openClaudeReferencePicker();
+                return;
+            }
             const queueSel = document.getElementById('viewer-claude-queue');
             const queue = queueSel ? queueSel.value : 'patrol';
             const queueLabel = queue === 'manual' ? '手動' : (queue === 'waiting' ? '待機' : '巡回');
@@ -3081,7 +3351,7 @@ public static class DashboardHtml
                     return;
                 }
                 // §35.2.2: 登録するかどうかは手打ち送信時のダイアログで聞く
-                pendingClaudeCustomSend = { item: item, photos: photos, targets: targets, queue: queue, queueLabel: queueLabel, listText: listText, text: text };
+                pendingClaudeCustomSend = { item: item, photos: photos, targets: targets, queue: queue, queueLabel: queueLabel, listText: listText, text: text, reference: viewerClaudeReference };
                 openClaudeCustomRegisterModal();
                 return;
             }
@@ -3092,8 +3362,11 @@ public static class DashboardHtml
             }
             const tpl = (pcSettings.promptTemplates || []).find(t => t.id === templateId);
             const tplName = tpl ? tpl.name : '';
-            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」で Muse に送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + '\n\n対象ファイル:\n' + listText)) return;
-            await postViewerClaudeJob(item, photos, targets, queue, queueLabel, { templateId: templateId });
+            const refNote = viewerClaudeReference ? '\n参考画像: ' + (viewerClaudeReference.displayName || viewerClaudeReference.md5) : '';
+            if (!confirm('「' + (item.title || '') + '」の写真 ' + targets.length + '枚を、テンプレート「' + tplName + '」で Muse に送ります。\n送り先: ' + queueLabel + (queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + refNote + '\n\n対象ファイル:\n' + listText)) return;
+            const tplExtras = { templateId: templateId };
+            if (viewerClaudeReference) { tplExtras.referenceMd5 = viewerClaudeReference.md5; tplExtras.referenceFileName = viewerClaudeReference.displayName || ''; }
+            await postViewerClaudeJob(item, photos, targets, queue, queueLabel, tplExtras);
         }
 
         function openClaudeCustomRegisterModal() {
@@ -3152,6 +3425,7 @@ public static class DashboardHtml
             if (!confirm('「' + (pending.item.title || '') + '」の写真 ' + pending.targets.length + '枚を、手打ちプロンプトで Muse に送ります。\n送り先: ' + pending.queueLabel + (pending.queue === 'waiting' ? '（承認リクエストは送られません）' : '（スマホに承認リクエストが届きます）') + nameNote + '\n\n対象ファイル:\n' + pending.listText)) return;
             const extras = { promptText: pending.text };
             if (registerName) extras.registerTemplateName = registerName;
+            if (pending.reference) { extras.referenceMd5 = pending.reference.md5; extras.referenceFileName = pending.reference.displayName || ''; }
             await postViewerClaudeJob(pending.item, pending.photos, pending.targets, pending.queue, pending.queueLabel, extras);
         }
 

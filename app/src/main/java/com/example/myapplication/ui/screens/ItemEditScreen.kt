@@ -498,7 +498,9 @@ fun ItemEditScreen(
             isConnected = isPcServerConnected,
             freeTextHistory = viewModel.claudeFreeTextHistory(),
             onDismiss = { showClaudeSendDialog = false },
-            onSendTemplate = { tpl, queue ->
+            onFetchReferences = { viewModel.fetchClaudeReferences() },
+            referenceImageUrl = { md5, thumb -> viewModel.claudeReferenceImageUrl(md5, thumb) },
+            onSendTemplate = { tpl, queue, reference ->
                 showClaudeSendDialog = false
                 isSendingToClaude = true
                 viewModel.sendPhotosToClaude(
@@ -507,6 +509,8 @@ fun ItemEditScreen(
                     photos = claudeEligiblePhotos,
                     templateId = tpl.id,
                     queue = queue,
+                    referenceMd5 = reference?.md5 ?: "",
+                    referenceFileName = reference?.displayName ?: "",
                     onError = { msg ->
                         isSendingToClaude = false
                         Toast.makeText(context, "送信エラー: $msg", Toast.LENGTH_LONG).show()
@@ -522,7 +526,7 @@ fun ItemEditScreen(
                     }
                 )
             },
-            onSendCustom = { text, queue, registerName ->
+            onSendCustom = { text, queue, registerName, reference ->
                 showClaudeSendDialog = false
                 isSendingToClaude = true
                 viewModel.sendPhotosToClaude(
@@ -533,6 +537,8 @@ fun ItemEditScreen(
                     queue = queue,
                     promptText = text,
                     registerTemplateName = registerName,
+                    referenceMd5 = reference?.md5 ?: "",
+                    referenceFileName = reference?.displayName ?: "",
                     onError = { msg ->
                         isSendingToClaude = false
                         Toast.makeText(context, "送信エラー: $msg", Toast.LENGTH_LONG).show()

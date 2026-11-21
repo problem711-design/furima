@@ -116,6 +116,7 @@ class PcServerClient(
     private val claudeLabelSeenBatchRequestAdapter = moshi.adapter(ClaudeLabelSeenBatchRequestDto::class.java)
     private val claudeLabelSeenResponseAdapter = moshi.adapter(ClaudeLabelSeenResponseDto::class.java)
     private val claudeJobListResponseAdapter = moshi.adapter(ClaudeJobListResponseDto::class.java)
+    private val claudeReferencesResponseAdapter = moshi.adapter(ClaudeReferencesResponseDto::class.java)
     private val claudeApprovalRequestAdapter = moshi.adapter(ClaudeApprovalRequestDto::class.java)
 
     private fun toSyncSettingsDto(settings: DefaultSettings): SyncSettingsDto {
@@ -250,6 +251,8 @@ class PcServerClient(
         promptText: String? = null,
         customPromptName: String? = null,
         registerTemplateName: String? = null,
+        referenceMd5: String = "",
+        referenceFileName: String = "",
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
     ): ClaudeJobCreateResult = withContext(Dispatchers.IO) {
@@ -273,7 +276,9 @@ class PcServerClient(
                 queue = queue,
                 promptText = promptText,
                 customPromptName = customPromptName,
-                registerTemplateName = registerTemplateName
+                registerTemplateName = registerTemplateName,
+                referenceMd5 = referenceMd5,
+                referenceFileName = referenceFileName
             )
             val body = createClaudeJobRequestAdapter.toJson(reqDto)
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
@@ -323,6 +328,38 @@ class PcServerClient(
             android.util.Log.e("PC_SYNC", "fetchClaudeJobs 例外: ${e.message}", e)
             null
         }
+    }
+
+    // フェーズ 6-13 (§47.10): 参考画像コレクションの一覧を取得する (スマホは取得・選択のみ)。
+    suspend fun fetchClaudeReferences(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): ClaudeReferencesResponseDto? = withContext(Dispatchers.IO) {
+        try {
+            val cleanUrl = baseUrl.trimEnd('/')
+            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
+            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/references").get()
+            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
+            client.newCall(reqBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val respStr = response.body?.string()
+                if (respStr.isNullOrBlank()) return@withContext null
+                val parsed = try { claudeReferencesResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
+                if (parsed?.status == "ok") parsed else null
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("PC_SYNC", "fetchClaudeReferences 例外: ${e.message}", e)
+            null
+        }
+    }
+
+    // フェーズ 6-13 (§47.11-3): 参考画像の表示用 URL と認証トークンを返す。
+    // PC サーバーの全ルートは Bearer 必須のため、Coil のリクエストに Authorization ヘッダーを付ける用途。
+    fun claudeReferenceImageUrl(md5: String, thumb: Boolean): Pair<String, String>? {
+        val cleanUrl = getSavedServerUrl().trimEnd('/')
+        if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || md5.isBlank()) return null
+        val path = if (thumb) "/api/claude/references/$md5/thumb" else "/api/claude/references/$md5"
+        return (cleanUrl + path) to getSavedAuthToken()
     }
 
     // 変化カウンタだけを取得する軽量窓口 (フェーズ 6-3 / レビュー 24-4)。

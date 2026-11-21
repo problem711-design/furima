@@ -125,7 +125,10 @@ data class CreateClaudeJobRequestDto(
     // フェーズ 6-8 (§35.3): 手打ちプロンプト用の任意フィールド (null のときは送信しない)
     @param:Json(name = "promptText") val promptText: String? = null,
     @param:Json(name = "customPromptName") val customPromptName: String? = null,
-    @param:Json(name = "registerTemplateName") val registerTemplateName: String? = null
+    @param:Json(name = "registerTemplateName") val registerTemplateName: String? = null,
+    // フェーズ 6-13 (§47.10): 参考画像の添付 (任意・1 枚)。未指定は "" で統一する
+    @param:Json(name = "referenceMd5") val referenceMd5: String = "",
+    @param:Json(name = "referenceFileName") val referenceFileName: String = ""
 )
 
 @JsonClass(generateAdapter = true)
@@ -145,8 +148,27 @@ data class ClaudeJobDto(
     @param:Json(name = "completedAt") val completedAt: Long = 0L,
     @param:Json(name = "acknowledged") val acknowledged: Boolean = false,
     @param:Json(name = "errorDismissed") val errorDismissed: Boolean = false,
+    // フェーズ 6-13 (§47.10): 参考画像の添付 (任意・1 枚)。未指定は "" で統一する
+    @param:Json(name = "referenceMd5") val referenceMd5: String = "",
+    @param:Json(name = "referenceFileName") val referenceFileName: String = "",
     @param:Json(name = "results") val results: List<ClaudeJobResultDto> = emptyList(),
     @param:Json(name = "errors") val errors: List<ClaudeJobErrorDto> = emptyList()
+)
+
+// フェーズ 6-13 (§47.10): 参考画像コレクション (スマホは取得・選択のみ)
+@JsonClass(generateAdapter = true)
+data class ClaudeReferenceDto(
+    @param:Json(name = "md5") val md5: String = "",
+    @param:Json(name = "displayName") val displayName: String = "",
+    @param:Json(name = "fileName") val fileName: String = "",
+    @param:Json(name = "addedAt") val addedAt: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class ClaudeReferencesResponseDto(
+    @param:Json(name = "status") val status: String = "",
+    @param:Json(name = "references") val references: List<ClaudeReferenceDto> = emptyList(),
+    @param:Json(name = "count") val count: Int = 0
 )
 
 @JsonClass(generateAdapter = true)

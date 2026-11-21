@@ -360,6 +360,7 @@ class FurimaServerNative
             LoadItemsDbFromDisk();
 
             ClaudeJobStore.CleanupOnStartup();
+            SweepReferenceOrphans();
 
             StartFolderAutoImportWatcher();
 
@@ -670,6 +671,13 @@ class FurimaServerNative
         if (string.IsNullOrEmpty(fullPath) || string.IsNullOrEmpty(syncDir)) return true;
         string photoTrashPrefix = Path.Combine(syncDir, "_photo_trash");
         if (fullPath.StartsWith(photoTrashPrefix, StringComparison.OrdinalIgnoreCase)) return true;
+        // フェーズ 6-13 (§47.11-1): 参考画像の 3 ディレクトリも自動取り込みの対象外にする
+        string refInboxPrefix = Path.Combine(syncDir, "_reference_inbox");
+        if (fullPath.StartsWith(refInboxPrefix, StringComparison.OrdinalIgnoreCase)) return true;
+        string refPhotosPrefix = Path.Combine(syncDir, "_reference_photos");
+        if (fullPath.StartsWith(refPhotosPrefix, StringComparison.OrdinalIgnoreCase)) return true;
+        string refThumbsPrefix = Path.Combine(syncDir, "_reference_thumbs");
+        if (fullPath.StartsWith(refThumbsPrefix, StringComparison.OrdinalIgnoreCase)) return true;
         string fileName = Path.GetFileName(fullPath);
         if (string.IsNullOrEmpty(fileName)) return true;
         if (fileName.StartsWith(".") || fileName.StartsWith("~")) return true;
@@ -1520,6 +1528,8 @@ class FurimaServerNative
         {
             if (parts.Length == 1 && parts[0].Length > 0) return true;
             if (parts.Length == 3 && parts[0].Length > 0 && parts[1] == "photos" && parts[2].Length > 0) return true;
+            // フェーズ 6-13 (§47.10-5): ワーカーの参考画像取得も免除対象に明示追加する
+            if (parts.Length == 2 && parts[0].Length > 0 && parts[1] == "reference") return true;
             return false;
         }
         if (method == "POST")
@@ -2016,6 +2026,12 @@ class FurimaServerNative
                     SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Not found" } });
                 }
             }
+            else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/reference") && req.HttpMethod == "GET")
+            {
+                string refJobId = rawPath.Substring("/api/claude/jobs/".Length);
+                refJobId = refJobId.Substring(0, refJobId.Length - "/reference".Length).Trim();
+                HandleGetClaudeJobReference(req, res, refJobId);
+            }
             else if (rawPath.StartsWith("/api/claude/jobs/") && rawPath.EndsWith("/errors") && req.HttpMethod == "POST")
             {
                 string erJobId = rawPath.Substring("/api/claude/jobs/".Length);
@@ -2056,6 +2072,34 @@ class FurimaServerNative
             {
                 string detailJobId = rawPath.Substring("/api/claude/jobs/".Length).Trim();
                 HandleGetClaudeJob(res, detailJobId);
+            }
+            else if (rawPath == "/api/claude/references" && req.HttpMethod == "GET")
+            {
+                HandleGetClaudeReferences(res);
+            }
+            else if (rawPath == "/api/claude/references/from-item" && req.HttpMethod == "POST")
+            {
+                HandleRegisterReferenceFromItem(req, res);
+            }
+            else if (rawPath == "/api/claude/references/open-folder" && req.HttpMethod == "POST")
+            {
+                HandleOpenReferenceFolder(res);
+            }
+            else if (rawPath.StartsWith("/api/claude/references/") && rawPath.EndsWith("/thumb") && req.HttpMethod == "GET")
+            {
+                string thumbMd5 = rawPath.Substring("/api/claude/references/".Length);
+                thumbMd5 = thumbMd5.Substring(0, thumbMd5.Length - "/thumb".Length).Trim().ToLowerInvariant();
+                ServeReferenceThumb(res, thumbMd5);
+            }
+            else if (rawPath.StartsWith("/api/claude/references/") && req.HttpMethod == "GET")
+            {
+                string refMd5 = rawPath.Substring("/api/claude/references/".Length).Trim().ToLowerInvariant();
+                ServeReferenceOriginal(res, refMd5);
+            }
+            else if (rawPath.StartsWith("/api/claude/references/") && req.HttpMethod == "DELETE")
+            {
+                string delMd5 = rawPath.Substring("/api/claude/references/".Length).Trim().ToLowerInvariant();
+                HandleDeleteClaudeReference(res, delMd5);
             }
             else if (rawPath.StartsWith("/api/items/") && rawPath.EndsWith("/open-folder") && req.HttpMethod == "POST")
             {
@@ -5177,6 +5221,8 @@ class FurimaServerNative
             { "templateId", job.templateId ?? "" },
             { "templateName", job.templateName ?? "" },
             { "promptText", job.promptText ?? "" },
+            { "referenceMd5", job.referenceMd5 ?? "" },
+            { "referenceFileName", job.referenceFileName ?? "" },
             { "origin", job.origin ?? "" },
             { "queue", string.IsNullOrEmpty(job.queue) ? "manual" : job.queue },
             { "status", job.status ?? "" },
@@ -5242,6 +5288,9 @@ class FurimaServerNative
             if (origin != "pc" && origin != "phone") origin = "pc";
             string queue = (json.Value<string>("queue") ?? "").Trim();
             if (queue != "patrol" && queue != "manual" && queue != "waiting") queue = "patrol";
+            // フェーズ 6-13 (§47.10-5): 参考画像の添付 (任意・1 枚)。検証は商品解決後にロック内で行う。
+            string referenceMd5 = (json.Value<string>("referenceMd5") ?? "").Trim().ToLowerInvariant();
+            string referenceFileName = (json.Value<string>("referenceFileName") ?? "").Trim();
 
             var reqPhotos = new List<ClaudeJobPhoto>();
             JArray photosArr = json["photos"] as JArray;
@@ -5356,11 +5405,18 @@ class FurimaServerNative
                             {
                                 errorMessage = "商品に存在しない写真が含まれています: " + missingMd5;
                             }
+                            else if (!string.IsNullOrEmpty(referenceMd5) && !IsReferenceAttachable(referenceMd5))
+                            {
+                                // §47.10-5 / §47.11-4: 形式・コレクション登録済み・実ファイル存在を満たさない参考画像は作成エラーにする
+                                errorMessage = "参考画像が見つかりません (未登録または実ファイルがありません)";
+                            }
                             else
                             {
                                 string folderName = "";
                                 string dir = FindExistingItemFolder(resolvedItemId);
                                 if (!string.IsNullOrEmpty(dir)) folderName = Path.GetFileName(dir);
+                                var refEntry = !string.IsNullOrEmpty(referenceMd5) ? ReferencePhotoStore.GetEntry(referenceMd5) : null;
+                                string refNameSnapshot = !string.IsNullOrEmpty(referenceFileName) ? referenceFileName : (refEntry != null ? (refEntry.displayName ?? "") : "");
                                 var job = new ClaudeJob
                                 {
                                     itemId = resolvedItemId,
@@ -5372,7 +5428,9 @@ class FurimaServerNative
                                     templateName = hasPromptText ? freeTextJobName : (tpl.name ?? ""),
                                     promptText = hasPromptText ? promptTextSnapshot : (tpl.content ?? ""),
                                     origin = origin,
-                                    queue = queue
+                                    queue = queue,
+                                    referenceMd5 = referenceMd5,
+                                    referenceFileName = refNameSnapshot
                                 };
                                 created = ClaudeJobStore.CreateJob(job);
                             }
@@ -5605,7 +5663,12 @@ class FurimaServerNative
             }
             return false;
         }, expiryBundleUuids);
-        if (changed) BumpClaudeRevision();
+        if (changed)
+        {
+            BumpClaudeRevision();
+            // フェーズ 6-13 (§47.11-4): トークン失効で終端へ落ちたら参考画像の回収も試みる
+            SweepReferenceOrphans();
+        }
         return changed;
     }
 
@@ -5744,6 +5807,8 @@ class FurimaServerNative
                 return;
             }
             BumpClaudeRevision();
+            // フェーズ 6-13 (§47.11-4): 拒否で終端へ落ちたら参考画像の回収も試みる
+            if (!approved) SweepReferenceOrphans();
             job = ClaudeJobStore.GetJob(jobId);
             SendJson(res, new Dictionary<string, object>
             {
@@ -5786,6 +5851,516 @@ class FurimaServerNative
         });
         if (added) BumpClaudeRevision();
         return executable;
+    }
+
+    // ===== フェーズ 6-13 (§47.10): 参考画像コレクション =====
+    // 実ファイルは商品写真ストアと完全分離した専用ディレクトリに置き (ReferencePhotoStore)、
+    // 取り込み箱は Move-in 方式、配信は専用ルート、ワーカー取得はジョブ専用ルートに分離する。
+
+    private static bool IsReferenceAttachable(string md5)
+    {
+        if (!ReferencePhotoStore.IsValidMd5(md5)) return false;
+        if (!ReferencePhotoStore.IsRegistered(md5)) return false;
+        return ReferencePhotoStore.ResolveFilePath(md5) != null;
+    }
+
+    private static HashSet<string> CollectUnfinishedReferenceMd5s()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var jobs = ClaudeJobStore.GetJobs(null);
+        foreach (var j in jobs)
+        {
+            if (j == null) continue;
+            if (j.status != "queued" && j.status != "approval_pending" && j.status != "approved" && j.status != "processing") continue;
+            string md5 = (j.referenceMd5 ?? "").Trim().ToLowerInvariant();
+            if (!string.IsNullOrEmpty(md5)) set.Add(md5);
+        }
+        return set;
+    }
+
+    private static bool IsReferenceInUse(string md5)
+    {
+        return CollectUnfinishedReferenceMd5s().Contains(md5);
+    }
+
+    // 登録解除済み・未参照の実ファイルを回収する。ジョブの終端遷移 (完了・取消・拒否・
+    // トークン失効) とサーバー起動時から呼ぶ (§47.10-5 / §47.11-4)。
+    private static void SweepReferenceOrphans()
+    {
+        try
+        {
+            ReferencePhotoStore.SweepOrphans(CollectUnfinishedReferenceMd5s());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("SweepReferenceOrphans エラー: " + ex.Message);
+        }
+    }
+
+    private static Dictionary<string, object> ReferenceEntryToPublic(ClaudeReferenceEntry e)
+    {
+        return new Dictionary<string, object>
+        {
+            { "md5", e != null ? (e.md5 ?? "") : "" },
+            { "displayName", e != null ? (e.displayName ?? "") : "" },
+            { "fileName", e != null ? (e.fileName ?? "") : "" },
+            { "addedAt", e != null ? e.addedAt : 0 }
+        };
+    }
+
+    // 取り込み箱の走査 (Move-in 方式 §47.10-2)。戻り値は箱に残っている未対応形式のファイル名一覧。
+    private static List<string> ScanReferenceInbox()
+    {
+        var unsupported = new List<string>();
+        try
+        {
+            ReferencePhotoStore.EnsureDirs();
+            string inbox = ReferencePhotoStore.GetInboxDir();
+            string photosDir = ReferencePhotoStore.GetPhotosDir();
+            if (string.IsNullOrEmpty(inbox) || !Directory.Exists(inbox)) return unsupported;
+            string[] files = Directory.GetFiles(inbox);
+            foreach (string path in files)
+            {
+                string fileName = Path.GetFileName(path);
+                if (string.IsNullOrEmpty(fileName)) continue;
+                if (fileName.StartsWith(".") || fileName.StartsWith("~")) continue;
+                byte[] raw;
+                try
+                {
+                    raw = File.ReadAllBytes(path);
+                }
+                catch (Exception)
+                {
+                    // コピー中などでロックされている場合はその回をスキップし、次回走査に回す (§47.11-2)
+                    continue;
+                }
+                if (raw == null || raw.Length == 0) continue;
+                string mime = DetectImageMimeType(raw);
+                if (mime != "image/jpeg" && mime != "image/png")
+                {
+                    // 未対応形式は移動・削除せず箱に残し、未対応として表示する (§47.11-2)
+                    unsupported.Add(fileName);
+                    continue;
+                }
+                string md5;
+                using (var md5Alg = MD5.Create())
+                {
+                    md5 = BitConverter.ToString(md5Alg.ComputeHash(raw)).Replace("-", "").ToLower();
+                }
+                if (ReferencePhotoStore.IsRegistered(md5))
+                {
+                    // 重複投入: 既存の登録 (表示名等) を維持し、重複側の箱ファイルだけを掃除する (§47.11-2)
+                    try { File.Delete(path); } catch (Exception) { }
+                    continue;
+                }
+                string destName = md5 + (mime == "image/png" ? ".png" : ".jpg");
+                string dest = Path.Combine(photosDir, destName);
+                try
+                {
+                    if (File.Exists(dest)) File.Delete(dest);
+                    File.Move(path, dest);
+                }
+                catch (Exception)
+                {
+                    // 移動に失敗したら元ファイルを残して次回走査に回す
+                    continue;
+                }
+                ReferencePhotoStore.TryRegister(md5, fileName, destName);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ScanReferenceInbox エラー: " + ex.Message);
+        }
+        return unsupported;
+    }
+
+    private static void HandleGetClaudeReferences(HttpListenerResponse res)
+    {
+        try
+        {
+            var unsupported = ScanReferenceInbox();
+            var entries = ReferencePhotoStore.GetEntries();
+            var list = new List<Dictionary<string, object>>();
+            foreach (var e in entries) list.Add(ReferenceEntryToPublic(e));
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "references", list },
+                { "count", list.Count },
+                { "inboxPath", ReferencePhotoStore.GetInboxDir() },
+                { "storePath", ReferencePhotoStore.GetPhotosDir() },
+                { "unsupportedFiles", unsupported }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleGetClaudeReferences エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleRegisterReferenceFromItem(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            string jsonStr = "";
+            using (var reader = new StreamReader(req.InputStream, Encoding.UTF8))
+            {
+                jsonStr = reader.ReadToEnd();
+            }
+            JObject json = JObject.Parse(jsonStr);
+            int itemId = ParseIntSafe(json["itemId"], 0);
+            string md5 = (json.Value<string>("md5Hash") ?? "").Trim().ToLowerInvariant();
+            if (!ReferencePhotoStore.IsValidMd5(md5))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "参考画像にできる写真ではありません (MD5未確定)" } });
+                return;
+            }
+            var existing = ReferencePhotoStore.GetEntry(md5);
+            if (existing != null)
+            {
+                SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "alreadyRegistered", true }, { "reference", ReferenceEntryToPublic(existing) } });
+                return;
+            }
+            string sourcePath = null;
+            string photoFileName = "";
+            lock (lockObj)
+            {
+                if (hashToFilePathMap.ContainsKey(md5)) sourcePath = hashToFilePathMap[md5];
+                var item = itemsDb.Find(i => i != null && i.ContainsKey("id") && ParseIntSafe(i["id"], 0) == itemId);
+                if (item != null && item.ContainsKey("photos") && item["photos"] != null)
+                {
+                    var plist = SyncStore.NormalizePhotosList(item["photos"]);
+                    foreach (var ph in plist)
+                    {
+                        if (ph == null) continue;
+                        string h = ph.ContainsKey("md5Hash") && ph["md5Hash"] != null ? ph["md5Hash"].ToString().Trim().ToLowerInvariant() : "";
+                        if (h == md5)
+                        {
+                            photoFileName = ph.ContainsKey("fileName") && ph["fileName"] != null ? ph["fileName"].ToString().Trim() : "";
+                            break;
+                        }
+                    }
+                }
+            }
+            // §47.11-3: 実体が欠損している写真からは空の登録を作らずエラーにする
+            if (string.IsNullOrEmpty(sourcePath) || !File.Exists(sourcePath))
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "写真ファイルが見つかりません" } });
+                return;
+            }
+            byte[] raw = File.ReadAllBytes(sourcePath);
+            string mime = DetectImageMimeType(raw);
+            if (mime != "image/jpeg" && mime != "image/png")
+            {
+                res.StatusCode = 415;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "未対応の画像形式です (" + mime + ")" } });
+                return;
+            }
+            ReferencePhotoStore.EnsureDirs();
+            string destName = md5 + (mime == "image/png" ? ".png" : ".jpg");
+            string dest = Path.Combine(ReferencePhotoStore.GetPhotosDir(), destName);
+            if (!File.Exists(dest)) File.Copy(sourcePath, dest);
+            string displayName = !string.IsNullOrEmpty(photoFileName) ? photoFileName : Path.GetFileName(sourcePath);
+            ReferencePhotoStore.TryRegister(md5, displayName, destName);
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "alreadyRegistered", false }, { "reference", ReferenceEntryToPublic(ReferencePhotoStore.GetEntry(md5)) } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleRegisterReferenceFromItem エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleDeleteClaudeReference(HttpListenerResponse res, string md5)
+    {
+        try
+        {
+            if (!ReferencePhotoStore.IsValidMd5(md5))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid md5" } });
+                return;
+            }
+            bool removed = ReferencePhotoStore.Unregister(md5);
+            bool retained = false;
+            if (removed)
+            {
+                // 未完了ジョブが参照中なら実ファイルは残し、参照が切れた時点で回収する (§47.10-5)
+                if (IsReferenceInUse(md5))
+                {
+                    retained = true;
+                }
+                else
+                {
+                    ReferencePhotoStore.DeleteFileAndThumb(md5);
+                }
+            }
+            SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "removed", removed }, { "fileRetained", retained } });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleDeleteClaudeReference エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void HandleOpenReferenceFolder(HttpListenerResponse res)
+    {
+        try
+        {
+            ReferencePhotoStore.EnsureDirs();
+            string targetDir = ReferencePhotoStore.GetInboxDir();
+            try
+            {
+                Process.Start("explorer.exe", targetDir);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("エクスプローラー起動通知: " + ex.Message);
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "folderPath", targetDir },
+                { "storePath", ReferencePhotoStore.GetPhotosDir() }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleOpenReferenceFolder エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
+
+    private static void ServeReferenceOriginal(HttpListenerResponse res, string md5)
+    {
+        try
+        {
+            if (!ReferencePhotoStore.IsValidMd5(md5))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid md5" } });
+                return;
+            }
+            string path = ReferencePhotoStore.ResolveFilePath(md5);
+            if (string.IsNullOrEmpty(path))
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "参考画像が見つかりません" } });
+                return;
+            }
+            byte[] bytes = File.ReadAllBytes(path);
+            string mime = DetectImageMimeType(bytes);
+            res.ContentType = string.IsNullOrEmpty(mime) ? "application/octet-stream" : mime;
+            res.ContentLength64 = bytes.Length;
+            res.OutputStream.Write(bytes, 0, bytes.Length);
+            res.OutputStream.Close();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ServeReferenceOriginal エラー: " + ex.Message);
+            try
+            {
+                res.StatusCode = 500;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+            }
+            catch (Exception) { }
+        }
+    }
+
+    // §47.11-3: サムネイル生成にも配信コピーと同じ EXIF 正立化と PNG 透過部の白塗りを適用する
+    private static bool TryBuildReferenceThumb(byte[] raw, out byte[] outBytes)
+    {
+        outBytes = null;
+        string mime = DetectImageMimeType(raw);
+        if (mime != "image/jpeg" && mime != "image/png") return false;
+        try
+        {
+            using (var ms = new MemoryStream(raw))
+            using (var img = Image.FromStream(ms))
+            {
+                int orientation = 1;
+                try
+                {
+                    if (Array.IndexOf(img.PropertyIdList, 0x0112) >= 0)
+                    {
+                        var prop = img.GetPropertyItem(0x0112);
+                        if (prop != null && prop.Value != null && prop.Value.Length >= 2)
+                        {
+                            orientation = prop.Value[0] | (prop.Value[1] << 8);
+                        }
+                    }
+                }
+                catch { orientation = 1; }
+
+                if (orientation != 1)
+                {
+                    img.RotateFlip(MapExifOrientationToRotateFlip(orientation));
+                    try { img.RemovePropertyItem(0x0112); } catch { }
+                }
+                int w = img.Width;
+                int h = img.Height;
+                int le = Math.Max(w, h);
+                double scale = le > 320 ? (double)320 / le : 1.0;
+                int tw = Math.Max(1, (int)Math.Round(w * scale));
+                int th = Math.Max(1, (int)Math.Round(h * scale));
+                using (var bmp = new Bitmap(tw, th))
+                {
+                    using (var g = Graphics.FromImage(bmp))
+                    {
+                        g.Clear(Color.White);
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        g.DrawImage(img, 0, 0, tw, th);
+                    }
+                    var jpegCodec = GetJpegEncoder();
+                    if (jpegCodec == null) return false;
+                    using (var encParams = new EncoderParameters(1))
+                    {
+                        encParams.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, 85L);
+                        using (var outMs = new MemoryStream())
+                        {
+                            bmp.Save(outMs, jpegCodec, encParams);
+                            outBytes = outMs.ToArray();
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static void ServeReferenceThumb(HttpListenerResponse res, string md5)
+    {
+        try
+        {
+            if (!ReferencePhotoStore.IsValidMd5(md5))
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Invalid md5" } });
+                return;
+            }
+            ReferencePhotoStore.EnsureDirs();
+            string thumbPath = Path.Combine(ReferencePhotoStore.GetThumbsDir(), md5 + ".jpg");
+            if (!File.Exists(thumbPath))
+            {
+                string src = ReferencePhotoStore.ResolveFilePath(md5);
+                if (string.IsNullOrEmpty(src))
+                {
+                    res.StatusCode = 404;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "参考画像が見つかりません" } });
+                    return;
+                }
+                byte[] raw = File.ReadAllBytes(src);
+                byte[] thumb;
+                if (!TryBuildReferenceThumb(raw, out thumb))
+                {
+                    res.StatusCode = 415;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "サムネイルを生成できない画像形式です" } });
+                    return;
+                }
+                try { File.WriteAllBytes(thumbPath, thumb); } catch (Exception) { }
+            }
+            byte[] bytes = File.ReadAllBytes(thumbPath);
+            res.ContentType = "image/jpeg";
+            res.ContentLength64 = bytes.Length;
+            res.OutputStream.Write(bytes, 0, bytes.Length);
+            res.OutputStream.Close();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ServeReferenceThumb エラー: " + ex.Message);
+            try
+            {
+                res.StatusCode = 500;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+            }
+            catch (Exception) { }
+        }
+    }
+
+    // ワーカー専用取得 (§47.10-5): 商品写真の取得処理とは分離し、状態遷移やエラー記録は持ち込まない。
+    // ジョブトークンの検証と approved / processing の状態でのみ許可する。
+    private static void HandleGetClaudeJobReference(HttpListenerRequest req, HttpListenerResponse res, string jobId)
+    {
+        try
+        {
+            var job = ClaudeJobStore.GetJob(jobId);
+            if (job == null)
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが見つかりません" } });
+                return;
+            }
+            ApplyApprovalPendingExpiry(job);
+            ApplyTokenExpiry(job);
+            job = ClaudeJobStore.GetJob(jobId);
+
+            string token = req.Headers["X-Claude-Job-Token"];
+            if (string.IsNullOrEmpty(job.jobToken) || string.IsNullOrEmpty(token) ||
+                !string.Equals(token, job.jobToken, StringComparison.Ordinal))
+            {
+                res.StatusCode = 403;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブトークンが無効です（未承認・期限切れ・不一致）" } });
+                return;
+            }
+            if (job.status != "approved" && job.status != "processing")
+            {
+                res.StatusCode = 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "ジョブが実行可能な状態ではありません (status: " + job.status + ")" } });
+                return;
+            }
+            string refMd5 = (job.referenceMd5 ?? "").Trim().ToLowerInvariant();
+            if (string.IsNullOrEmpty(refMd5))
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "このジョブには参考画像が添付されていません" } });
+                return;
+            }
+            string path = ReferencePhotoStore.ResolveFilePath(refMd5);
+            if (string.IsNullOrEmpty(path))
+            {
+                res.StatusCode = 404;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "参考画像ファイルが見つかりません" } });
+                return;
+            }
+            byte[] raw = File.ReadAllBytes(path);
+            byte[] outBytes;
+            string outMime;
+            string copyError;
+            if (!TryBuildClaudeDeliveryCopy(raw, out outBytes, out outMime, out copyError))
+            {
+                res.StatusCode = 415;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", copyError } });
+                return;
+            }
+            res.ContentType = outMime;
+            res.ContentLength64 = outBytes.Length;
+            res.OutputStream.Write(outBytes, 0, outBytes.Length);
+            res.OutputStream.Close();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleGetClaudeJobReference エラー: " + ex.Message);
+            try
+            {
+                res.StatusCode = 500;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+            }
+            catch (Exception) { }
+        }
     }
 
     private static void HandleGetClaudeJobPhoto(HttpListenerRequest req, HttpListenerResponse res, string jobId, string md5)
@@ -6669,6 +7244,7 @@ class FurimaServerNative
             return true;
         }, bundleUuids);
         BumpClaudeRevision();
+        SweepReferenceOrphans();
         job = ClaudeJobStore.GetJob(jobId);
         SendJson(res, new Dictionary<string, object>
         {
@@ -6948,6 +7524,7 @@ class FurimaServerNative
             return;
         }
         BumpClaudeRevision();
+        SweepReferenceOrphans();
         var job = ClaudeJobStore.GetJob(jobId);
         SendJson(res, new Dictionary<string, object>
         {
