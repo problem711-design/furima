@@ -3038,3 +3038,29 @@ C5 ハードゲートに基づき、計画 §42.1（ワーカー手順文全文�
 
 ### 93.5 CI 検証結果
 コミット `3c2fd1b` の GitHub Actions `build-check`（run `44885412661`）は全ジョブ成功した。§92 修正バッチがコミット状態でビルド・テストを通ることを確認した。
+
+## 94. §92 修正バッチ再レビュー（承認）＆ 計画 §50（6-15 番号スタンプチェック）レビュー（2026-11-21）
+
+### 94.1 §92 修正バッチ（`3c2fd1b` / `505a229`）の再レビュー結論：**承認（6-14 Build 18 / 6-13 Build 19 / §47.12 完了）**
+コミット `3c2fd1b`・`505a229`（GitHub Actions `build-check` run `44885822577` 全ジョブ成功・ローカル JS テスト `15/15 PASS`）を確認し、§92 の要修正 3 件・任意改善 2 件・§47.12-3 追記のすべてが適切に解消されたことを確認した。
+
+1. **§92.2-1 解消確認（`tools/DashboardHtml.cs` L2665）**：`toggleViewerPhotoSelect()` 末尾で `renderViewerPhotos()` を呼ぶように修正され、カード単位の選択枠・`送信 1, 2...` バッジ・選択バーが即時同期する。
+2. **§92.2-2 解消確認（`app/.../ClaudeSendDialog.kt` L277-315）**：参考画像原寸プレビューを `Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp))` で包み、下層ダイアログとの透け重なりを解消した。
+   - **非ブロッカーの参考メモ**：`ClaudeSendDialog.kt` L94-106 で `pickerError` 分岐を追加しているが、`FleaMarketViewModel.fetchClaudeReferences()`（L435-438）がオフライン・取得失敗時も例外を投げず `emptyList()` を返しているため、現状 `pickerError = true` 経路には到達しない。`fetchClaudeReferences()` の戻り値を `List<ClaudeReferenceDto>?`（失敗時 `null`）に改めるとエラー区別が実動作する（Build 19 の承認ブロッカーにはせず、6-15 等次バッチで併せて直すとよい）。
+3. **§92.2-3 解消確認（`tools/FurimaServerNative.cs` L6261-6296）**：`ServeReferenceThumb()` が新規生成時はメモリ上の `thumb` をそのまま配信し、キャッシュ書込は `.tmp` 経由のベストエフォート保存、既存キャッシュ読込失敗時は再生成へフォールバックするよう修正された（同一画像の初回並列リクエスト時は `.tmp` 名衝突による保存失敗もあり得るが、配信自体はメモリ値で 200 成功する）。
+4. **任意改善 2 件・§47.12-3 解消確認**：`decideClaudeCustomRegister()`（`DashboardHtml.cs` L3426-3427）確認文への参考画像名追記、`ScanReferenceInbox()`（`FurimaServerNative.cs` L5928-5933）先頭での拡張子事前フィルタ、および `PLAN_CLAUDE_SEND_PHASE6.md` §47.12-3 の `404 / 415` 限定明記をすべて確認した。以上をもって **Build 18・Build 19・§47.12 を承認** とする。
+
+---
+
+### 94.2 既存機能の改善案レビュー：計画 §50（フェーズ 6-15：番号スタンプの送信時チェックボックス）
+- **判定**：**条件付き承認（着工可・方針妥当、実装前に下記 3 点を織り込むこと）**
+- テンプレート文を編集せず「今回だけ番号なし」を指定できる点、および「番号を振らない条件の OR」（チャット指示 / `stampNumber == false` / 本文内「番号なし」）による判定設計は実用的かつ矛盾がない。実装・手順適用にあたり以下の 3 点を条件とする：
+
+1. **【高・C# 5 実装の罠】`ClaudeJob` における `stampNumber = true` 既定値の厳密な保証（§50.2-2）**：
+   - `tools/ClaudeJobStore.cs`（L31-58）の `ClaudeJob` にはコンストラクタが無く、また PC サーバーは **C# 5（.NET Framework 4.x `csc.exe`）** のため自動プロパティ初期化子 `= true;` はコンパイル不可。仮に素の `public bool stampNumber { get; set; }` だけを追加すると、既存の `claude_jobs.json` に `stampNumber` キーが存在しない旧ジョブを `Newtonsoft.Json` で読み込んだ際に C# 既定値 **`false`（番号なし）** へ化けてしまう。
+   - **必要な実装**：`ClaudeJob` に引数なしコンストラクタ `public ClaudeJob() { stampNumber = true; }` を定義する（または `bool?` で保持し `LoadJobsLocked()`・`CloneJob()`・`ToPublicClaudeJob()` で `true` 正規化する）。同様に `HandleCreateClaudeJob` でも `json["stampNumber"] != null ? json.Value<bool>("stampNumber") : true` として未指定時は `true` に正規化し、`SyncDtos.kt` 側も `val stampNumber: Boolean = true` とすること。
+2. **【中】本文内「番号なし」との視覚整合・確認文・チェックのリセットタイミング（§50.2-1 / §50.2-3）**：
+   - 本文（選択テンプレートまたは手打ち）に「番号なし」が含まれている場合、UI 上でチェックが ON のまま送信しても結果が番号なしになる。仕様どおりで正しいが、誤認を防ぐため **送信エリアや確認ダイアログへ「※本文に『番号なし』が含まれるため番号は振られません」と注記する** ことを推奨する。
+   - PC・スマホの確認文には `番号スタンプ: 振る / 振らない`（少なくとも `false` 時）を明示し、PC ビューアでは `openItemViewer()` および送信成功後に既定 ON（`true`）へ戻して他商品・次回送信への引きずりを防ぐこと。
+3. **【中】§46 改訂文（ワーカー手順）の事前レビュー提出と互換条件（§50.2-4 / §43）**：
+   - §50.2-4 のとおり、実装と合わせて §46 改訂文を事前提示すること。ワーカー側の判定は `GET /api/claude/jobs/{jobId}` の `stampNumber` を見て **厳密に `stampNumber == false` のときのみ抑止**（欠落・`null`・`true` 時は §46 の従来判定へ進む）とし、旧サーバー／旧ジョブとの下位互換を保つこと。
