@@ -203,7 +203,7 @@ public static class DashboardHtml
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.4 (Build 17)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.5 (Build 18)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -493,6 +493,10 @@ public static class DashboardHtml
                 <a id='lightbox-newtab-link' href='#' target='_blank' class='bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
                     <i class='fa-solid fa-up-right-from-square'></i> 別タブ
                 </a>
+                <label id='lightbox-claude-select-wrap' onclick='event.stopPropagation()' class='hidden bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer items-center gap-1.5' title='この写真を Muse 送信の選択に含める (ビューアと共有)'>
+                    <input type='checkbox' id='lightbox-claude-select' onchange='toggleLightboxClaudeSelect()' class='w-3.5 h-3.5 accent-indigo-500 cursor-pointer'>
+                    Muse選択
+                </label>
                 <button type='button' onclick='trashCurrentLightboxPhoto()' class='bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
                     <i class='fa-solid fa-trash-can'></i> ゴミ箱へ
                 </button>
@@ -1100,7 +1104,25 @@ public static class DashboardHtml
         let lastKnownClaudeRevision = null;
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
-        let selectedViewerPhotoIndices = new Set();
+        let selectedViewerPhotoKeys = new Set();
+        // フェーズ 6-14 (§48.6): 選択キーは md5Hash を一次キーとする (photoId は採番前 = 0 の写真が多いため主キーにしない)。
+        // Set の挿入順 = クリック順 = Muse 送信順 (§46 の番号スタンプは受け取った順) のため、既存キーの再追加で順序を崩さないこと。
+        function viewerPhotoKey(photo, index) {
+            if (photo && photo.md5Hash) return 'm:' + (photo.childItemId || 0) + ':' + photo.md5Hash;
+            if (photo && photo.id > 0) return 'i:' + photo.id;
+            return 'x:' + index;
+        }
+        function resolveViewerPhotoByKey(photos, key) {
+            for (let i = 0; i < photos.length; i++) {
+                if (viewerPhotoKey(photos[i], i) === key) return { photo: photos[i], index: i };
+            }
+            return null;
+        }
+        function viewerSelectionOrder(key) {
+            let n = 0;
+            for (const k of selectedViewerPhotoKeys) { n++; if (k === key) return n; }
+            return 0;
+        }
         let lightboxPhotos = [];
         let lightboxIndex = 0;
         let photoTrashEntries = [];
@@ -2496,7 +2518,7 @@ public static class DashboardHtml
 
             currentViewerItemId = itemId;
             currentViewerTab = 'group';
-            selectedViewerPhotoIndices.clear();
+            selectedViewerPhotoKeys.clear();
 
             document.getElementById('viewer-title').innerText = '写真ギャラリー: ' + (item.title || '無題');
             const isBundle = checkIsBundle(item);
@@ -2528,7 +2550,7 @@ public static class DashboardHtml
             document.getElementById('photo-viewer-modal').classList.add('hidden');
             viewerSessionSeenMap = null;
             currentViewerItemId = null;
-            selectedViewerPhotoIndices.clear();
+            selectedViewerPhotoKeys.clear();
         }
 
         function switchViewerTab(tab) {
@@ -2550,7 +2572,7 @@ public static class DashboardHtml
             const selCountSpan = document.getElementById('viewer-selected-count');
             const trashBtn = document.getElementById('viewer-trash-selected-btn');
             if (countBadge) countBadge.innerText = totalCount + '枚';
-            const selSize = selectedViewerPhotoIndices.size;
+            const selSize = selectedViewerPhotoKeys.size;
             if (selCountSpan) selCountSpan.innerText = selSize;
             if (trashBtn) trashBtn.disabled = (selSize === 0);
 
@@ -2575,23 +2597,28 @@ public static class DashboardHtml
 
         function toggleViewerPhotoSelect(index, event) {
             if (event) event.stopPropagation();
-            if (selectedViewerPhotoIndices.has(index)) {
-                selectedViewerPhotoIndices.delete(index);
-            } else {
-                selectedViewerPhotoIndices.add(index);
-            }
             const item = allItems.find(i => i.id === currentViewerItemId);
-            updateViewerSelectionBar(item && item.photos ? item.photos.length : 0);
+            const photos = (item && item.photos) ? item.photos : [];
+            const photo = photos[index];
+            if (!photo) return;
+            const key = viewerPhotoKey(photo, index);
+            if (selectedViewerPhotoKeys.has(key)) {
+                selectedViewerPhotoKeys.delete(key);
+            } else {
+                selectedViewerPhotoKeys.add(key);
+            }
+            updateViewerSelectionBar(photos.length);
         }
 
         function toggleSelectAllViewerPhotos() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             const photos = (item && item.photos) ? item.photos : [];
             if (photos.length === 0) return;
-            if (selectedViewerPhotoIndices.size >= photos.length) {
-                selectedViewerPhotoIndices.clear();
+            const allSelected = photos.every((p, idx) => selectedViewerPhotoKeys.has(viewerPhotoKey(p, idx)));
+            if (allSelected) {
+                selectedViewerPhotoKeys.clear();
             } else {
-                photos.forEach((_, idx) => selectedViewerPhotoIndices.add(idx));
+                photos.forEach((p, idx) => selectedViewerPhotoKeys.add(viewerPhotoKey(p, idx)));
             }
             renderViewerPhotos();
         }
@@ -3020,19 +3047,20 @@ public static class DashboardHtml
         async function sendViewerPhotosToClaude() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             const photos = (item && item.photos) ? item.photos : [];
-            if (!item || selectedViewerPhotoIndices.size === 0) return;
+            if (!item || selectedViewerPhotoKeys.size === 0) return;
             if (checkIsBundle(item)) {
                 showToast('まとめ商品は個別の子商品から送信してください');
                 return;
             }
             closeClaudeTemplatePicker();
-            // 送信直前の照合 (Q6): 選択中インデックスが現在の写真一覧の実在写真に対応するか確認する
+            // 送信直前の照合 (Q6): 選択キーが現在の写真一覧の実在写真へ解決できるか確認する。
+            // Set の挿入順 = クリック順のまま反復する (§48.6: 送信順 = 選択順)。
             const targets = [];
             let mismatch = false;
-            selectedViewerPhotoIndices.forEach(idx => {
-                const ph = photos[idx];
-                if (!ph || !ph.md5Hash) { mismatch = true; return; }
-                targets.push({ md5: ph.md5Hash, fileName: ph.fileName || '' });
+            selectedViewerPhotoKeys.forEach(key => {
+                const hit = resolveViewerPhotoByKey(photos, key);
+                if (!hit || !hit.photo.md5Hash) { mismatch = true; return; }
+                targets.push({ md5: hit.photo.md5Hash, fileName: hit.photo.fileName || '' });
             });
             if (mismatch || targets.length === 0) {
                 showToast('写真の選択状態が変わっています。選択し直してください');
@@ -3143,7 +3171,7 @@ public static class DashboardHtml
                 if (!res.ok || data.status === 'error') {
                     throw new Error(data.message || '送信に失敗しました');
                 }
-                selectedViewerPhotoIndices.clear();
+                selectedViewerPhotoKeys.clear();
                 updateViewerSelectionBar(photos.length);
                 renderViewerPhotos();
                 if (extras.promptText) pushClaudeFreeTextHistory(extras.promptText);
@@ -3163,13 +3191,14 @@ public static class DashboardHtml
             updateViewerSelectionBar(photos.length);
         }
 
-        function buildViewerTrashTargets(itemId, photos, selectedIndices) {
+        function buildViewerTrashTargets(itemId, photos, selectedKeys) {
             const normalTargets = [];
             const brokenTargets = [];
-            const indices = Array.from(selectedIndices || []);
-            indices.forEach(idx => {
-                const p = photos && photos[idx];
-                if (!p) return;
+            const keys = Array.from(selectedKeys || []);
+            keys.forEach(key => {
+                const hit = resolveViewerPhotoByKey(photos || [], key);
+                if (!hit) return;
+                const p = hit.photo;
                 if (p.md5Hash) {
                     normalTargets.push({
                         itemId: itemId,
@@ -3181,7 +3210,7 @@ public static class DashboardHtml
                         itemId: itemId,
                         md5Hash: '',
                         childItemId: p.childItemId || 0,
-                        photoIndex: idx,
+                        photoIndex: hit.index,
                         photoId: p.id || 0
                     });
                 }
@@ -3196,9 +3225,9 @@ public static class DashboardHtml
         async function trashSelectedViewerPhotos() {
             const item = allItems.find(i => i.id === currentViewerItemId);
             const photos = (item && item.photos) ? item.photos : [];
-            if (!item || selectedViewerPhotoIndices.size === 0) return;
+            if (!item || selectedViewerPhotoKeys.size === 0) return;
 
-            const plan = buildViewerTrashTargets(item.id, photos, selectedViewerPhotoIndices);
+            const plan = buildViewerTrashTargets(item.id, photos, selectedViewerPhotoKeys);
             if (plan.targets.length === 0) {
                 showToast('削除対象の写真が見つかりませんでした');
                 return;
@@ -3223,7 +3252,7 @@ public static class DashboardHtml
                 if (!res.ok || data.status === 'error') {
                     throw new Error(data.message || '削除に失敗しました');
                 }
-                selectedViewerPhotoIndices.clear();
+                selectedViewerPhotoKeys.clear();
                 const movedCnt = data.movedToTrashCount || 0;
                 const brokenCnt = data.removedBrokenCount || 0;
                 if (movedCnt > 0 && brokenCnt > 0) {
@@ -3252,9 +3281,9 @@ public static class DashboardHtml
             const photos = item.photos || [];
             document.getElementById('viewer-photo-count').innerText = photos.length + '枚の写真';
 
-            // 存在しないインデックスを掃除
-            Array.from(selectedViewerPhotoIndices).forEach(idx => {
-                if (idx < 0 || idx >= photos.length) selectedViewerPhotoIndices.delete(idx);
+            // 現在の写真一覧へ解決できない選択キーを掃除 (識別キー化 §48.6: 添字範囲ではなくキー解決で判定する)
+            Array.from(selectedViewerPhotoKeys).forEach(key => {
+                if (!resolveViewerPhotoByKey(photos, key)) selectedViewerPhotoKeys.delete(key);
             });
             updateViewerSelectionBar(photos.length);
 
@@ -3334,7 +3363,9 @@ public static class DashboardHtml
             const url = photo.md5Hash ? '/api/photos/' + photo.md5Hash : photo.photoUrl;
             const photoLabel = claudePhotoLabel(viewerUuidSet, photo.md5Hash, viewerSessionSeenMap || labelSeenAtByItemUuid);
             const fileName = (photo.fileName || '').trim();
-            const isChecked = selectedViewerPhotoIndices.has(index);
+            const photoKey = viewerPhotoKey(photo, index);
+            const isChecked = selectedViewerPhotoKeys.has(photoKey);
+            const sendOrder = isChecked ? viewerSelectionOrder(photoKey) : 0;
             return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between transition'>
                 <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openPhotoLightbox(${index})'>
                     <img src='${url}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${url}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>
@@ -3344,6 +3375,7 @@ public static class DashboardHtml
                         <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='toggleViewerPhotoSelect(${index}, event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
                     </label>
                     ${photoLabel ? `<span class='absolute bottom-1 left-1 ${photoLabel.cls} text-[9px] font-bold px-1.5 py-0.5 rounded pointer-events-none shadow'>${photoLabel.text}</span>` : ''}
+                    ${sendOrder ? `<span class='absolute bottom-1 right-1 bg-indigo-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded pointer-events-none shadow'>送信 ${sendOrder}</span>` : ''}
                 </div>
                 ${fileName ? `<div class='px-1.5 py-0.5 bg-slate-100/90 border-t border-slate-100 text-[9px] font-mono text-slate-600 truncate' title='${escapeHtml(fileName)}'>${escapeHtml(fileName)}</div>` : ''}
                 <div class='p-1.5 bg-slate-50 border-t border-slate-100 flex items-center gap-1 text-[10px]'>
@@ -3404,14 +3436,27 @@ public static class DashboardHtml
             document.getElementById('lightbox-prev-btn').disabled = (lightboxIndex <= 0);
             document.getElementById('lightbox-next-btn').disabled = (lightboxIndex >= lightboxPhotos.length - 1);
 
+            // フェーズ 6-14 (§48.2/§48.5): ビューアと共有する Muse 選択チェックを同期する (まとめ商品では送信不可のため出さない)
+            const selWrap = document.getElementById('lightbox-claude-select-wrap');
+            const selBox = document.getElementById('lightbox-claude-select');
+            if (selWrap && selBox) {
+                const showSel = !!item && !checkIsBundle(item);
+                selWrap.classList.toggle('hidden', !showSel);
+                selWrap.classList.toggle('flex', showSel);
+                if (showSel) selBox.checked = selectedViewerPhotoKeys.has(viewerPhotoKey(photo, lightboxIndex));
+            }
+
             const strip = document.getElementById('lightbox-thumbs-strip');
             strip.innerHTML = lightboxPhotos.map((p, idx) => {
                 const pUrl = p.md5Hash ? '/api/photos/' + p.md5Hash : p.photoUrl;
                 const activeCls = (idx === lightboxIndex)
                     ? 'border-indigo-400 ring-2 ring-indigo-400/60 opacity-100 scale-105'
                     : 'border-slate-700 opacity-60 hover:opacity-100';
+                const pKey = viewerPhotoKey(p, idx);
+                const selOrder = selectedViewerPhotoKeys.has(pKey) ? viewerSelectionOrder(pKey) : 0;
                 return `<button type='button' onclick='selectLightboxPhoto(${idx})' class='relative w-12 h-12 rounded-md overflow-hidden border-2 shrink-0 transition ${activeCls}'>
                     <img src='${pUrl}' class='w-full h-full object-cover'>
+                    ${selOrder ? `<span class='absolute top-0 left-0 bg-indigo-600 text-white text-[8px] font-bold px-1'>${selOrder}</span>` : ''}
                     <span class='absolute bottom-0 right-0 bg-black/70 text-white text-[8px] font-mono px-1'>${idx + 1}</span>
                 </button>`;
             }).join('');
@@ -3419,6 +3464,21 @@ public static class DashboardHtml
 
         function selectLightboxPhoto(idx) {
             lightboxIndex = idx;
+            updateLightboxView();
+        }
+
+        // フェーズ 6-14 (§48.2): ライトボックスの Muse 選択チェック (ビューアの選択キーと共有)。
+        // 切り替え後は背面カード・サムネ列・選択バーを同期する (§86.1-2)。
+        function toggleLightboxClaudeSelect() {
+            const photo = lightboxPhotos && lightboxPhotos[lightboxIndex];
+            if (!photo) return;
+            const key = viewerPhotoKey(photo, lightboxIndex);
+            if (selectedViewerPhotoKeys.has(key)) {
+                selectedViewerPhotoKeys.delete(key);
+            } else {
+                selectedViewerPhotoKeys.add(key);
+            }
+            renderViewerPhotos();
             updateLightboxView();
         }
 
@@ -3480,7 +3540,8 @@ public static class DashboardHtml
                     throw new Error(data.message || '移動に失敗しました');
                 }
                 showToast(isBroken ? '壊れた写真参照をリストから除去しました' : '写真を写真ゴミ箱へ移動しました');
-                selectedViewerPhotoIndices.clear();
+                // フェーズ 6-14 (§48.6-2): 選択は削除した写真のキーだけを外し、残りの選択は保持する
+                selectedViewerPhotoKeys.delete(viewerPhotoKey(photo, lightboxIndex));
                 await fetchItems();
                 refreshPhotoTrashCount();
                 const updatedItem = allItems.find(i => i.id === currentViewerItemId);

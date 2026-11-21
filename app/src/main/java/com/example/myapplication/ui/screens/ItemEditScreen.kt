@@ -405,12 +405,19 @@ fun ItemEditScreen(
     val selectedNewUris = newImageUris.filter { selectedPhotoKeys.contains("uri:$it") }
     val selectedPhotoCount = selectedExistingPaths.size + selectedNewUris.size
     // Muse送信の対象は PC 同期済み (md5Hash 確定) の既存写真のみ (Q2)
-    val claudeEligiblePhotos: List<Pair<String, String>> = selectedExistingPaths.mapNotNull { path ->
-        val entity = loadedPhotosByPath[path]
-        if (entity != null && entity.md5Hash.isNotBlank() && entity.isPcSynced) {
-            entity.md5Hash to File(path).name
-        } else {
+    // フェーズ 6-14 (§48/§48.5): 送信順はタップ順 = selectedPhotoKeys の順序とする
+    // (§46 の番号スタンプは受け取った順で振られるため、写真一覧の順序で組み立ててはならない)
+    val claudeEligiblePhotos: List<Pair<String, String>> = selectedPhotoKeys.mapNotNull { key ->
+        if (!key.startsWith("path:")) {
             null
+        } else {
+            val path = key.removePrefix("path:")
+            val entity = loadedPhotosByPath[path]
+            if (entity != null && entity.md5Hash.isNotBlank() && entity.isPcSynced) {
+                entity.md5Hash to File(path).name
+            } else {
+                null
+            }
         }
     }
     val claudeExcludedCount = selectedPhotoCount - claudeEligiblePhotos.size
@@ -1040,6 +1047,33 @@ fun ItemEditScreen(
                                             .align(Alignment.BottomStart)
                                             .size(width = 56.dp, height = 32.dp)
                                             .clickable { claudeCancelTarget = claudeSourceJob to (photoEntity?.md5Hash ?: "") }
+                                    )
+                                }
+                            }
+                            // フェーズ 6-14 (§48.5-4 任意): Muse 送信順番号の表示 (送信対象の写真のみ、§46 の番号スタンプと一致)
+                            val sendOrderNumber = if (photoSelectionMode && isPhotoSelected) {
+                                val md5 = photoEntity?.md5Hash?.takeIf { it.isNotBlank() }
+                                if (md5 != null && photoEntity?.isPcSynced == true) {
+                                    claudeEligiblePhotos.indexOfFirst { it.first == md5 }.takeIf { it >= 0 }?.plus(1)
+                                } else {
+                                    null
+                                }
+                            } else {
+                                null
+                            }
+                            if (sendOrderNumber != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .padding(3.dp)
+                                        .background(Color.Black.copy(alpha = 0.65f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                                ) {
+                                    Text(
+                                        text = "#$sendOrderNumber",
+                                        color = Color.White,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold
                                     )
                                 }
                             }

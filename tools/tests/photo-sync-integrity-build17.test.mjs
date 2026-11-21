@@ -35,9 +35,13 @@ test('DashboardHtml.cs 内の inline script 構文が有効で buildViewerTrashT
     // JS 全体の構文チェック
     new vm.Script(js, { filename: 'DashboardHtml.inline.js' });
 
+    // フェーズ 6-14 (§48.6): buildViewerTrashTargets は選択キー (md5Hash 一次キー) を受け取り、
+    // 現在の写真一覧へ解決してから対象を組み立てる。依存するヘルパーも併せて抽出する。
     const fnCode = extractBlock(js, 'function buildViewerTrashTargets');
+    const keyCode = extractBlock(js, 'function viewerPhotoKey');
+    const resolveCode = extractBlock(js, 'function resolveViewerPhotoByKey');
     const ctx = vm.createContext({});
-    vm.runInContext(fnCode + '\nglobalThis.__fn = buildViewerTrashTargets;', ctx);
+    vm.runInContext(keyCode + '\n' + resolveCode + '\n' + fnCode + '\nglobalThis.__fn = buildViewerTrashTargets; globalThis.__key = viewerPhotoKey;', ctx);
 
     const photos = [
         { id: 101, md5Hash: 'abc123', childItemId: 0 },
@@ -45,8 +49,9 @@ test('DashboardHtml.cs 内の inline script 構文が有効で buildViewerTrashT
         { id: 103, md5Hash: '', childItemId: 55 },
         { id: 104, md5Hash: 'def456', childItemId: 55 }
     ];
+    const keySetOf = list => new Set(list.map((p, i) => ctx.__key(p, i)));
 
-    const mixedPlan = ctx.__fn(28, photos, new Set([0, 1, 2, 3]));
+    const mixedPlan = ctx.__fn(28, photos, keySetOf(photos));
     assert.equal(mixedPlan.normalCount, 2);
     assert.equal(mixedPlan.brokenCount, 2);
     assert.equal(mixedPlan.targets.length, 4);
@@ -58,14 +63,28 @@ test('DashboardHtml.cs 内の inline script 構文が有効で buildViewerTrashT
         ]
     );
 
-    const brokenOnlyPlan = ctx.__fn(28, photos, new Set([1]));
+    const brokenOnlyPlan = ctx.__fn(28, photos, new Set([ctx.__key(photos[1], 1)]));
     assert.equal(brokenOnlyPlan.normalCount, 0);
     assert.equal(brokenOnlyPlan.brokenCount, 1);
     assert.equal(brokenOnlyPlan.targets[0].photoIndex, 1);
     assert.equal(brokenOnlyPlan.targets[0].photoId, 102);
+
+    // 写真一覧の並びが変わっても、キーが指す写真そのものが対象になる (添字ズレ耐性 §48.6)
+    const shuffled = [photos[2], photos[0], photos[3], photos[1]];
+    const shuffledPlan = ctx.__fn(28, shuffled, keySetOf(photos));
+    assert.equal(shuffledPlan.normalCount, 2);
+    assert.equal(shuffledPlan.brokenCount, 2);
+    assert.deepEqual(
+        JSON.parse(JSON.stringify(shuffledPlan.targets.filter(t => !t.md5Hash).map(t => t.photoId).sort())),
+        [102, 103]
+    );
+    const idxByPhotoId = new Map(shuffled.map((p, i) => [p.id, i]));
+    for (const t of shuffledPlan.targets.filter(t => !t.md5Hash)) {
+        assert.equal(t.photoIndex, idxByPhotoId.get(t.photoId));
+    }
 });
 
-test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.4 (Build 17) に統一されている', () => {
+test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.5 (Build 18) に統一されている', () => {
     const cs = readFileSync(path.join(repoRoot, 'tools', 'DashboardHtml.cs'), 'utf8');
     const kt = readFileSync(
         path.join(repoRoot, 'app', 'src', 'main', 'java', 'com', 'example', 'myapplication', 'data', 'server', 'WebDashboardHtml.kt'),
@@ -73,7 +92,7 @@ test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.4 
     );
     const gradle = readFileSync(path.join(repoRoot, 'app', 'build.gradle.kts'), 'utf8');
 
-    assert.ok(cs.includes('v1.4 (Build 17)'), 'DashboardHtml.cs のバージョン表記が未更新');
-    assert.ok(kt.includes('v1.4 (Build 17)'), 'WebDashboardHtml.kt のバージョン表記が未更新');
-    assert.ok(gradle.includes('versionCode = 1417'), 'app/build.gradle.kts の versionCode が未更新');
+    assert.ok(cs.includes('v1.5 (Build 18)'), 'DashboardHtml.cs のバージョン表記が未更新');
+    assert.ok(kt.includes('v1.5 (Build 18)'), 'WebDashboardHtml.kt のバージョン表記が未更新');
+    assert.ok(gradle.includes('versionCode = 1518'), 'app/build.gradle.kts の versionCode が未更新');
 });
