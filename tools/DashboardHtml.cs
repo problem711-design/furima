@@ -27,19 +27,19 @@ public static class DashboardHtml
 
     <!-- ナビゲーションバー (Yahoo!フリマ出品支援ヘッダー) -->
     <header class='bg-indigo-700 text-white shadow-md sticky top-0 z-30'>
-        <div class='max-w-[1800px] mx-auto px-3 sm:px-4 min-h-10 py-1 flex flex-wrap items-center justify-between gap-x-3 gap-y-1'>
+        <div class='max-w-[1800px] mx-auto px-2 sm:px-4 h-11 flex items-center justify-between gap-1.5 sm:gap-3'>
             <!-- 左側: タイトル & Yahoo!フリマショートカット -->
-            <div class='flex items-center space-x-2 shrink-0'>
+            <div class='flex items-center gap-1.5 sm:gap-2 shrink-0'>
                 <i class='fa-solid fa-boxes-stacked text-base text-indigo-200'></i>
-                <h1 class='font-black text-sm tracking-tight whitespace-nowrap'>フリマ商品PC管理</h1>
-                <button onclick='openYahooSplit()' class='bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm transition flex items-center gap-1 ml-1 border border-rose-400/50' title='Yahoo!フリマ出品画面を通常タブで開きます（タブを切り離して Win + ← / → で左右に並べて利用できます）'>
-                    <i class='fa-solid fa-up-right-from-square text-[9px]'></i> Yahoo!フリマ出品画面を開く
+                <h1 class='font-black text-xs sm:text-sm tracking-tight whitespace-nowrap'><span class='hidden sm:inline'>フリマ商品</span>PC管理</h1>
+                <button onclick='openYahooSplit()' class='bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold px-2 py-0.5 rounded shadow-sm transition flex items-center gap-1 border border-rose-400/50 whitespace-nowrap shrink-0' title='Yahoo!フリマ出品画面を通常タブで開きます（タブを切り離して Win + ← / → で左右に並べて利用できます）'>
+                    <i class='fa-solid fa-up-right-from-square text-[9px]'></i> <span class='hidden md:inline'>Yahoo!フリマ</span>出品画面<span class='hidden xl:inline'>を開く</span>
                 </button>
             </div>
 
-            <!-- 中央・右側: ステータスフィルター & 検索ボックス -->
-            <div class='flex items-center gap-2 flex-1 justify-end overflow-x-auto custom-scroll py-0.5'>
-                <div class='flex items-center gap-1 bg-indigo-800/60 p-0.5 rounded-lg shrink-0'>
+            <!-- 中央・右側: ステータスフィルター (広幅: チップ / 狭幅: ドロップダウン) & 検索ボックス -->
+            <div class='flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1 justify-end py-0.5'>
+                <div class='hidden xl:flex items-center gap-1 bg-indigo-800/60 p-0.5 rounded-lg shrink-0'>
                     <button onclick='setFilter(""ALL"")' id='filter-all' class='filter-btn px-2 py-0.5 text-xs font-bold rounded bg-white text-indigo-800 shadow-sm transition'>すべて (<span id='count-all'>0</span>)</button>
                     <button onclick='setFilter(""DRAFT"")' id='filter-draft' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>下書き (<span id='count-draft'>0</span>)</button>
                     <button onclick='setFilter(""LISTED"")' id='filter-listed' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'>出品中 (<span id='count-listed'>0</span>)</button>
@@ -48,11 +48,20 @@ public static class DashboardHtml
                     <button onclick='setFilter(""TRASH"")' id='filter-trash' class='filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition'><i class='fa-solid fa-trash-can mr-0.5'></i> ゴミ箱 (<span id='count-trash'>0</span>)</button>
                 </div>
 
-                <div class='relative w-40 lg:w-56 shrink-0'>
-                    <i class='fa-solid fa-magnifying-glass absolute left-2.5 top-2 text-indigo-300 text-xs'></i>
-                    <input type='text' id='search-input' oninput='renderItems()' placeholder='商品名・説明文で検索...' class='w-full pl-7 pr-2 py-1 text-xs bg-indigo-800/80 text-white placeholder-indigo-300 border border-indigo-500/50 rounded-md focus:outline-none focus:bg-indigo-900 focus:ring-1 focus:ring-white'>
+                <select id='filter-select' onchange='setFilter(this.value)' aria-label='ステータス絞り込み' class='xl:hidden text-xs font-bold bg-indigo-800/90 text-white border border-indigo-400/60 rounded-md px-1.5 py-1 shrink-0 max-w-[130px] focus:outline-none focus:ring-1 focus:ring-white cursor-pointer'>
+                    <option value='ALL' id='filter-opt-all'>すべて (0)</option>
+                    <option value='DRAFT' id='filter-opt-draft'>下書き (0)</option>
+                    <option value='LISTED' id='filter-opt-listed'>出品中 (0)</option>
+                    <option value='SHIPPING' id='filter-opt-shipping'>発送準備中 (0)</option>
+                    <option value='SOLD' id='filter-opt-sold'>売却済 (0)</option>
+                    <option value='TRASH' id='filter-opt-trash'>ゴミ箱 (0)</option>
+                </select>
+
+                <div class='relative flex-1 min-w-[88px] max-w-[180px] xl:flex-none xl:w-56'>
+                    <i class='fa-solid fa-magnifying-glass absolute left-2 top-2 text-indigo-300 text-xs'></i>
+                    <input type='text' id='search-input' oninput='renderItems()' placeholder='商品名・説明文で検索...' class='w-full pl-6 pr-2 py-1 text-xs bg-indigo-800/80 text-white placeholder-indigo-300 border border-indigo-500/50 rounded-md focus:outline-none focus:bg-indigo-900 focus:ring-1 focus:ring-white'>
                 </div>
-                <span id='stat-connection-status' class='font-bold text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap'><i class='fa-solid fa-circle-exclamation'></i> 未接続</span>
+                <span id='stat-connection-status' title='未接続' class='font-bold text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 sm:px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap'><i class='fa-solid fa-circle-exclamation'></i><span class='hidden sm:inline'>未接続</span></span>
             </div>
         </div>
     </header>
@@ -467,7 +476,7 @@ public static class DashboardHtml
                     参考画像を添付する
                 </label>
                 <span id='viewer-claude-reference-selected' class='hidden items-center gap-2'>
-                    <img id='viewer-claude-reference-thumb' src='' class='w-8 h-8 rounded object-cover border border-teal-200'>
+                    <img id='viewer-claude-reference-thumb' src='' class='w-8 h-8 rounded object-contain bg-white p-0.5 border border-teal-200'>
                     <span id='viewer-claude-reference-name' class='font-bold text-teal-900 max-w-[240px] truncate'></span>
                     <button type='button' onclick='openClaudeReferencePicker()' class='px-2 py-0.5 rounded bg-white border border-teal-300 text-teal-700 font-bold'>変更</button>
                     <button type='button' onclick='clearViewerReference()' class='px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-600 font-bold'>外す</button>
@@ -557,46 +566,89 @@ public static class DashboardHtml
     <!-- フェーズ 6-13: 参考画像コレクション管理モーダル (管理は PC のみ) -->
     <div id='claude-references-modal' class='fixed inset-0 bg-black/60 z-[65] hidden flex items-center justify-center p-4' onclick='closeClaudeReferencesModal()'>
         <div class='bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden' onclick='event.stopPropagation()'>
-            <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between'>
+            <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0'>
                 <h3 class='text-sm font-black text-slate-800 flex items-center gap-2'><i class='fa-solid fa-image text-teal-600'></i> 参考画像コレクション</h3>
                 <button type='button' onclick='closeClaudeReferencesModal()' class='text-slate-400 hover:text-slate-700 text-lg'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='px-5 py-2 bg-teal-50/70 border-b border-teal-100 text-[11px] text-slate-600 space-y-1'>
-                <p>追加するには、取り込み箱フォルダへ画像ファイル (jpg / png) を入れてください。この一覧を開くたびに自動で取り込まれます。商品の写真からは、拡大表示の「参考に保存」でも追加できます。</p>
+            <div class='px-5 py-2 bg-teal-50/70 border-b border-teal-100 text-[11px] text-slate-600 space-y-1 shrink-0'>
+                <p>追加するには、取り込み箱フォルダへ画像ファイル (jpg / png) を入れてください。この一覧を開くたびに自動で取り込まれます。商品の写真からは、拡大表示の「参考に保存」でも追加できます。画像をクリックすると拡大プレビューを確認できます。</p>
                 <p class='font-mono text-[10px] break-all'>取り込み箱: <span id='claude-references-inbox-path'></span></p>
                 <p class='font-mono text-[10px] break-all'>保存先: <span id='claude-references-store-path'></span></p>
                 <p id='claude-references-unsupported' class='hidden text-rose-600 font-bold'></p>
                 <button type='button' onclick='openClaudeReferenceFolder()' class='px-2 py-1 rounded bg-white border border-teal-300 text-teal-700 font-bold'>取り込み箱フォルダを開く</button>
             </div>
-            <div id='claude-references-grid' class='p-4 flex-1 overflow-y-auto custom-scroll grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'></div>
+            <div class='p-4 flex-1 min-h-0 overflow-y-auto custom-scroll'>
+                <div id='claude-references-grid' class='grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'></div>
+            </div>
         </div>
     </div>
 
-    <!-- フェーズ 6-13: 参考画像ピッカー (送信時に 1 枚選ぶ) -->
+    <!-- フェーズ 6-13: 参考画像ピッカー (送信時に 1 枚選ぶ・クリックで拡大プレビュー確認) -->
     <div id='claude-reference-picker-modal' class='fixed inset-0 bg-black/60 z-[75] hidden flex items-center justify-center p-4' onclick='closeClaudeReferencePicker()'>
         <div class='bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden' onclick='event.stopPropagation()'>
-            <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between'>
-                <h3 class='text-sm font-black text-slate-800 flex items-center gap-2'><i class='fa-solid fa-image text-teal-600'></i> 参考画像を選ぶ (1 枚)</h3>
+            <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0'>
+                <div>
+                    <h3 class='text-sm font-black text-slate-800 flex items-center gap-2'><i class='fa-solid fa-image text-teal-600'></i> 参考画像を選ぶ (1 枚)</h3>
+                    <p class='text-[11px] text-slate-500'>画像をクリックして全体プレビューを確認し、「この画像にする」で決定します</p>
+                </div>
                 <button type='button' onclick='closeClaudeReferencePicker()' class='text-slate-400 hover:text-slate-700 text-lg'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div id='claude-reference-picker-grid' class='p-4 flex-1 overflow-y-auto custom-scroll grid grid-cols-3 sm:grid-cols-4 gap-3'></div>
+            <div class='p-4 flex-1 min-h-0 overflow-y-auto custom-scroll'>
+                <div id='claude-reference-picker-grid' class='grid grid-cols-3 sm:grid-cols-4 gap-3'></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- フェーズ 6-16 (§51): 参考画像 拡大プレビューモーダル (管理 / ピッカー共用) -->
+    <div id='claude-reference-preview-modal' class='fixed inset-0 bg-black/90 z-[80] hidden flex flex-col justify-between p-3 sm:p-5' onclick='closeClaudeReferencePreview()'>
+        <div class='w-full max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2 bg-slate-900/95 border border-slate-700 rounded-xl px-4 py-2.5 text-white shadow-xl shrink-0' onclick='event.stopPropagation()'>
+            <div class='flex items-center gap-2.5 min-w-0'>
+                <span id='claude-ref-preview-counter' class='text-xs font-mono font-bold bg-teal-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
+                <span id='claude-ref-preview-name' class='text-xs sm:text-sm font-bold text-slate-100 truncate'></span>
+            </div>
+            <div class='flex items-center gap-2 shrink-0'>
+                <button type='button' id='claude-ref-preview-delete-btn' onclick='deleteCurrentClaudeReferencePreview()' class='bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-solid fa-trash-can'></i> 登録を削除
+                </button>
+                <button type='button' id='claude-ref-preview-select-btn' onclick='selectCurrentClaudeReferencePreview()' class='hidden bg-teal-600 hover:bg-teal-500 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-solid fa-check'></i> この画像にする
+                </button>
+                <button type='button' onclick='closeClaudeReferencePreview()' class='text-slate-300 hover:text-white text-xl p-1 transition' title='閉じる (Esc)'>
+                    <i class='fa-solid fa-xmark'></i>
+                </button>
+            </div>
+        </div>
+
+        <div class='relative flex-1 min-h-0 w-full max-w-5xl mx-auto flex items-center justify-center my-2' onclick='event.stopPropagation()'>
+            <button id='claude-ref-preview-prev-btn' type='button' onclick='prevClaudeReferencePreview()' class='absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 bg-black/70 hover:bg-black text-white w-11 h-11 rounded-full flex items-center justify-center text-lg border border-white/25 shadow-lg transition disabled:opacity-30 disabled:cursor-not-allowed' title='前へ (←キー)'>
+                <i class='fa-solid fa-chevron-left'></i>
+            </button>
+            <img id='claude-ref-preview-img' src='' alt='参考画像拡大プレビュー' class='max-w-full max-h-[75vh] object-contain rounded-lg shadow-2xl border border-slate-700 bg-slate-950 select-none'>
+            <button id='claude-ref-preview-next-btn' type='button' onclick='nextClaudeReferencePreview()' class='absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-black/70 hover:bg-black text-white w-11 h-11 rounded-full flex items-center justify-center text-lg border border-white/25 shadow-lg transition disabled:opacity-30 disabled:cursor-not-allowed' title='次へ (→キー)'>
+                <i class='fa-solid fa-chevron-right'></i>
+            </button>
+        </div>
+
+        <div class='w-full max-w-5xl mx-auto flex items-center justify-between text-[11px] text-slate-300 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2 shrink-0' onclick='event.stopPropagation()'>
+            <span>キーボード: [←]前へ / [→]次へ / [Esc]閉じる</span>
+            <button type='button' onclick='closeClaudeReferencePreview()' class='px-3 py-1 text-xs font-bold bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition'>閉じる</button>
         </div>
     </div>
 
     <!-- 写真単位ゴミ箱モーダル (案A: _photo_trash 復元・完全削除) -->
     <div id='photo-trash-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5' onclick='closePhotoTrashModal()'>
         <div class='bg-white rounded-xl max-w-4xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
-            <div class='bg-rose-800 text-white px-5 py-3 flex items-center justify-between border-b border-rose-900'>
+            <div class='bg-rose-800 text-white px-5 py-3 flex items-center justify-between border-b border-rose-900 shrink-0'>
                 <div class='flex items-center gap-2.5'>
                     <i class='fa-solid fa-trash-can-arrow-up text-rose-200 text-lg'></i>
                     <div>
                         <h3 class='font-bold text-sm tracking-tight'>写真ゴミ箱 (_photo_trash)</h3>
-                        <p id='photo-trash-subtitle' class='text-[11px] text-rose-200'>ギャラリーから削除した写真を元の商品へ復元、または完全削除できます</p>
+                        <p id='photo-trash-subtitle' class='text-[11px] text-rose-200'>画像クリックで拡大確認・右上のチェックで複数選択し、復元または完全削除できます</p>
                     </div>
                 </div>
                 <button type='button' onclick='closePhotoTrashModal()' class='text-rose-200 hover:text-white text-lg font-bold p-1 transition'><i class='fa-solid fa-xmark'></i></button>
             </div>
-            <div class='bg-rose-50 px-5 py-2.5 border-b border-rose-100 flex flex-wrap items-center justify-between gap-2'>
+            <div class='bg-rose-50 px-5 py-2.5 border-b border-rose-100 flex flex-wrap items-center justify-between gap-2 shrink-0'>
                 <div class='flex items-center gap-2 text-xs'>
                     <button type='button' onclick='toggleSelectAllPhotoTrash()' class='px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-300 rounded font-bold text-slate-700 transition'>すべて選択/解除</button>
                     <span id='photo-trash-summary-text' class='font-mono text-slate-600'>0枚 (0 B)</span>
@@ -606,20 +658,69 @@ public static class DashboardHtml
                         <i class='fa-solid fa-rotate-left'></i> 選択を復元 (<span id='photo-trash-selected-count'>0</span>)
                     </button>
                     <button type='button' id='photo-trash-perm-btn' onclick='deleteSelectedPhotoTrashPermanent()' disabled class='bg-rose-600 hover:bg-rose-700 disabled:bg-slate-300 disabled:text-slate-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1'>
-                        <i class='fa-solid fa-fire'></i> 完全削除
+                        <i class='fa-solid fa-fire'></i> 選択を完全削除 (<span id='photo-trash-perm-count'>0</span>)
                     </button>
                     <button type='button' onclick='emptyPhotoTrash()' class='bg-slate-700 hover:bg-slate-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition'>
-                        空にする
+                        すべて空にする
                     </button>
                 </div>
             </div>
-            <div id='photo-trash-grid' class='p-4 flex-1 overflow-y-auto custom-scroll grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'>
-                <!-- JSで動的描画 -->
+            <div class='p-4 flex-1 min-h-0 overflow-y-auto custom-scroll'>
+                <div id='photo-trash-grid' class='grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3'>
+                    <!-- JSで動的描画 -->
+                </div>
             </div>
-            <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500'>
+            <div class='bg-slate-50 px-5 py-2.5 border-t border-slate-200 flex items-center justify-between text-[11px] text-slate-500 shrink-0'>
                 <span>復元すると元の商品（まとめ商品の場合は内訳含む）へ戻ります。</span>
                 <button type='button' onclick='closePhotoTrashModal()' class='px-4 py-1.5 text-xs font-bold bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-lg transition'>閉じる</button>
             </div>
+        </div>
+    </div>
+
+    <!-- フェーズ 6-16 (§51): 写真ゴミ箱 拡大プレビューモーダル -->
+    <div id='photo-trash-preview-modal' class='fixed inset-0 bg-black/90 z-[80] hidden flex flex-col justify-between p-3 sm:p-5' onclick='closePhotoTrashPreview()'>
+        <div class='w-full max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2 bg-slate-900/95 border border-slate-700 rounded-xl px-4 py-2.5 text-white shadow-xl shrink-0' onclick='event.stopPropagation()'>
+            <div class='flex items-center gap-2.5 min-w-0 flex-1'>
+                <span id='photo-trash-preview-counter' class='text-xs font-mono font-bold bg-rose-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
+                <div class='min-w-0'>
+                    <p id='photo-trash-preview-title' class='text-xs sm:text-sm font-bold text-slate-100 truncate'></p>
+                    <p id='photo-trash-preview-meta' class='text-[11px] font-mono text-slate-300 truncate'></p>
+                </div>
+            </div>
+            <div class='flex flex-wrap items-center gap-2 shrink-0'>
+                <label class='bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer flex items-center gap-1.5'>
+                    <input type='checkbox' id='photo-trash-preview-select-check' onchange='toggleCurrentPhotoTrashPreviewSelect()' class='w-3.5 h-3.5 accent-rose-500 cursor-pointer'>
+                    選択
+                </label>
+                <button type='button' onclick='restoreCurrentPhotoTrashPreview()' class='bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-solid fa-rotate-left'></i> 復元
+                </button>
+                <button type='button' onclick='deleteCurrentPhotoTrashPreviewPermanent()' class='bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition flex items-center gap-1.5'>
+                    <i class='fa-solid fa-fire'></i> 完全削除
+                </button>
+                <button type='button' onclick='closePhotoTrashPreview()' class='text-slate-300 hover:text-white text-xl p-1 transition' title='閉じる (Esc)'>
+                    <i class='fa-solid fa-xmark'></i>
+                </button>
+            </div>
+        </div>
+
+        <div class='relative flex-1 min-h-0 w-full max-w-5xl mx-auto flex items-center justify-center my-2' onclick='event.stopPropagation()'>
+            <button id='photo-trash-preview-prev-btn' type='button' onclick='prevPhotoTrashPreview()' class='absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 bg-black/70 hover:bg-black text-white w-11 h-11 rounded-full flex items-center justify-center text-lg border border-white/25 shadow-lg transition disabled:opacity-30 disabled:cursor-not-allowed' title='前へ (←キー)'>
+                <i class='fa-solid fa-chevron-left'></i>
+            </button>
+            <img id='photo-trash-preview-img' src='' alt='ゴミ箱写真拡大プレビュー' class='max-w-full max-h-[72vh] object-contain rounded-lg shadow-2xl border border-slate-700 bg-slate-950 select-none'>
+            <div id='photo-trash-preview-fallback' class='hidden flex flex-col items-center justify-center text-slate-300 bg-slate-900 border border-slate-700 rounded-xl px-8 py-12 text-xs'>
+                <i class='fa-regular fa-image text-4xl text-slate-500 mb-2'></i>
+                <span>画像ファイルが見つかりません</span>
+            </div>
+            <button id='photo-trash-preview-next-btn' type='button' onclick='nextPhotoTrashPreview()' class='absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 bg-black/70 hover:bg-black text-white w-11 h-11 rounded-full flex items-center justify-center text-lg border border-white/25 shadow-lg transition disabled:opacity-30 disabled:cursor-not-allowed' title='次へ (→キー)'>
+                <i class='fa-solid fa-chevron-right'></i>
+            </button>
+        </div>
+
+        <div class='w-full max-w-5xl mx-auto flex items-center justify-between text-[11px] text-slate-300 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2 shrink-0' onclick='event.stopPropagation()'>
+            <span id='photo-trash-preview-sub'></span>
+            <span>キーボード: [←]前へ / [→]次へ / [Esc]閉じる</span>
         </div>
     </div>
 
@@ -1185,6 +1286,7 @@ public static class DashboardHtml
         let lightboxIndex = 0;
         let photoTrashEntries = [];
         let selectedPhotoTrashIds = new Set();
+        let photoTrashPreviewIndex = 0;
         let pendingAddPhotoFiles = [];
         let pcSettings = {
             defaultFeeRatePercent: 5,
@@ -1350,8 +1452,52 @@ public static class DashboardHtml
                 }
             });
 
-            // キーボードショートカット (ライトボックス送り戻し / Esc)
+            // キーボードショートカット (プレビュー・ライトボックス送り戻し / Esc)
             document.addEventListener('keydown', (e) => {
+                const refPreview = document.getElementById('claude-reference-preview-modal');
+                if (refPreview && !refPreview.classList.contains('hidden')) {
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        prevClaudeReferencePreview();
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        nextClaudeReferencePreview();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeClaudeReferencePreview();
+                    }
+                    return;
+                }
+                const trashPreview = document.getElementById('photo-trash-preview-modal');
+                if (trashPreview && !trashPreview.classList.contains('hidden')) {
+                    if (e.key === 'ArrowLeft') {
+                        e.preventDefault();
+                        prevPhotoTrashPreview();
+                    } else if (e.key === 'ArrowRight') {
+                        e.preventDefault();
+                        nextPhotoTrashPreview();
+                    } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closePhotoTrashPreview();
+                    }
+                    return;
+                }
+                const refPicker = document.getElementById('claude-reference-picker-modal');
+                if (refPicker && !refPicker.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeClaudeReferencePicker();
+                    }
+                    return;
+                }
+                const refManage = document.getElementById('claude-references-modal');
+                if (refManage && !refManage.classList.contains('hidden')) {
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        closeClaudeReferencesModal();
+                    }
+                    return;
+                }
                 const lightbox = document.getElementById('photo-lightbox-modal');
                 if (lightbox && !lightbox.classList.contains('hidden')) {
                     if (e.key === 'ArrowLeft') {
@@ -1938,11 +2084,13 @@ public static class DashboardHtml
             }
             if (statusElem) {
                 if (statusData.appConnected) {
-                    statusElem.className = 'font-bold text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap';
-                    statusElem.innerHTML = `<i class='fa-solid fa-circle-check text-emerald-600'></i> 接続中`;
+                    statusElem.className = 'font-bold text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 sm:px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap';
+                    statusElem.title = 'スマホ接続中';
+                    statusElem.innerHTML = `<i class='fa-solid fa-circle-check text-emerald-600'></i><span class='hidden sm:inline'>接続中</span>`;
                 } else {
-                    statusElem.className = 'font-bold text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap';
-                    statusElem.innerHTML = `<i class='fa-solid fa-circle-exclamation text-amber-500'></i> 未接続`;
+                    statusElem.className = 'font-bold text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-full px-1.5 sm:px-2 py-0.5 flex items-center gap-1 shrink-0 whitespace-nowrap';
+                    statusElem.title = '未接続';
+                    statusElem.innerHTML = `<i class='fa-solid fa-circle-exclamation text-amber-500'></i><span class='hidden sm:inline'>未接続</span>`;
                 }
             }
         }
@@ -2125,12 +2273,28 @@ public static class DashboardHtml
             document.getElementById('count-sold').innerText = sold.length;
             const trashCountElem = document.getElementById('count-trash');
             if (trashCountElem) trashCountElem.innerText = trashed.length;
+            const optCounts = [
+                ['filter-opt-all', 'すべて', active.length],
+                ['filter-opt-draft', '下書き', draft.length],
+                ['filter-opt-listed', '出品中', listed.length],
+                ['filter-opt-shipping', '発送準備中', shipping.length],
+                ['filter-opt-sold', '売却済', sold.length],
+                ['filter-opt-trash', 'ゴミ箱', trashed.length]
+            ];
+            optCounts.forEach(([optId, label, count]) => {
+                const opt = document.getElementById(optId);
+                if (opt) opt.innerText = label + ' (' + count + ')';
+            });
             const emptyTrashBtn = document.getElementById('empty-trash-btn');
             if (emptyTrashBtn) emptyTrashBtn.disabled = trashed.length === 0;
         }
 
         function setFilter(filter) {
             currentFilter = filter;
+            const filterSelect = document.getElementById('filter-select');
+            if (filterSelect && filterSelect.value !== filter) {
+                filterSelect.value = filter;
+            }
             document.querySelectorAll('.filter-btn').forEach(btn => {
                 btn.className = 'filter-btn px-2 py-0.5 text-xs font-medium rounded hover:bg-indigo-600/50 text-indigo-100 transition';
             });
@@ -2878,6 +3042,8 @@ public static class DashboardHtml
         // ===== フェーズ 6-13 (§47.10): 参考画像コレクション (PC 管理 + 送信時ピッカー) =====
         let claudeReferencesCache = [];
         let viewerClaudeReference = null;
+        let claudeRefPreviewMode = 'manage';
+        let claudeRefPreviewIndex = 0;
 
         async function fetchClaudeReferences() {
             try {
@@ -2934,13 +3100,14 @@ public static class DashboardHtml
                 grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>参考画像はまだありません。取り込み箱フォルダへ画像を入れるか、商品写真の拡大表示から「参考に保存」してください。</div>';
                 return;
             }
-            grid.innerHTML = refs.map(r => {
+            grid.innerHTML = refs.map((r, idx) => {
                 const name = escapeHtml(r.displayName || r.fileName || r.md5);
-                return `<div class='bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm'>
-                    <div class='aspect-square bg-slate-100 overflow-hidden'>
-                        <img src='/api/claude/references/${r.md5}/thumb' class='w-full h-full object-cover'>
+                return `<div class='bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm flex flex-col'>
+                    <div onclick='openClaudeReferencePreview(${idx}, ""manage"")' class='relative aspect-square bg-slate-100 flex items-center justify-center p-1 overflow-hidden cursor-pointer shrink-0 group' title='クリックで拡大プレビュー'>
+                        <img src='/api/claude/references/${r.md5}/thumb' class='max-w-full max-h-full object-contain group-hover:scale-[1.03] transition'>
+                        <span class='absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition'><i class='fa-solid fa-magnifying-glass-plus'></i></span>
                     </div>
-                    <div class='p-1.5 space-y-1'>
+                    <div class='p-1.5 space-y-1 shrink-0'>
                         <p class='text-[10px] font-bold text-slate-700 truncate' title='${name}'>${name}</p>
                         <button type='button' onclick='deleteClaudeReference(""${r.md5}"")' class='w-full bg-white hover:bg-rose-50 border border-rose-200 text-rose-600 py-1 rounded font-bold text-[10px] transition'>登録を削除</button>
                     </div>
@@ -2957,7 +3124,25 @@ public static class DashboardHtml
                 showToast(data.fileRetained ? '登録を削除しました（使用中のため実ファイルはジョブ完了後に回収されます）' : '参考画像の登録を削除しました');
                 if (viewerClaudeReference && viewerClaudeReference.md5 === md5) clearViewerReference();
                 const data2 = await fetchClaudeReferences();
-                renderClaudeReferencesGrid(data2);
+                const manageModal = document.getElementById('claude-references-modal');
+                if (manageModal && !manageModal.classList.contains('hidden')) {
+                    renderClaudeReferencesGrid(data2);
+                }
+                const pickerModal = document.getElementById('claude-reference-picker-modal');
+                if (pickerModal && !pickerModal.classList.contains('hidden')) {
+                    renderClaudeReferencePickerGrid();
+                }
+                const previewModal = document.getElementById('claude-reference-preview-modal');
+                if (previewModal && !previewModal.classList.contains('hidden')) {
+                    if (!claudeReferencesCache || claudeReferencesCache.length === 0) {
+                        closeClaudeReferencePreview();
+                    } else {
+                        if (claudeRefPreviewIndex >= claudeReferencesCache.length) {
+                            claudeRefPreviewIndex = claudeReferencesCache.length - 1;
+                        }
+                        renderClaudeReferencePreview();
+                    }
+                }
             } catch (e) {
                 showToast('エラー: ' + e.message);
             }
@@ -3094,16 +3279,92 @@ public static class DashboardHtml
                 grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-slate-400 text-xs\'>参考画像がありません。先に Muse 連携カラムの「参考画像」から登録してください。</div>';
                 return;
             }
-            grid.innerHTML = refs.map(r => {
+            grid.innerHTML = refs.map((r, idx) => {
                 const name = escapeHtml(r.displayName || r.fileName || r.md5);
                 const selected = viewerClaudeReference && viewerClaudeReference.md5 === r.md5;
-                return `<button type='button' onclick='selectClaudeReference(""${r.md5}"")' class='bg-white border ${selected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm text-left'>
-                    <div class='aspect-square bg-slate-100 overflow-hidden'>
-                        <img src='/api/claude/references/${r.md5}/thumb' class='w-full h-full object-cover'>
+                return `<div onclick='openClaudeReferencePreview(${idx}, ""picker"")' class='bg-white border ${selected ? 'border-teal-500 ring-2 ring-teal-300' : 'border-slate-200 hover:border-teal-300'} rounded-lg overflow-hidden shadow-sm text-left flex flex-col cursor-pointer group transition'>
+                    <div class='relative aspect-square bg-slate-100 flex items-center justify-center p-1 overflow-hidden shrink-0'>
+                        <img src='/api/claude/references/${r.md5}/thumb' class='max-w-full max-h-full object-contain group-hover:scale-[1.03] transition'>
+                        ${selected ? `<span class='absolute top-1 left-1 bg-teal-600 text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow'>選択中</span>` : ''}
+                        <button type='button' onclick='event.stopPropagation(); deleteClaudeReference(""${r.md5}"")' class='absolute top-1 right-1 bg-white/90 hover:bg-rose-50 border border-rose-200 text-rose-600 w-6 h-6 rounded flex items-center justify-center text-[10px] shadow-sm transition' title='この参考画像の登録を削除'>
+                            <i class='fa-solid fa-trash-can'></i>
+                        </button>
                     </div>
-                    <p class='p-1.5 text-[10px] font-bold text-slate-700 truncate' title='${name}'>${name}</p>
-                </button>`;
+                    <p class='p-1.5 text-[10px] font-bold text-slate-700 truncate shrink-0' title='${name}'>${name}</p>
+                </div>`;
             }).join('');
+        }
+
+        function openClaudeReferencePreview(index, mode) {
+            if (!claudeReferencesCache || claudeReferencesCache.length === 0) return;
+            claudeRefPreviewMode = (mode === 'picker') ? 'picker' : 'manage';
+            claudeRefPreviewIndex = Math.max(0, Math.min(index || 0, claudeReferencesCache.length - 1));
+            const modal = document.getElementById('claude-reference-preview-modal');
+            if (modal) modal.classList.remove('hidden');
+            renderClaudeReferencePreview();
+        }
+
+        function closeClaudeReferencePreview() {
+            const modal = document.getElementById('claude-reference-preview-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function renderClaudeReferencePreview() {
+            const refs = claudeReferencesCache || [];
+            if (refs.length === 0) {
+                closeClaudeReferencePreview();
+                return;
+            }
+            if (claudeRefPreviewIndex < 0) claudeRefPreviewIndex = 0;
+            if (claudeRefPreviewIndex >= refs.length) claudeRefPreviewIndex = refs.length - 1;
+            const r = refs[claudeRefPreviewIndex];
+            const counterEl = document.getElementById('claude-ref-preview-counter');
+            if (counterEl) counterEl.innerText = (claudeRefPreviewIndex + 1) + ' / ' + refs.length;
+            const nameEl = document.getElementById('claude-ref-preview-name');
+            if (nameEl) nameEl.innerText = r.displayName || r.fileName || r.md5;
+            const imgEl = document.getElementById('claude-ref-preview-img');
+            if (imgEl) imgEl.src = '/api/claude/references/' + r.md5;
+            const prevBtn = document.getElementById('claude-ref-preview-prev-btn');
+            if (prevBtn) prevBtn.disabled = (claudeRefPreviewIndex <= 0);
+            const nextBtn = document.getElementById('claude-ref-preview-next-btn');
+            if (nextBtn) nextBtn.disabled = (claudeRefPreviewIndex >= refs.length - 1);
+            const selBtn = document.getElementById('claude-ref-preview-select-btn');
+            if (selBtn) {
+                if (claudeRefPreviewMode === 'picker') {
+                    selBtn.classList.remove('hidden');
+                } else {
+                    selBtn.classList.add('hidden');
+                }
+            }
+        }
+
+        function prevClaudeReferencePreview() {
+            if (claudeRefPreviewIndex > 0) {
+                claudeRefPreviewIndex--;
+                renderClaudeReferencePreview();
+            }
+        }
+
+        function nextClaudeReferencePreview() {
+            if (claudeReferencesCache && claudeRefPreviewIndex < claudeReferencesCache.length - 1) {
+                claudeRefPreviewIndex++;
+                renderClaudeReferencePreview();
+            }
+        }
+
+        function selectCurrentClaudeReferencePreview() {
+            const refs = claudeReferencesCache || [];
+            const r = refs[claudeRefPreviewIndex];
+            if (!r) return;
+            closeClaudeReferencePreview();
+            selectClaudeReference(r.md5);
+        }
+
+        function deleteCurrentClaudeReferencePreview() {
+            const refs = claudeReferencesCache || [];
+            const r = refs[claudeRefPreviewIndex];
+            if (!r) return;
+            deleteClaudeReference(r.md5);
         }
 
         function selectClaudeReference(md5) {
@@ -3935,6 +4196,17 @@ public static class DashboardHtml
                 if (sEl) sEl.innerText = photoTrashEntries.length;
                 if (vEl) vEl.innerText = photoTrashEntries.length;
                 renderPhotoTrashGrid();
+                const trashPreviewModal = document.getElementById('photo-trash-preview-modal');
+                if (trashPreviewModal && !trashPreviewModal.classList.contains('hidden')) {
+                    if (photoTrashEntries.length === 0) {
+                        closePhotoTrashPreview();
+                    } else {
+                        if (photoTrashPreviewIndex >= photoTrashEntries.length) {
+                            photoTrashPreviewIndex = photoTrashEntries.length - 1;
+                        }
+                        renderPhotoTrashPreview();
+                    }
+                }
             } catch (e) {
                 grid.innerHTML = '<div class=\'col-span-full text-center py-8 text-rose-500 text-xs\'>読み込みに失敗しました</div>';
             }
@@ -3942,9 +4214,40 @@ public static class DashboardHtml
 
         function updatePhotoTrashButtons() {
             const cnt = selectedPhotoTrashIds.size;
-            document.getElementById('photo-trash-selected-count').innerText = cnt;
-            document.getElementById('photo-trash-restore-btn').disabled = (cnt === 0);
-            document.getElementById('photo-trash-perm-btn').disabled = (cnt === 0);
+            const selEl = document.getElementById('photo-trash-selected-count');
+            if (selEl) selEl.innerText = cnt;
+            const permEl = document.getElementById('photo-trash-perm-count');
+            if (permEl) permEl.innerText = cnt;
+            const restoreBtn = document.getElementById('photo-trash-restore-btn');
+            if (restoreBtn) restoreBtn.disabled = (cnt === 0);
+            const permBtn = document.getElementById('photo-trash-perm-btn');
+            if (permBtn) permBtn.disabled = (cnt === 0);
+        }
+
+        function syncPhotoTrashCardVisual(trashId) {
+            const isChecked = selectedPhotoTrashIds.has(trashId);
+            const cards = document.querySelectorAll('#photo-trash-grid [data-trash-id]');
+            cards.forEach(card => {
+                if (card.getAttribute('data-trash-id') === trashId) {
+                    if (isChecked) {
+                        card.classList.remove('border-slate-200');
+                        card.classList.add('border-rose-500', 'ring-2', 'ring-rose-300');
+                    } else {
+                        card.classList.remove('border-rose-500', 'ring-2', 'ring-rose-300');
+                        card.classList.add('border-slate-200');
+                    }
+                    const cb = card.querySelector('input[type=""checkbox""]');
+                    if (cb) cb.checked = isChecked;
+                }
+            });
+            const previewModal = document.getElementById('photo-trash-preview-modal');
+            if (previewModal && !previewModal.classList.contains('hidden')) {
+                const cur = photoTrashEntries[photoTrashPreviewIndex];
+                if (cur && cur.trashId === trashId) {
+                    const pcb = document.getElementById('photo-trash-preview-select-check');
+                    if (pcb) pcb.checked = isChecked;
+                }
+            }
         }
 
         function togglePhotoTrashSelect(trashId, event) {
@@ -3955,6 +4258,7 @@ public static class DashboardHtml
                 selectedPhotoTrashIds.add(trashId);
             }
             updatePhotoTrashButtons();
+            syncPhotoTrashCardVisual(trashId);
         }
 
         function toggleSelectAllPhotoTrash() {
@@ -3974,28 +4278,127 @@ public static class DashboardHtml
                 grid.innerHTML = '<div class=\'col-span-full text-center py-12 text-slate-400 text-xs\'>写真ゴミ箱は空です</div>';
                 return;
             }
-            grid.innerHTML = photoTrashEntries.map(e => {
+            grid.innerHTML = photoTrashEntries.map((e, idx) => {
                 const isChecked = selectedPhotoTrashIds.has(e.trashId);
                 const dt = e.trashedAt ? new Date(e.trashedAt).toLocaleString('ja-JP') : '';
                 const safeTitle = escapeHtml(e.originalItemTitle || '無題');
                 const safeChild = e.originalChildItemTitle ? (' / ' + escapeHtml(e.originalChildItemTitle)) : '';
-                return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between'>
-                    <div class='relative aspect-square bg-slate-100 overflow-hidden'>
-                        <img src='${e.imageUrl}' class='w-full h-full object-cover'>
-                        <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black p-1 rounded cursor-pointer flex items-center justify-center border border-white/30'>
-                            <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='togglePhotoTrashSelect(""${escapeHtml(e.trashId)}"", event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
+                const safeFile = escapeHtml(e.fileName || e.md5Hash || '');
+                const orderNum = (typeof e.displayOrder === 'number' && e.displayOrder >= 0) ? (e.displayOrder + 1) : 1;
+                const safeId = escapeHtml(e.trashId);
+                return `<div data-trash-id='${safeId}' class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between'>
+                    <div onclick='openPhotoTrashPreview(${idx})' class='relative aspect-square bg-slate-100 flex items-center justify-center p-1 overflow-hidden cursor-pointer shrink-0 group' title='クリックで拡大プレビュー'>
+                        <img src='${e.imageUrl}' onerror='this.classList.add(""hidden""); if (this.nextElementSibling) this.nextElementSibling.classList.remove(""hidden"");' class='max-w-full max-h-full object-contain group-hover:scale-[1.03] transition'>
+                        <div class='hidden flex flex-col items-center justify-center text-slate-400 text-[10px] p-2 text-center'>
+                            <i class='fa-regular fa-image text-xl mb-1'></i>
+                            <span>画像ファイルなし</span>
+                        </div>
+                        <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black p-1.5 rounded cursor-pointer flex items-center justify-center border border-white/30' title='この写真を選択'>
+                            <input type='checkbox' ${isChecked ? 'checked' : ''} onchange='togglePhotoTrashSelect(""${safeId}"", event)' class='w-4 h-4 accent-rose-500 cursor-pointer'>
                         </label>
+                        <span class='absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition'><i class='fa-solid fa-magnifying-glass-plus'></i></span>
                     </div>
-                    <div class='p-2 space-y-1 text-[10px]'>
+                    <div class='p-2 space-y-1 text-[10px] shrink-0'>
                         <p class='font-bold text-slate-800 line-clamp-1' title='${safeTitle.replace(/'/g, '&#39;')}'>${safeTitle}${safeChild}</p>
-                        <p class='text-slate-400 font-mono'>${escapeHtml(dt)} ・ ${formatBytesSimple(e.fileSizeBytes)}</p>
+                        <p class='text-slate-600 font-mono truncate' title='${safeFile.replace(/'/g, '&#39;')}'>#${orderNum} ${safeFile}</p>
+                        <p class='text-slate-400 font-mono truncate'>${escapeHtml(dt)} ・ ${formatBytesSimple(e.fileSizeBytes)}</p>
                         <div class='flex gap-1 pt-1'>
-                            <button type='button' onclick='restoreSinglePhotoTrash(""${escapeHtml(e.trashId)}"")' class='flex-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 py-1 rounded font-bold transition'>復元</button>
-                            <button type='button' onclick='deleteSinglePhotoTrashPermanent(""${escapeHtml(e.trashId)}"")' class='bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 px-2 py-1 rounded font-bold transition'>削除</button>
+                            <button type='button' onclick='restoreSinglePhotoTrash(""${safeId}"")' class='flex-1 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-700 py-1 rounded font-bold transition'>復元</button>
+                            <button type='button' onclick='deleteSinglePhotoTrashPermanent(""${safeId}"")' class='bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 px-2 py-1 rounded font-bold transition'>削除</button>
                         </div>
                     </div>
                 </div>`;
             }).join('');
+        }
+
+        function openPhotoTrashPreview(index) {
+            if (!photoTrashEntries || photoTrashEntries.length === 0) return;
+            photoTrashPreviewIndex = Math.max(0, Math.min(index || 0, photoTrashEntries.length - 1));
+            const modal = document.getElementById('photo-trash-preview-modal');
+            if (modal) modal.classList.remove('hidden');
+            renderPhotoTrashPreview();
+        }
+
+        function closePhotoTrashPreview() {
+            const modal = document.getElementById('photo-trash-preview-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function renderPhotoTrashPreview() {
+            const entries = photoTrashEntries || [];
+            if (entries.length === 0) {
+                closePhotoTrashPreview();
+                return;
+            }
+            if (photoTrashPreviewIndex < 0) photoTrashPreviewIndex = 0;
+            if (photoTrashPreviewIndex >= entries.length) photoTrashPreviewIndex = entries.length - 1;
+            const e = entries[photoTrashPreviewIndex];
+            const counterEl = document.getElementById('photo-trash-preview-counter');
+            if (counterEl) counterEl.innerText = (photoTrashPreviewIndex + 1) + ' / ' + entries.length;
+            const titleEl = document.getElementById('photo-trash-preview-title');
+            if (titleEl) {
+                const child = e.originalChildItemTitle ? (' / ' + e.originalChildItemTitle) : '';
+                titleEl.innerText = (e.originalItemTitle || '無題') + child;
+            }
+            const metaEl = document.getElementById('photo-trash-preview-meta');
+            if (metaEl) {
+                const orderNum = (typeof e.displayOrder === 'number' && e.displayOrder >= 0) ? (e.displayOrder + 1) : 1;
+                metaEl.innerText = '元 #' + orderNum + ' ・ ' + (e.fileName || e.md5Hash || '');
+            }
+            const subEl = document.getElementById('photo-trash-preview-sub');
+            if (subEl) {
+                const dt = e.trashedAt ? new Date(e.trashedAt).toLocaleString('ja-JP') : '';
+                subEl.innerText = dt + ' ・ ' + formatBytesSimple(e.fileSizeBytes);
+            }
+            const imgEl = document.getElementById('photo-trash-preview-img');
+            const fbEl = document.getElementById('photo-trash-preview-fallback');
+            if (imgEl && fbEl) {
+                fbEl.classList.add('hidden');
+                imgEl.classList.remove('hidden');
+                imgEl.onerror = () => {
+                    imgEl.classList.add('hidden');
+                    fbEl.classList.remove('hidden');
+                };
+                imgEl.src = e.imageUrl;
+            }
+            const cb = document.getElementById('photo-trash-preview-select-check');
+            if (cb) cb.checked = selectedPhotoTrashIds.has(e.trashId);
+            const prevBtn = document.getElementById('photo-trash-preview-prev-btn');
+            if (prevBtn) prevBtn.disabled = (photoTrashPreviewIndex <= 0);
+            const nextBtn = document.getElementById('photo-trash-preview-next-btn');
+            if (nextBtn) nextBtn.disabled = (photoTrashPreviewIndex >= entries.length - 1);
+        }
+
+        function prevPhotoTrashPreview() {
+            if (photoTrashPreviewIndex > 0) {
+                photoTrashPreviewIndex--;
+                renderPhotoTrashPreview();
+            }
+        }
+
+        function nextPhotoTrashPreview() {
+            if (photoTrashEntries && photoTrashPreviewIndex < photoTrashEntries.length - 1) {
+                photoTrashPreviewIndex++;
+                renderPhotoTrashPreview();
+            }
+        }
+
+        function toggleCurrentPhotoTrashPreviewSelect() {
+            const e = (photoTrashEntries || [])[photoTrashPreviewIndex];
+            if (!e) return;
+            togglePhotoTrashSelect(e.trashId);
+        }
+
+        function restoreCurrentPhotoTrashPreview() {
+            const e = (photoTrashEntries || [])[photoTrashPreviewIndex];
+            if (!e) return;
+            restoreSinglePhotoTrash(e.trashId);
+        }
+
+        function deleteCurrentPhotoTrashPreviewPermanent() {
+            const e = (photoTrashEntries || [])[photoTrashPreviewIndex];
+            if (!e) return;
+            deleteSinglePhotoTrashPermanent(e.trashId);
         }
 
         async function restorePhotoTrashIds(ids) {
