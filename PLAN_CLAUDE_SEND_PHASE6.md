@@ -1690,3 +1690,43 @@ fi
 
 ### 50.5 §46 改訂文（ワーカー手順・§43 方式で同時提出し合意後に適用）
 §46 の番号なし判定を次のとおり改訂する。番号を振らないのは、(a) チャットでの直接指示、(b) ジョブ詳細（GET /api/claude/jobs/{jobId}）の `stampNumber` が厳密に false、(c) プロンプトに「番号なし」を含む、のいずれかの場合。(b) については、項目の欠落・null・true のときは抑止せず従来判定へ進む（旧サーバー・旧ジョブとの下位互換）。それ以外は従来どおり受け取り順の番号を振る。
+
+---
+
+## 51. フェーズ 6-16：PC 管理画面 UI/UX 改善・レイアウト不具合是正（ユーザー協議 2026-11-23）
+
+### 51.1 背景と原因分析
+1. **ヘッダーの狭幅・分割表示見切れ（`tools/DashboardHtml.cs`）**：
+   - フィルター＆検索ラッパーに `flex-1`・`justify-end`・`overflow-x-auto` を併用しているため、狭幅時に 2 段目へ折り返せないまま左側へ溢れ、ブラウザ仕様により `すべて`〜`発送準備中` 側へ横スクロールで戻すこともできなくなる。
+   - なおスマホ配信側（`WebDashboardHtml.kt`）は根本改修が別途必要なため本節の対象外とし、今回は変更しない。
+2. **写真ゴミ箱・参考画像モーダルの縦潰れバグ（スクリーンショットから特定）**：
+   - `#claude-references-grid`（参考画像コレクション）、`#claude-reference-picker-grid`（参考画像ピッカー）、`#photo-trash-grid`（写真ゴミ箱）の 3 箇所において、`flex-1 overflow-y-auto` と `grid`（CSS Grid）を**同一の `<div>`** に指定していた。
+   - その結果、スクロールせずに全行がモーダル残り高さ内へ押し潰され、写真ゴミ箱では `aspect-square`（`shrink-0` なし）が高さ `0px` に崩壊して下部ボタン等も切り落とされ「タイトル 1 行だけ」になり、参考画像コレクションでは下部のファイル名と「登録を削除」ボタンが切り落とされていた。
+3. **参考画像の全体表示・拡大プレビュー・ピッカー削除導線の不足**：
+   - サムネイル一覧・選択中ミニサムネイルが `object-cover` でトリミングされ全景が把握できず、PC 側に拡大プレビューモーダルが存在しなかった。
+   - Android 側の削除機能追加は §47.10 の方針（管理は PC のみ）どおり行わない。
+
+### 51.2 仕様
+0. **共通スクロール枠の分離（3 モーダル共通）**：
+   - `#claude-references-grid`・`#claude-reference-picker-grid`・`#photo-trash-grid` のすべてで、外側の `p-4 flex-1 min-h-0 overflow-y-auto custom-scroll`（ブロック要素）と内側の `grid` 要素を分離し、モーダルヘッダー／ツールバー／フッターおよび各カード画像枠に `shrink-0` を付与する。
+1. **ヘッダー狭幅対応（代替案B：ドロップダウン選択方式）**：
+   - ヘッダーは 1 行固定（折り返しなし）を維持し、表示領域を圧迫しない。
+   - 広幅時（`xl` 以上）は従来通りラベルチップを表示し、狭幅〜分割表示時（`xl` 未満）は件数付きドロップダウン `<select id='filter-select'>` に切り替える。
+   - `setFilter()` および件数更新時（`updateCounts`）にチップと `<select>`（各 `<option>` の件数表記含む）を双方向同期する。
+   - 左切れ防止のため `justify-end` + `overflow-x-auto` の併用を撤去し、`Yahoo!フリマ出品画面を開く` ボタン・接続状態バッジを狭幅向け短縮表示に、検索入力欄を `flex-1 min-w-[90px] max-w-[200px]` に調整する。
+2. **写真ゴミ箱（`#photo-trash-modal`）の復旧・識別性向上・単品選択＆拡大プレビュー**：
+   - 共通レイアウト修正により画像・チェックボックス・日時／容量・個別 `復元` / `削除` ボタンを復旧させたうえで、サムネイルを `object-contain` 化し、読込失敗時のフォールバック表示（`onerror`）を追加する。
+   - カードテキストに削除元出品カードタイトルに加え、`fileName` および元位置（`#N`）を表示する。
+   - `togglePhotoTrashSelect()` で該当カード（`data-trash-id`）の選択枠（`border-rose-500 ring-2 ring-rose-300`）とチェック状態を即時更新する（対象カードのみ DOM 更新してスクロール位置を保持）。ツールバーの `完全削除` を `選択を完全削除 (N)` 表記へ統一する。
+   - 写真ゴミ箱専用の拡大プレビューモーダル（`#photo-trash-preview-modal`, `z-[80]`）を新設し、`/api/photo-trash/{trashId}/image` の `object-contain` 拡大表示・詳細情報・前後送り（`←`/`→`/`Esc`）・プレビュー内からの選択トグル／単品復元／単品完全削除を提供する。
+3. **PC 参考画像の全体縮小・拡大プレビュー新設（ピッカー案A）・PC 単品削除**：
+   - `#claude-references-grid`・`#claude-reference-picker-grid`・`#viewer-claude-reference-thumb` をすべて `object-contain`（全景表示）に変更する。
+   - PC 用・参考画像拡大プレビューモーダル（`#claude-reference-preview-modal`, `z-[80]`）を新設し、`/api/claude/references/{md5}` 原寸表示・ファイル名・前後送り（`←`/`→`/`Esc`）を搭載する。
+   - 送信時ピッカー（`#claude-reference-picker-modal`）ではカードクリックで拡大プレビュー（ピッカーモード）を開き、`この画像にする` で選択確定する（案A）。管理画面（`#claude-references-modal`）のカードクリックも拡大プレビュー（管理モード）を開く。
+   - 管理画面カード下部・ピッカーカード右上（誤クリック抑止）・拡大プレビュー内のいずれからも PC 側で `deleteClaudeReference(md5)` を実行可能とし、削除後は開いているグリッドおよび `viewerClaudeReference` 選択状態を整合更新する。Android アプリ側は変更しない。
+4. **Esc キー優先順**：
+   - 最前面の拡大プレビュー（`#claude-reference-preview-modal` / `#photo-trash-preview-modal`）が開いている場合はそれだけを閉じ、背後のピッカー／写真ゴミ箱／写真ビューアーを巻き込んで閉じない。
+
+### 51.3 変更対象と検証
+- 変更対象は `tools/DashboardHtml.cs` および `tools/tests/` とする（`WebDashboardHtml.kt`・Android アプリコードは非変更）。
+- `node --test tools/tests/*.mjs` により、inline JavaScript 構文の妥当性および本節のレイアウト・DOM 構造要件を自動検証する。
