@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System.Collections.Generic;
 
 // 「Museに送る」一括画像加工ジョブのモデルと永続化ストア。
@@ -98,7 +99,7 @@ public static class ClaudeJobStore
         if (_jobList != null) return _jobList;
         _jobList = new List<ClaudeJob>();
         string path = GetJobsJsonPath();
-        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+        if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !File.Exists(path + ".bak")))
         {
             if (_claudeRevision <= 0) _claudeRevision = 1;
             return _jobList;
@@ -109,6 +110,7 @@ public static class ClaudeJobStore
             string json = null;
             try
             {
+                if (!File.Exists(path)) throw new FileNotFoundException("primary missing", path);
                 json = File.ReadAllText(path, Encoding.UTF8);
                 JToken.Parse(json);
             }
@@ -124,6 +126,8 @@ public static class ClaudeJobStore
                 }
                 else
                 {
+                    string corrupt = AtomicFileWriter.QuarantineCorruptFile(path);
+                    if (!string.IsNullOrEmpty(corrupt)) Console.WriteLine("[警告] 破損した claude_jobs.json を退避しました: " + corrupt);
                     throw;
                 }
             }
