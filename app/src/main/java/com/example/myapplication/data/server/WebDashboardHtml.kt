@@ -434,9 +434,49 @@ object WebDashboardHtml {
             }
         }
 
+        let WEB_TOKEN = '';
+        function initWebToken() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                const qt = params.get('token');
+                if (qt && qt.trim()) {
+                    WEB_TOKEN = qt.trim();
+                    sessionStorage.setItem('furima_web_token', WEB_TOKEN);
+                    params.delete('token');
+                    const cleanUrl = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + window.location.hash;
+                    window.history.replaceState({}, document.title, cleanUrl);
+                } else {
+                    WEB_TOKEN = (sessionStorage.getItem('furima_web_token') || '').trim();
+                }
+            } catch (e) {}
+            if (!WEB_TOKEN) {
+                const entered = window.prompt('スマホの「PC連携・管理」画面に表示されている認証コードを入力してください');
+                if (entered && entered.trim()) {
+                    WEB_TOKEN = entered.trim();
+                    try { sessionStorage.setItem('furima_web_token', WEB_TOKEN); } catch (e) {}
+                }
+            }
+        }
+        function authHeaders(extra) {
+            const h = Object.assign({}, extra || {});
+            if (WEB_TOKEN) h['Authorization'] = 'Bearer ' + WEB_TOKEN;
+            return h;
+        }
+        function authFetch(url, options) {
+            const opts = Object.assign({}, options || {});
+            opts.headers = authHeaders(opts.headers);
+            return fetch(url, opts);
+        }
+        function withAuthToken(url) {
+            if (!url || !WEB_TOKEN) return url;
+            const sep = url.includes('?') ? '&' : '?';
+            return url + sep + 'token=' + encodeURIComponent(WEB_TOKEN);
+        }
+
         let autoSyncTimer = null;
 
         document.addEventListener('DOMContentLoaded', () => {
+            initWebToken();
             fetchItems();
             startAutoSync();
         });
@@ -468,12 +508,13 @@ object WebDashboardHtml {
         // サイレントフェッチ (トースト通知なし・エラー無視)
         async function fetchItemsSilent() {
             try {
-                const res = await fetch('/api/items');
+                const res = await authFetch('/api/items');
                 if (!res.ok) return;
                 const newItems = await res.json();
                 // データに変更があった場合のみ再描画
-                const newHash = JSON.stringify(newItems.map(i => i.id + ':' + i.status + ':' + i.isShared + ':' + i.price + ':' + (i.photos ? i.photos.length : 0)));
-                const oldHash = JSON.stringify(allItems.map(i => i.id + ':' + i.status + ':' + i.isShared + ':' + i.price + ':' + (i.photos ? i.photos.length : 0)));
+                const itemDigest = i => [i.id, i.title, i.description, i.status, i.isShared, i.price, i.soldPrice, i.updatedAt, i.photos ? i.photos.map(p => p.id + ':' + p.isOriginalDeleted).join(',') : ''].join('|');
+                const newHash = JSON.stringify(newItems.map(itemDigest));
+                const oldHash = JSON.stringify(allItems.map(itemDigest));
                 if (newHash !== oldHash) {
                     allItems = newItems;
                     updateStats();
@@ -486,7 +527,13 @@ object WebDashboardHtml {
 
         async function fetchItems() {
             try {
-                const res = await fetch('/api/items');
+                const res = await authFetch('/api/items');
+                if (res.status === 401) {
+                    try { sessionStorage.removeItem('furima_web_token'); } catch (e) {}
+                    WEB_TOKEN = '';
+                    initWebToken();
+                    if (WEB_TOKEN) return fetchItems();
+                }
                 if (!res.ok) throw new Error('通信エラー');
                 allItems = await res.json();
                 updateStats();
@@ -500,7 +547,7 @@ object WebDashboardHtml {
             const active = allItems.filter(i => !i.isDeleted && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
             const listed = active.filter(i => i.status === 'LISTED');
             const unshared = active.filter(i => !i.isShared);
-            const sold = active.filter(i => i.status === 'SOLD');
+            const sold = active.filter(i => i.status === 'SOLD' || i.status === 'SHIPPING');
             const totalSales = sold.reduce((sum, i) => sum + (i.soldPrice > 0 ? i.soldPrice : i.price), 0);
             const totalProfit = sold.reduce((sum, i) => sum + i.profit, 0);
 
@@ -580,11 +627,11 @@ object WebDashboardHtml {
 
                     const mainPhotoObj = item.photos && item.photos.length > 0 ? item.photos[0] : null;
                     const mainPhoto = mainPhotoObj
-                        ? '<div class="relative group/photo"><img src="' + (mainPhotoObj.thumbUrl || mainPhotoObj.url) + '" alt="" class="w-full h-36 object-cover rounded-t-xl cursor-pointer hover:opacity-95 transition" onclick="openQuickActionModal(' + item.id + ')"><button onclick="event.stopPropagation(); openPhotoGallery(' + item.id + ', ' + mainPhotoObj.id + ')" class="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 text-white px-2 py-1 rounded-md text-[11px] opacity-0 group-hover/photo:opacity-100 transition flex items-center gap-1 shadow" title="写真を拡大表示"><i class="fa-solid fa-expand"></i> 拡大</button></div>'
+                        ? '<div class="relative group/photo"><img src="' + withAuthToken(mainPhotoObj.thumbUrl || mainPhotoObj.url) + '" alt="" class="w-full h-36 object-cover rounded-t-xl cursor-pointer hover:opacity-95 transition" onclick="openQuickActionModal(' + item.id + ')"><button onclick="event.stopPropagation(); openPhotoGallery(' + item.id + ', ' + mainPhotoObj.id + ')" class="absolute bottom-2 right-2 bg-black/60 hover:bg-black/80 text-white px-2 py-1 rounded-md text-[11px] opacity-0 group-hover/photo:opacity-100 transition flex items-center gap-1 shadow" title="写真を拡大表示"><i class="fa-solid fa-expand"></i> 拡大</button></div>'
                         : '<div class="w-full h-36 bg-slate-100 flex items-center justify-center text-slate-300 text-2xl rounded-t-xl cursor-pointer" onclick="openQuickActionModal(' + item.id + ')"><i class="fa-solid fa-image"></i></div>';
 
                     const photoThumbnails = item.photos && item.photos.length > 1
-                        ? '<div class="flex gap-1 px-3 pt-1.5 overflow-x-auto custom-scroll">' + item.photos.map(p => '<img src="' + (p.thumbUrl || p.url) + '" class="w-8 h-8 object-cover rounded cursor-pointer border ' + (p.isOriginalDeleted ? 'border-amber-400' : 'border-slate-200') + ' hover:border-indigo-500" onclick="event.stopPropagation(); openPhotoGallery(' + item.id + ', ' + p.id + ')">').join('') + '</div>'
+                        ? '<div class="flex gap-1 px-3 pt-1.5 overflow-x-auto custom-scroll">' + item.photos.map(p => '<img src="' + withAuthToken(p.thumbUrl || p.url) + '" class="w-8 h-8 object-cover rounded cursor-pointer border ' + (p.isOriginalDeleted ? 'border-amber-400' : 'border-slate-200') + ' hover:border-indigo-500" onclick="event.stopPropagation(); openPhotoGallery(' + item.id + ', ' + p.id + ')">').join('') + '</div>'
                         : '';
 
                     const unmergeBtn = isMerged || ((item.title && item.title.includes('まとめ')) || (item.description && item.description.includes('まとめ')))
@@ -647,7 +694,7 @@ object WebDashboardHtml {
 
         async function markShared(id) {
             try {
-                const res = await fetch('/api/items/' + id + '/mark-shared', { method: 'POST' });
+                const res = await authFetch('/api/items/' + id + '/mark-shared', { method: 'POST' });
                 if (!res.ok) throw new Error('送信済みフラグの更新に失敗');
                 showToast('PC送信済みに更新しました');
                 fetchItems();
@@ -659,7 +706,7 @@ object WebDashboardHtml {
         async function toggleStatus(id, currentStatus) {
             const newStatus = currentStatus === 'LISTED' ? 'SOLD' : 'LISTED';
             try {
-                const res = await fetch('/api/items/' + id + '/status', {
+                const res = await authFetch('/api/items/' + id + '/status', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ status: newStatus })
@@ -675,7 +722,7 @@ object WebDashboardHtml {
         async function deleteItem(id, title) {
             if (!confirm('「' + title + '」を削除しますか？\n（写真も端末から削除されます）')) return;
             try {
-                const res = await fetch('/api/items/' + id, { method: 'DELETE' });
+                const res = await authFetch('/api/items/' + id, { method: 'DELETE' });
                 if (!res.ok) throw new Error('削除に失敗しました');
                 showToast('商品を削除しました');
                 fetchItems();
@@ -721,7 +768,7 @@ object WebDashboardHtml {
             btn.disabled = true;
 
             try {
-                const res = await fetch('/api/items/merge', {
+                const res = await authFetch('/api/items/merge', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -751,7 +798,7 @@ object WebDashboardHtml {
         async function unmergeItem(id) {
             if (!confirm('このまとめ買い出品を解除（バラす）し、元の個別商品を出品中に戻しますか？')) return;
             try {
-                const res = await fetch('/api/items/' + id + '/unmerge', { method: 'POST' });
+                const res = await authFetch('/api/items/' + id + '/unmerge', { method: 'POST' });
                 if (!res.ok) throw new Error('まとめ解除に失敗しました');
                 showToast('まとめ買いを解除し、元の個別商品を復元しました');
                 fetchItems();
@@ -775,9 +822,10 @@ object WebDashboardHtml {
 
             showToast('PCフォルダ走査中… ' + imageFiles.length + '枚の画像を検出');
 
-            // 既存商品の写真ファイル名一覧を取得 (重複アップロード防止)
-            const existingPhotoNames = new Set();
+            // 既存商品の写真ファイル名一覧を取得 (商品単位で重複アップロード防止)
+            const existingPhotoNamesByItem = new Map();
             allItems.forEach(item => {
+                const set = new Set();
                 if (item.photos) {
                     item.photos.forEach(p => {
                         const extractName = pathStr => {
@@ -787,10 +835,11 @@ object WebDashboardHtml {
                         };
                         const fn1 = extractName(p.filePath);
                         const fn2 = extractName(p.url);
-                        if (fn1) existingPhotoNames.add(fn1);
-                        if (fn2) existingPhotoNames.add(fn2);
+                        if (fn1) set.add(fn1);
+                        if (fn2) set.add(fn2);
                     });
                 }
+                existingPhotoNamesByItem.set(item.id, set);
             });
 
             const normalizeStr = s => s ? s.toLowerCase().replace(/[\s\-_・]/g, '') : '';
@@ -799,12 +848,6 @@ object WebDashboardHtml {
             let skippedCount = 0;
 
             for (const file of imageFiles) {
-                // 重複チェック: 同名ファイルが既に存在するならスキップ
-                if (existingPhotoNames.has(file.name.toLowerCase())) {
-                    skippedCount++;
-                    continue;
-                }
-
                 // webkitRelativePath (例: "フォルダ名/サブフォルダ/ファイル.jpg") からマッチング
                 const relativePath = file.webkitRelativePath || '';
                 const pathParts = relativePath.split('/');
@@ -833,16 +876,22 @@ object WebDashboardHtml {
                 }
 
                 if (matchItem) {
+                    const itemSet = existingPhotoNamesByItem.get(matchItem.id) || new Set();
+                    if (itemSet.has(file.name.toLowerCase())) {
+                        skippedCount++;
+                        continue;
+                    }
                     try {
                         const formData = new FormData();
                         formData.append('photos', file);
-                        const res = await fetch('/api/items/' + matchItem.id + '/photos', {
+                        const res = await authFetch('/api/items/' + matchItem.id + '/photos', {
                             method: 'POST',
                             body: formData
                         });
                         if (res.ok) {
                             syncedCount++;
-                            existingPhotoNames.add(file.name.toLowerCase());
+                            itemSet.add(file.name.toLowerCase());
+                            existingPhotoNamesByItem.set(matchItem.id, itemSet);
                         }
                     } catch (e) {
                         // 個別エラーは無視して続行
@@ -937,7 +986,7 @@ object WebDashboardHtml {
 
             try {
                 if (id) {
-                    const res = await fetch('/api/items/' + id, {
+                    const res = await authFetch('/api/items/' + id, {
                         method: 'PUT',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -966,7 +1015,7 @@ object WebDashboardHtml {
                         }
                     }
 
-                    const res = await fetch('/api/items', {
+                    const res = await authFetch('/api/items', {
                         method: 'POST',
                         body: formData
                     });
@@ -991,7 +1040,7 @@ object WebDashboardHtml {
             currentQuickActionItem = item;
 
             const mainPhotoObj = item.photos && item.photos.length > 0 ? item.photos[0] : null;
-            const thumbUrl = mainPhotoObj ? (mainPhotoObj.thumbUrl || mainPhotoObj.url) : '';
+            const thumbUrl = mainPhotoObj ? withAuthToken(mainPhotoObj.thumbUrl || mainPhotoObj.url) : '';
 
             document.getElementById('quick-action-thumb').src = thumbUrl || 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="%23f1f5f9"/></svg>';
             document.getElementById('quick-action-title').innerText = item.title;
@@ -1111,7 +1160,7 @@ object WebDashboardHtml {
             const photo = currentGalleryItem.photos[currentGalleryIndex];
             currentViewingPhoto = photo.id;
 
-            document.getElementById('image-viewer-src').src = photo.url;
+            document.getElementById('image-viewer-src').src = withAuthToken(photo.url);
             document.getElementById('gallery-counter').innerText = (currentGalleryIndex + 1) + ' / ' + currentGalleryItem.photos.length;
 
             const banner = document.getElementById('restore-banner');
@@ -1183,7 +1232,7 @@ object WebDashboardHtml {
 
                 return `
                 <div class="relative group/thumb shrink-0 rounded-lg overflow-hidden border-2 transition ` + (isActive ? 'border-indigo-500 ring-2 ring-indigo-400/50 scale-105' : 'border-slate-700 hover:border-slate-500') + ` bg-slate-800">
-                    <img src="` + (photo.thumbUrl || photo.url) + `" onclick="selectGalleryPhotoIndex(` + idx + `)" class="w-16 h-16 object-cover cursor-pointer hover:opacity-90 transition">
+                    <img src="` + withAuthToken(photo.thumbUrl || photo.url) + `" onclick="selectGalleryPhotoIndex(` + idx + `)" class="w-16 h-16 object-cover cursor-pointer hover:opacity-90 transition">
                     
                     <!-- チェックボックス (サムネイル右上配置: absolute top-1 right-1 - サムネイルの左上以外!) -->
                     <label class="absolute top-1 right-1 z-10 cursor-pointer bg-slate-900/80 hover:bg-slate-900 p-0.5 rounded shadow border border-slate-600 flex items-center justify-center" onclick="event.stopPropagation()" title="選択して削除">
@@ -1213,7 +1262,7 @@ object WebDashboardHtml {
         async function deleteSinglePhotoDirect(photoId) {
             if (!confirm('この写真を削除しますか？（※スマホDBおよびファイルから削除されます）')) return;
             try {
-                const res = await fetch('/api/photos/' + photoId, { method: 'DELETE' });
+                const res = await authFetch('/api/photos/' + photoId, { method: 'DELETE' });
                 if (!res.ok) throw new Error('写真の削除に失敗しました');
                 showToast('写真を削除しました');
 
@@ -1241,7 +1290,7 @@ object WebDashboardHtml {
             if (!confirm('選択した写真 ' + count + '枚を削除しますか？（※スマホDBおよびファイルから削除されます）')) return;
 
             try {
-                const res = await fetch('/api/photos/delete-batch', {
+                const res = await authFetch('/api/photos/delete-batch', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ photoIds: Array.from(selectedPhotoIdsForDelete) })
@@ -1274,7 +1323,7 @@ object WebDashboardHtml {
                 openPhotoGallery(item.id, photoId);
             } else {
                 currentViewingPhoto = photoId;
-                document.getElementById('image-viewer-src').src = url;
+                document.getElementById('image-viewer-src').src = withAuthToken(url);
                 document.getElementById('image-viewer-modal').classList.remove('hidden');
             }
         }
@@ -1293,7 +1342,7 @@ object WebDashboardHtml {
             formData.append('photo', file);
 
             try {
-                const res = await fetch('/api/photos/' + currentViewingPhoto + '/restore', {
+                const res = await authFetch('/api/photos/' + currentViewingPhoto + '/restore', {
                     method: 'POST',
                     body: formData
                 });

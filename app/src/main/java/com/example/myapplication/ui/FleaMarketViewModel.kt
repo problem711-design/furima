@@ -70,6 +70,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
 
     val isWebServerRunning: StateFlow<Boolean> = webServer.isRunning
     val webServerLogs: StateFlow<List<String>> = webServer.logs
+    val webServerToken: StateFlow<String> = webServer.accessToken
     val serverPort: Int = webServer.port
 
     private val _serverIpAddress = MutableStateFlow<String?>(null)

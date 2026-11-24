@@ -84,14 +84,15 @@ fun PcSyncScreen(
     val isServerRunning by viewModel.isWebServerRunning.collectAsState()
     val serverIp by viewModel.serverIpAddress.collectAsState()
     val serverLogs by viewModel.webServerLogs.collectAsState()
+    val serverToken by viewModel.webServerToken.collectAsState()
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     var showLogsDialog by remember { mutableStateOf(false) }
 
-    val serverUrl = remember(serverIp, viewModel.serverPort) {
-        if (!serverIp.isNullOrBlank()) "http://$serverIp:${viewModel.serverPort}" else null
+    val serverUrl = remember(serverIp, viewModel.serverPort, serverToken) {
+        if (!serverIp.isNullOrBlank()) "http://$serverIp:${viewModel.serverPort}/?token=$serverToken" else null
     }
 
     if (showLogsDialog) {
@@ -279,9 +280,10 @@ fun PcSyncScreen(
                                     Text(
                                         text = serverUrl ?: "IPアドレスを取得中...",
                                         fontWeight = FontWeight.Bold,
-                                        fontSize = 16.sp,
+                                        fontSize = 13.sp,
                                         fontFamily = FontFamily.Monospace,
-                                        color = MaterialTheme.colorScheme.primary
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.weight(1f).padding(end = 8.dp)
                                     )
 
                                     Row {
@@ -315,7 +317,14 @@ fun PcSyncScreen(
                                 }
                             }
 
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "認証コード: $serverToken",
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.Wifi,

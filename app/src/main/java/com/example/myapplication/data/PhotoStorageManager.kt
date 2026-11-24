@@ -358,14 +358,37 @@ class PhotoStorageManager(private val context: Context) {
                 scaledBitmap!!.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(50, 100), out)
             }
             if (tmpFile.exists() && tmpFile.length() > 0L) {
-                if (file.exists()) file.delete()
-                if (!tmpFile.renameTo(file)) {
-                    FileInputStream(tmpFile).use { inp ->
-                        FileOutputStream(file).use { out -> inp.copyTo(out) }
+                if (tmpFile.renameTo(file)) {
+                    true
+                } else {
+                    val bakFile = File(file.parentFile, "${file.name}.resize_bak")
+                    var backedUp = false
+                    try {
+                        if (file.exists()) {
+                            file.copyTo(bakFile, overwrite = true)
+                            backedUp = true
+                        }
+                        FileInputStream(tmpFile).use { inp ->
+                            FileOutputStream(file).use { out -> inp.copyTo(out) }
+                        }
+                        if (file.exists() && file.length() > 0L) {
+                            tmpFile.delete()
+                            if (backedUp) bakFile.delete()
+                            true
+                        } else {
+                            if (backedUp && bakFile.exists()) bakFile.copyTo(file, overwrite = true)
+                            false
+                        }
+                    } catch (copyEx: Exception) {
+                        if (backedUp && bakFile.exists()) {
+                            try { bakFile.copyTo(file, overwrite = true) } catch (_: Exception) {}
+                        }
+                        throw copyEx
+                    } finally {
+                        if (tmpFile.exists()) tmpFile.delete()
+                        if (bakFile.exists()) bakFile.delete()
                     }
-                    tmpFile.delete()
                 }
-                true
             } else {
                 tmpFile.delete()
                 false
@@ -552,7 +575,8 @@ class PhotoStorageManager(private val context: Context) {
             }
 
             val safeHint = fileNameHint.replace(Regex("[^a-zA-Z0-9_.\\-]"), "_").ifBlank { "repaired.jpg" }
-            val thumbFile = File(getThumbnailDir(), "THUMB_$safeHint")
+            val uniquePrefix = "${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().take(6)}"
+            val thumbFile = File(getThumbnailDir(), "THUMB_${uniquePrefix}_$safeHint")
             FileOutputStream(thumbFile).use { out ->
                 scaledBitmap!!.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(30, 100), out)
             }

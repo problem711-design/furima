@@ -33,16 +33,21 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import kotlinx.coroutines.flow.first
 import io.ktor.server.routing.routing
+import io.ktor.server.application.call
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
 
 class LocalWebServer(
     private val context: Context,
@@ -57,10 +62,76 @@ class LocalWebServer(
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs.asStateFlow()
 
+    private val _accessToken = MutableStateFlow(loadOrCreateAccessToken())
+    val accessToken: StateFlow<String> = _accessToken.asStateFlow()
+
+    companion object {
+        private const val PREFS_NAME = "local_web_server_prefs"
+        private const val KEY_ACCESS_TOKEN = "access_token"
+        private val ALLOWED_ITEM_STATUSES = setOf("DRAFT", "DRAFT_DONE", "LISTED", "SHIPPING", "SOLD")
+        private val ALLOWED_IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "webp", "gif", "bmp")
+        private const val TOKEN_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
+    }
+
+    private fun loadOrCreateAccessToken(): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val saved = prefs.getString(KEY_ACCESS_TOKEN, "")?.trim() ?: ""
+        if (saved.length >= 12) return saved
+        val rnd = SecureRandom()
+        val sb = StringBuilder(12)
+        repeat(12) { sb.append(TOKEN_CHARS[rnd.nextInt(TOKEN_CHARS.length)]) }
+        val token = sb.toString()
+        prefs.edit().putString(KEY_ACCESS_TOKEN, token).apply()
+        return token
+    }
+
     private fun addLog(message: String) {
         val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
         val logEntry = "[$time] $message"
-        _logs.value = (_logs.value + logEntry).takeLast(100)
+        _logs.update { (it + logEntry).takeLast(100) }
+    }
+
+    private fun isAuthorized(call: ApplicationCall): Boolean {
+        val expected = _accessToken.value
+        val authHeader = call.request.headers[HttpHeaders.Authorization]?.trim() ?: ""
+        val bearer = if (authHeader.startsWith("Bearer ", ignoreCase = true)) {
+            authHeader.substring(7).trim()
+        } else {
+            ""
+        }
+        val queryToken = call.request.queryParameters["token"]?.trim() ?: ""
+        val provided = bearer.ifEmpty { queryToken }
+        if (provided.isEmpty()) return false
+        return MessageDigest.isEqual(
+            provided.toByteArray(Charsets.UTF_8),
+            expected.toByteArray(Charsets.UTF_8)
+        )
+    }
+
+    private suspend fun requireAuth(call: ApplicationCall): Boolean {
+        if (!isAuthorized(call)) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Unauthorized: Missing or invalid access token"))
+            return false
+        }
+        return true
+    }
+
+    private fun sanitizeImageExtension(originalFileName: String?): String {
+        val rawName = originalFileName?.let { File(it).name } ?: ""
+        val ext = rawName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return if (ext in ALLOWED_IMAGE_EXTENSIONS) ext else "jpg"
+    }
+
+    private fun resolveSafeChildFile(baseDir: File, fileName: String): File {
+        if (!baseDir.exists()) baseDir.mkdirs()
+        val safeName = File(fileName).name
+        val candidate = File(baseDir, safeName)
+        val baseCanonical = baseDir.canonicalPath
+        val candCanonical = candidate.canonicalPath
+        require(candCanonical.startsWith(baseCanonical + File.separator)) {
+            "Invalid upload path"
+        }
+        return candidate
     }
 
     fun start(): Boolean {
@@ -107,7 +178,7 @@ class LocalWebServer(
             allowMethod(HttpMethod.Get)
             allowHeader(HttpHeaders.Authorization)
             allowHeader(HttpHeaders.ContentType)
-            anyHost()
+            allowSameOrigin = true
         }
         install(ContentNegotiation) {
             gson {
@@ -132,6 +203,7 @@ class LocalWebServer(
 
             // 商品一覧
             get("/api/items") {
+                if (!requireAuth(call)) return@get
                 try {
                     val settings = repository.defaultSettings.value
                     val items = repository.getActiveItemsWithPhotosDirect()
@@ -147,6 +219,7 @@ class LocalWebServer(
 
             // 商品詳細取得
             get("/api/items/{id}") {
+                if (!requireAuth(call)) return@get
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -162,6 +235,7 @@ class LocalWebServer(
 
             // 商品更新
             put("/api/items/{id}") {
+                if (!requireAuth(call)) return@put
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -177,12 +251,17 @@ class LocalWebServer(
 
                     val title = body["title"] as? String ?: existing.item.title
                     val description = body["description"] as? String ?: existing.item.description
-                    val status = body["status"] as? String ?: existing.item.status
-                    val price = (body["price"] as? Number)?.toInt() ?: existing.item.price
-                    val soldPrice = (body["soldPrice"] as? Number)?.toInt() ?: existing.item.soldPrice
-                    val shippingCost = (body["shippingCost"] as? Number)?.toInt() ?: existing.item.shippingCost
-                    val feeRatePercent = (body["feeRatePercent"] as? Number)?.toInt() ?: existing.item.feeRatePercent
-                    val expenseCost = (body["expenseCost"] as? Number)?.toInt() ?: existing.item.expenseCost
+                    val rawStatus = (body["status"] as? String)?.trim() ?: existing.item.status
+                    if (rawStatus !in ALLOWED_ITEM_STATUSES && rawStatus != existing.item.status) {
+                        call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid status"))
+                        return@put
+                    }
+                    val status = rawStatus
+                    val price = ((body["price"] as? Number)?.toInt() ?: existing.item.price).coerceAtLeast(0)
+                    val soldPrice = ((body["soldPrice"] as? Number)?.toInt() ?: existing.item.soldPrice).coerceAtLeast(0)
+                    val shippingCost = ((body["shippingCost"] as? Number)?.toInt() ?: existing.item.shippingCost).coerceAtLeast(0)
+                    val feeRatePercent = ((body["feeRatePercent"] as? Number)?.toInt() ?: existing.item.feeRatePercent).coerceIn(0, 100)
+                    val expenseCost = ((body["expenseCost"] as? Number)?.toInt() ?: existing.item.expenseCost).coerceAtLeast(0)
                     val useCustomSettings = (body["useCustomSettings"] as? Boolean) ?: existing.item.useCustomSettings
 
                     val existingPaths = existing.photos.map { it.filePath }
@@ -210,6 +289,7 @@ class LocalWebServer(
 
             // ステータス更新（出品中・売却済みのワンクリック切り替え）
             post("/api/items/{id}/status") {
+                if (!requireAuth(call)) return@post
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -217,8 +297,12 @@ class LocalWebServer(
                 }
                 try {
                     val body = call.receive<Map<String, Any?>>()
-                    val newStatus = body["status"] as? String ?: "LISTED"
-                    val soldPrice = (body["soldPrice"] as? Number)?.toInt()
+                    val newStatus = (body["status"] as? String)?.trim() ?: "LISTED"
+                    if (newStatus !in ALLOWED_ITEM_STATUSES) {
+                        call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid status"))
+                        return@post
+                    }
+                    val soldPrice = (body["soldPrice"] as? Number)?.toInt()?.coerceAtLeast(0)
 
                     val existing = repository.getItemById(id)
                     if (existing == null) {
@@ -246,6 +330,7 @@ class LocalWebServer(
 
             // 商品削除
             delete("/api/items/{id}") {
+                if (!requireAuth(call)) return@delete
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -267,6 +352,7 @@ class LocalWebServer(
 
             // 新規商品作成 (マルチパート: JSON情報 + 画像ファイル群)
             post("/api/items") {
+                if (!requireAuth(call)) return@post
                 try {
                     val multipart = call.receiveMultipart()
                     var title = ""
@@ -287,20 +373,23 @@ class LocalWebServer(
                                 when (part.name) {
                                     "title" -> title = part.value
                                     "description" -> description = part.value
-                                    "status" -> status = part.value
-                                    "price" -> price = part.value.toIntOrNull() ?: 0
-                                    "soldPrice" -> soldPrice = part.value.toIntOrNull() ?: 0
-                                    "shippingCost" -> shippingCost = part.value.toIntOrNull() ?: shippingCost
-                                    "feeRatePercent" -> feeRatePercent = part.value.toIntOrNull() ?: feeRatePercent
-                                    "expenseCost" -> expenseCost = part.value.toIntOrNull() ?: expenseCost
+                                    "status" -> {
+                                        val candidate = part.value.trim()
+                                        if (candidate in ALLOWED_ITEM_STATUSES) status = candidate
+                                    }
+                                    "price" -> price = (part.value.toIntOrNull() ?: 0).coerceAtLeast(0)
+                                    "soldPrice" -> soldPrice = (part.value.toIntOrNull() ?: 0).coerceAtLeast(0)
+                                    "shippingCost" -> shippingCost = (part.value.toIntOrNull() ?: shippingCost).coerceAtLeast(0)
+                                    "feeRatePercent" -> feeRatePercent = (part.value.toIntOrNull() ?: feeRatePercent).coerceIn(0, 100)
+                                    "expenseCost" -> expenseCost = (part.value.toIntOrNull() ?: expenseCost).coerceAtLeast(0)
                                     "useCustomSettings" -> useCustomSettings = part.value.toBoolean()
                                 }
                             }
                             is PartData.FileItem -> {
-                                val fileName = part.originalFileName ?: "photo_${System.currentTimeMillis()}.jpg"
+                                val ext = sanitizeImageExtension(part.originalFileName)
+                                val safeName = "upload_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}.$ext"
                                 val tempDir = File(this@LocalWebServer.context.cacheDir, "web_uploads")
-                                if (!tempDir.exists()) tempDir.mkdirs()
-                                val tempFile = File(tempDir, "${System.currentTimeMillis()}_$fileName")
+                                val tempFile = resolveSafeChildFile(tempDir, safeName)
                                 val streamProvider = part.streamProvider
                                 val inputStream: InputStream = streamProvider()
                                 inputStream.use { input ->
@@ -324,7 +413,7 @@ class LocalWebServer(
                     val targetDir = photoStorageManager.getItemImageDir(title)
 
                     for (tempFile in uploadedPhotoFiles) {
-                        val originalFile = File(targetDir, "PC_${tempFile.name}")
+                        val originalFile = resolveSafeChildFile(targetDir, "PC_${tempFile.name}")
                         tempFile.copyTo(originalFile, overwrite = true)
                         tempFile.delete()
                         photoStorageManager.syncFileToPublicGallery(title, originalFile)
@@ -357,6 +446,7 @@ class LocalWebServer(
 
             // 既存商品への写真追加アップロード (マルチパート)
             post("/api/items/{id}/photos") {
+                if (!requireAuth(call)) return@post
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -377,7 +467,8 @@ class LocalWebServer(
                     multipart.forEachPart { part ->
                         if (part is PartData.FileItem) {
                             val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
-                            val originalFile = File(targetDir, "PC_${timeStamp}.jpg")
+                            val ext = sanitizeImageExtension(part.originalFileName)
+                            val originalFile = resolveSafeChildFile(targetDir, "PC_${timeStamp}_${UUID.randomUUID().toString().take(6)}.$ext")
                             val streamProvider = part.streamProvider
                             val inputStream: InputStream = streamProvider()
                             inputStream.use { input ->
@@ -416,6 +507,7 @@ class LocalWebServer(
 
             // 送信済みフラグ更新
             post("/api/items/{id}/mark-shared") {
+                if (!requireAuth(call)) return@post
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -428,6 +520,7 @@ class LocalWebServer(
 
             // まとめ買い作成 (PCから)
             post("/api/items/merge") {
+                if (!requireAuth(call)) return@post
                 try {
                     val body = call.receive<Map<String, Any?>>()
                     @Suppress("UNCHECKED_CAST")
@@ -459,6 +552,8 @@ class LocalWebServer(
 
                     addLog("PCからまとめ買いを作成: $mergedTitle (親ID: $parentId, 対象${childItemIds.size}点)")
                     call.respond(mapOf("success" to true, "parentId" to parentId))
+                } catch (e: IllegalArgumentException) {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.localizedMessage ?: "Invalid merge request")))
                 } catch (e: Exception) {
                     call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.localizedMessage ?: "Unknown error")))
                 }
@@ -466,6 +561,7 @@ class LocalWebServer(
 
             // まとめ買い解除 (バラす)
             post("/api/items/{id}/unmerge") {
+                if (!requireAuth(call)) return@post
                 val id = call.parameters["id"]?.toIntOrNull()
                 if (id == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid ID"))
@@ -482,6 +578,7 @@ class LocalWebServer(
 
             // 全件完全同期用API (PC自動同期ツール用)
             get("/api/sync/full-data") {
+                if (!requireAuth(call)) return@get
                 try {
                     val settings = repository.defaultSettings.value
                     val items = repository.getActiveItemsWithPhotosDirect()
@@ -501,6 +598,7 @@ class LocalWebServer(
 
             // 元写真の復元アップロード
             post("/api/photos/{photoId}/restore") {
+                if (!requireAuth(call)) return@post
                 val photoId = call.parameters["photoId"]?.toIntOrNull()
                 if (photoId == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid Photo ID"))
@@ -574,6 +672,7 @@ class LocalWebServer(
 
             // 写真削除 (単体)
             delete("/api/photos/{id}") {
+                if (!requireAuth(call)) return@delete
                 val photoId = call.parameters["id"]?.toIntOrNull()
                 if (photoId == null) {
                     call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid Photo ID"))
@@ -594,6 +693,7 @@ class LocalWebServer(
 
             // 写真一括削除
             post("/api/photos/delete-batch") {
+                if (!requireAuth(call)) return@post
                 try {
                     val body = call.receive<Map<String, Any?>>()
                     val idsRaw = body["photoIds"] as? List<*>
@@ -612,6 +712,7 @@ class LocalWebServer(
 
             // 写真配信 (オリジナル)
             get("/api/photos/{id}") {
+                if (!requireAuth(call)) return@get
                 val photoId = call.parameters["id"]?.toIntOrNull()
                 if (photoId == null) {
                     addLog("API GET /api/photos/{id}: 無効な写真ID")
@@ -642,6 +743,7 @@ class LocalWebServer(
 
             // サムネイル配信
             get("/api/photos/{id}/thumb") {
+                if (!requireAuth(call)) return@get
                 val photoId = call.parameters["id"]?.toIntOrNull()
                 if (photoId == null) {
                     call.respond(HttpStatusCode.BadRequest)
@@ -698,7 +800,9 @@ class LocalWebServer(
             profit = profit,
             isShared = item.isShared,
             createdAt = item.createdAt,
+            updatedAt = item.updatedAt,
             soldAt = item.soldAt,
+            mergedParentId = item.mergedParentId,
             photos = photoDtos
         )
     }
@@ -718,7 +822,9 @@ data class WebItemDto(
     val profit: Int,
     val isShared: Boolean,
     val createdAt: Long,
+    val updatedAt: Long,
     val soldAt: Long?,
+    val mergedParentId: Int?,
     val photos: List<WebPhotoDto>
 )
 

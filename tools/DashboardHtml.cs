@@ -1360,7 +1360,8 @@ public static class DashboardHtml
 
         async function copyPhotoBlob(url) {
             try {
-                const res = await fetch(url);
+                const headers = AUTH_TOKEN ? { 'Authorization': 'Bearer ' + AUTH_TOKEN } : {};
+                const res = await fetch(url, { headers });
                 const blob = await res.blob();
                 if (navigator.clipboard && navigator.clipboard.write) {
                     let pngBlob = blob;
@@ -2660,7 +2661,7 @@ public static class DashboardHtml
 
                     <!-- サムネイル画像 -->
                     <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openPhotoViewer(${item.id})'>
-                        ${mainPhoto ? `<img src='${mainPhoto}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${mainPhoto}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200 ${trashed ? 'opacity-80' : ''}'>` : `<div class='w-full h-full flex items-center justify-center text-slate-300'><i class='fa-solid fa-image text-3xl'></i></div>`}
+                        ${mainPhoto ? `<img src='${escapeHtml(mainPhoto)}' draggable='true' data-photo-url='${escapeHtml(mainPhoto)}' ondragstart='handlePhotoDragStart(event, this.dataset.photoUrl)' class='w-full h-full object-cover group-hover:scale-105 transition duration-200 ${trashed ? 'opacity-80' : ''}'>` : `<div class='w-full h-full flex items-center justify-center text-slate-300'><i class='fa-solid fa-image text-3xl'></i></div>`}
                         <div class='absolute top-1.5 left-1.5 flex gap-1 flex-wrap'>
                             ${trashed
                                 ? `<span class='px-2 py-0.5 rounded text-xs font-black shadow-sm bg-rose-700 text-white'>ゴミ箱</span>`
@@ -2721,7 +2722,7 @@ public static class DashboardHtml
         }
 
         function escapeHtml(str) {
-            return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/""/g, '&quot;');
+            return (str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/""/g, '&quot;').replace(/'/g, '&#39;');
         }
 
         function handlePhotoDragStart(e, url) {
@@ -3955,7 +3956,7 @@ public static class DashboardHtml
             const sendOrder = isChecked ? viewerSelectionOrder(photoKey) : 0;
             return `<div class='bg-white border ${isChecked ? 'border-rose-500 ring-2 ring-rose-300' : 'border-slate-200'} rounded-lg overflow-hidden shadow-sm flex flex-col justify-between transition'>
                 <div class='relative aspect-square bg-slate-100 overflow-hidden cursor-pointer group' onclick='openPhotoLightbox(${index})'>
-                    <img src='${url}' draggable='true' ondragstart='handlePhotoDragStart(event, ""${url}"")' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>
+                    <img src='${escapeHtml(url)}' draggable='true' data-photo-url='${escapeHtml(url)}' ondragstart='handlePhotoDragStart(event, this.dataset.photoUrl)' class='w-full h-full object-cover group-hover:scale-105 transition duration-200'>
                     <span class='absolute top-1 left-1 bg-black/65 text-white text-[9px] font-mono px-1.5 py-0.5 rounded pointer-events-none'>#${index + 1}</span>
                     <!-- ギャラリー開時限定チェックボックス (右上配置: サムネイルの左上以外) -->
                     <label onclick='event.stopPropagation()' class='absolute top-1 right-1 z-10 bg-black/75 hover:bg-black/95 p-1 rounded shadow cursor-pointer flex items-center justify-center border border-white/30' title='写真を選択（ゴミ箱移動・Muse送信）'>
@@ -3966,7 +3967,7 @@ public static class DashboardHtml
                 </div>
                 ${fileName ? `<div class='px-1.5 py-0.5 bg-slate-100/90 border-t border-slate-100 text-[9px] font-mono text-slate-600 truncate' title='${escapeHtml(fileName)}'>${escapeHtml(fileName)}</div>` : ''}
                 <div class='p-1.5 bg-slate-50 border-t border-slate-100 flex items-center gap-1 text-[10px]'>
-                    <button type='button' onclick='copyPhotoBlob(""${url}"")' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-1 rounded font-bold transition flex items-center justify-center gap-1' title='クリップボードに画像をコピー'>
+                    <button type='button' data-photo-url='${escapeHtml(url)}' onclick='copyPhotoBlob(this.dataset.photoUrl)' class='flex-1 bg-white hover:bg-slate-200 border border-slate-200 text-slate-700 py-1 rounded font-bold transition flex items-center justify-center gap-1' title='クリップボードに画像をコピー'>
                         <i class='fa-regular fa-copy text-indigo-600'></i> 画像コピー
                     </button>
                     <button type='button' onclick='openPhotoLightbox(${index})' class='bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 px-2 py-1 rounded font-bold transition flex items-center justify-center' title='原寸表示 (送り・戻し)'>
@@ -4944,7 +4945,7 @@ public static class DashboardHtml
                 return `<div class='relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0 group'>
                     <img src='${url}' onclick='window.open(""${url}"", ""_blank"")' class='w-full h-full object-cover cursor-pointer' title='クリックで原寸表示'>
                     <span class='absolute top-1 left-1 bg-black/60 text-white text-[9px] font-mono px-1 rounded'>#${idx + 1}</span>
-                    ${hash ? `<button type='button' onclick='deleteEditPhotoByIdx(${item.id}, ${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='写真を削除'><i class='fa-solid fa-xmark'></i></button>` : ''}
+                    <button type='button' onclick='deleteEditPhotoByIdx(${item.id}, ${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='写真を削除'><i class='fa-solid fa-xmark'></i></button>
                 </div>`;
             }).join('');
 
@@ -4994,14 +4995,20 @@ public static class DashboardHtml
         async function deleteEditPhotoByIdx(itemId, photoIdx) {
             const item = allItems.find(i => i.id == itemId);
             const photo = (item && item.photos) ? item.photos[photoIdx] : null;
-            const md5Hash = photo ? photo.md5Hash : '';
-            if (!md5Hash) return;
+            const md5Hash = photo ? (photo.md5Hash || '') : '';
+            if (!photo && photoIdx < 0) return;
             if (!confirm('この写真を商品から削除しますか？')) return;
             try {
+                const payload = {
+                    md5Hash: md5Hash,
+                    photoIndex: photoIdx,
+                    photoId: photo && photo.id ? photo.id : 0,
+                    childItemId: photo && photo.childItemId ? photo.childItemId : 0
+                };
                 const res = await fetch('/api/items/' + itemId + '/photos/delete', {
                     method: 'POST',
                     headers: getHeaders(),
-                    body: JSON.stringify({ md5Hash })
+                    body: JSON.stringify(payload)
                 });
                 if (res.ok) {
                     const result = await res.json();

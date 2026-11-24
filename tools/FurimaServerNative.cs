@@ -1224,20 +1224,46 @@ class FurimaServerNative
         lock (lockObj)
         {
             itemsDb.Clear();
-            if (File.Exists(itemsJsonFile))
+            if (File.Exists(itemsJsonFile) || File.Exists(itemsJsonFile + ".bak"))
             {
-                try
+                bool recovered;
+                string errDetail;
+                var loaded = AtomicFileWriter.ReadJsonWithBackup<List<Dictionary<string, object>>>(
+                    itemsJsonFile,
+                    list => list != null,
+                    out recovered,
+                    out errDetail
+                );
+                if (loaded != null)
                 {
-                    string json = File.ReadAllText(itemsJsonFile, Encoding.UTF8);
-                    var loaded = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(json);
-                    if (loaded != null)
-                    {
-                        itemsDb = loaded;
-                    }
+                    itemsDb = loaded;
+                    if (recovered) Console.WriteLine("[復旧] items_data.json を .bak から復元しました");
                 }
-                catch (Exception ex)
+                else
                 {
-                    Console.WriteLine("items_data.json ロード例外: " + ex.Message);
+                    string prevPath = Path.Combine(Path.GetDirectoryName(itemsJsonFile) ?? "", "items_data.prev.json");
+                    bool prevLoaded = false;
+                    if (File.Exists(prevPath))
+                    {
+                        try
+                        {
+                            string pJson = File.ReadAllText(prevPath, Encoding.UTF8);
+                            var pList = JsonConvert.DeserializeObject<List<Dictionary<string, object>>>(pJson);
+                            if (pList != null)
+                            {
+                                itemsDb = pList;
+                                prevLoaded = true;
+                                Console.WriteLine("[復旧] items_data.json を items_data.prev.json から復元しました");
+                                try { AtomicFileWriter.WriteTextAtomic(itemsJsonFile, pJson, false); } catch { }
+                            }
+                        }
+                        catch { }
+                    }
+                    if (!prevLoaded)
+                    {
+                        string corruptPath = AtomicFileWriter.QuarantineCorruptFile(itemsJsonFile);
+                        Console.WriteLine("[重大警告] items_data.json ロード例外 (" + errDetail + ")" + (string.IsNullOrEmpty(corruptPath) ? "" : " 退避先: " + corruptPath));
+                    }
                 }
             }
 
@@ -1394,7 +1420,7 @@ class FurimaServerNative
             {
                 SyncStore.BackupItemsJson(itemsJsonFile);
                 string json = JsonConvert.SerializeObject(itemsDb, Formatting.Indented);
-                File.WriteAllText(itemsJsonFile, json, Encoding.UTF8);
+                AtomicFileWriter.WriteTextAtomic(itemsJsonFile, json, true);
             }
             catch (Exception ex)
             {
@@ -1450,6 +1476,33 @@ class FurimaServerNative
                !string.IsNullOrEmpty(req.Headers["X-Real-IP"]);
     }
 
+    private const int MaxPhotoUploadBytes = 50 * 1024 * 1024; // 50 MB
+
+    private static bool TryReadStreamWithLimit(Stream input, int maxBytes, out byte[] bytes, out bool tooLarge)
+    {
+        bytes = new byte[0];
+        tooLarge = false;
+        if (input == null) return false;
+        using (var ms = new MemoryStream())
+        {
+            byte[] buffer = new byte[81920];
+            int total = 0;
+            int read;
+            while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                total += read;
+                if (total > maxBytes)
+                {
+                    tooLarge = true;
+                    return false;
+                }
+                ms.Write(buffer, 0, read);
+            }
+            bytes = ms.ToArray();
+            return true;
+        }
+    }
+
     private static bool AuthenticateRequest(HttpListenerContext ctx)
     {
         HttpListenerRequest req = ctx.Request;
@@ -1457,11 +1510,17 @@ class FurimaServerNative
 
         if (req.HttpMethod == "OPTIONS") return true;
 
-        IPAddress remoteIp = req.RemoteEndPoint.Address;
+        IPAddress remoteIp = req.RemoteEndPoint != null ? req.RemoteEndPoint.Address : null;
+        if (remoteIp == null)
+        {
+            res.StatusCode = 403;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "403 Forbidden: Missing remote endpoint" } });
+            return false;
+        }
         bool isLoopback = IPAddress.IsLoopback(remoteIp);
         bool forwarded = HasForwardedHeaders(req);
 
-        string path = req.Url.AbsolutePath;
+        string path = req.Url != null ? req.Url.AbsolutePath : "/";
 
         // レビュー 24-1 (方式1): 管理画面 HTML は合鍵そのものを含むため PC ローカル専用とする。
         // 転送ヘッダ付き (トンネル経由) またはループバック以外からの画面取得は拒否する。
@@ -1677,35 +1736,36 @@ class FurimaServerNative
 
     private static void HandleRequest(HttpListenerContext ctx)
     {
-        HttpListenerRequest req = ctx.Request;
-        HttpListenerResponse res = ctx.Response;
-
-        // CORS ヘッダー付与
-        res.Headers.Add("Access-Control-Allow-Origin", "*");
-        res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-        res.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Photo-Hash, X-Claude-Job-Token, X-Source-Md5, X-File-Name");
-
-        if (req.HttpMethod == "OPTIONS")
-        {
-            res.StatusCode = 200;
-            res.Close();
-            return;
-        }
-
-        if (!AuthenticateRequest(ctx))
-        {
-            return;
-        }
-
-        string rawPath = req.Url.AbsolutePath;
-
-        if (rawPath != "/api/server/heartbeat" && rawPath != "/api/claude/revision")
-        {
-            Console.WriteLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] 受信リクエスト: " + req.HttpMethod + " " + rawPath);
-        }
-
+        if (ctx == null) return;
+        HttpListenerResponse res = null;
         try
         {
+            HttpListenerRequest req = ctx.Request;
+            res = ctx.Response;
+
+            // CORS ヘッダー付与
+            res.Headers.Add("Access-Control-Allow-Origin", "*");
+            res.Headers.Add("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+            res.Headers.Add("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Photo-Hash, X-Claude-Job-Token, X-Source-Md5, X-File-Name");
+
+            if (req.HttpMethod == "OPTIONS")
+            {
+                res.StatusCode = 200;
+                res.Close();
+                return;
+            }
+
+            if (!AuthenticateRequest(ctx))
+            {
+                return;
+            }
+
+            string rawPath = req.Url != null ? req.Url.AbsolutePath : "/";
+
+            if (rawPath != "/api/server/heartbeat" && rawPath != "/api/claude/revision")
+            {
+                Console.WriteLine("[" + DateTime.Now.ToString("HH:mm:ss") + "] 受信リクエスト: " + req.HttpMethod + " " + rawPath);
+            }
             if (rawPath == "/")
             {
                 ServeDashboardHtml(res);
@@ -2124,11 +2184,22 @@ class FurimaServerNative
                 res.Close();
             }
         }
+        catch (HttpListenerException)
+        {
+            try { if (res != null) res.Abort(); } catch { }
+        }
+        catch (ObjectDisposedException)
+        {
+            // サーバー停止中
+        }
         catch (Exception ex)
         {
             Console.WriteLine("リクエスト処理エラー: " + ex.Message);
-            try { res.StatusCode = 500; } catch { }
-            try { res.Close(); } catch { }
+            if (res != null)
+            {
+                try { res.StatusCode = 500; } catch { }
+                try { res.Close(); } catch { }
+            }
         }
     }
 
@@ -2513,11 +2584,21 @@ class FurimaServerNative
                 return;
             }
 
-            using (MemoryStream ms = new MemoryStream())
+            byte[] photoBytes;
+            bool tooLarge;
+            if (!TryReadStreamWithLimit(req.InputStream, MaxPhotoUploadBytes, out photoBytes, out tooLarge))
             {
-                req.InputStream.CopyTo(ms);
-                byte[] photoBytes = ms.ToArray();
-
+                res.StatusCode = tooLarge ? 413 : 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "stored", false }, { "message", tooLarge ? "ファイルサイズ上限 (50MB) を超過しています" : "画像データの読み込みに失敗しました" } });
+                return;
+            }
+            if (photoBytes.Length == 0 || !IsValidImageHeader(photoBytes, photoBytes.Length))
+            {
+                res.StatusCode = 415;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "stored", false }, { "message", "有効な画像形式ではありません" } });
+                return;
+            }
+            {
                 using (var md5 = MD5.Create())
                 {
                     byte[] computedBytes = md5.ComputeHash(photoBytes);
@@ -2555,11 +2636,18 @@ class FurimaServerNative
 
                     string photoFileName = "photo_" + computedHash.Substring(0, 8) + DetectImageExtension(photoBytes);
                     string photoPath = Path.Combine(targetDirPath, photoFileName);
-                    File.WriteAllBytes(photoPath, photoBytes);
+                    AtomicFileWriter.WriteBytesAtomic(photoPath, photoBytes, false);
+                    var syncFi = new FileInfo(photoPath);
 
                     lock (lockObj)
                     {
                         hashToFilePathMap[computedHash] = photoPath;
+                        photoStatCache[photoPath] = new PhotoFileCacheEntry
+                        {
+                            length = syncFi.Length,
+                            lastWriteUtcTicks = syncFi.LastWriteTimeUtc.Ticks,
+                            md5 = computedHash
+                        };
                     }
 
                     Console.WriteLine("  -> [写真保存完了] MD5: " + computedHash + " パス: " + photoPath);
@@ -4139,16 +4227,24 @@ class FurimaServerNative
             }
 
             byte[] photoBytes;
-            using (var ms = new MemoryStream())
+            bool tooLarge;
+            if (!TryReadStreamWithLimit(req.InputStream, MaxPhotoUploadBytes, out photoBytes, out tooLarge))
             {
-                req.InputStream.CopyTo(ms);
-                photoBytes = ms.ToArray();
+                res.StatusCode = tooLarge ? 413 : 400;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", tooLarge ? "ファイルサイズ上限 (50MB) を超過しています" : "画像データの読み込みに失敗しました" } });
+                return;
             }
 
             if (photoBytes.Length == 0)
             {
                 res.StatusCode = 400;
                 SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "画像データが空です" } });
+                return;
+            }
+            if (!IsValidImageHeader(photoBytes, photoBytes.Length))
+            {
+                res.StatusCode = 415;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "有効な画像形式ではありません" } });
                 return;
             }
 
@@ -4176,10 +4272,16 @@ class FurimaServerNative
                 string photoFilePath = Path.Combine(itemFolder, photoFileName);
                 if (!File.Exists(photoFilePath))
                 {
-                    File.WriteAllBytes(photoFilePath, photoBytes);
+                    AtomicFileWriter.WriteBytesAtomic(photoFilePath, photoBytes, false);
                 }
-
+                var addFi = new FileInfo(photoFilePath);
                 hashToFilePathMap[computedHash] = photoFilePath;
+                photoStatCache[photoFilePath] = new PhotoFileCacheEntry
+                {
+                    length = addFi.Length,
+                    lastWriteUtcTicks = addFi.LastWriteTimeUtc.Ticks,
+                    md5 = computedHash
+                };
 
                 var photosList = item.ContainsKey("photos") && item["photos"] != null
                     ? SyncStore.NormalizePhotosList(item["photos"])
@@ -4623,7 +4725,13 @@ class FurimaServerNative
             SaveItemsDbToDisk();
             if (qrForm != null)
             {
-                qrForm.UpdateStatusInfo(hashToFilePathMap.Count, SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap));
+                int snapPhotoCount, snapMissingCount;
+                lock (lockObj)
+                {
+                    snapPhotoCount = hashToFilePathMap.Count;
+                    snapMissingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+                }
+                qrForm.UpdateStatusInfo(snapPhotoCount, snapMissingCount);
             }
         }
 
@@ -5060,7 +5168,13 @@ class FurimaServerNative
                 SaveItemsDbToDisk();
                 if (qrForm != null)
                 {
-                    qrForm.UpdateStatusInfo(hashToFilePathMap.Count, SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap));
+                    int snapPhotoCount, snapMissingCount;
+                    lock (lockObj)
+                    {
+                        snapPhotoCount = hashToFilePathMap.Count;
+                        snapMissingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+                    }
+                    qrForm.UpdateStatusInfo(snapPhotoCount, snapMissingCount);
                 }
             }
 
@@ -6298,10 +6412,7 @@ class FurimaServerNative
                 bytes = thumb;
                 try
                 {
-                    string tmpPath = thumbPath + ".tmp";
-                    File.WriteAllBytes(tmpPath, thumb);
-                    if (File.Exists(thumbPath)) File.Delete(thumbPath);
-                    File.Move(tmpPath, thumbPath);
+                    AtomicFileWriter.WriteBytesAtomic(thumbPath, thumb, false);
                 }
                 catch (Exception) { }
             }

@@ -106,7 +106,27 @@ public static class ClaudeJobStore
 
         try
         {
-            string json = File.ReadAllText(path, Encoding.UTF8);
+            string json = null;
+            try
+            {
+                json = File.ReadAllText(path, Encoding.UTF8);
+                JToken.Parse(json);
+            }
+            catch
+            {
+                string bakPath = path + ".bak";
+                if (File.Exists(bakPath))
+                {
+                    json = File.ReadAllText(bakPath, Encoding.UTF8);
+                    JToken.Parse(json);
+                    Console.WriteLine("[復旧] claude_jobs.json を .bak から復元しました");
+                    try { AtomicFileWriter.WriteTextAtomic(path, json, false); } catch { }
+                }
+                else
+                {
+                    throw;
+                }
+            }
             string trimmed = json != null ? json.TrimStart() : "";
             bool migrated = false;
             bool changed = false;
@@ -199,7 +219,7 @@ public static class ClaudeJobStore
                 labelSeenAtByItemUuid = _labelSeenAt,
                 labelSeenRevision = _labelSeenRevision > 0 ? _labelSeenRevision : 1
             };
-            File.WriteAllText(path, JsonConvert.SerializeObject(file, Formatting.Indented), Encoding.UTF8);
+            AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(file, Formatting.Indented), true);
         }
         catch (Exception ex)
         {
@@ -695,8 +715,10 @@ public static class ReferencePhotoStore
         if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _refList;
         try
         {
-            string json = File.ReadAllText(path, Encoding.UTF8);
-            var file = JsonConvert.DeserializeObject<ClaudeReferencesFile>(json);
+            bool rec;
+            string err;
+            var file = AtomicFileWriter.ReadJsonWithBackup<ClaudeReferencesFile>(path, null, out rec, out err);
+            if (rec) Console.WriteLine("[復旧] claude_references.json を .bak から復元しました");
             if (file != null && file.references != null)
             {
                 foreach (var e in file.references)
@@ -723,7 +745,7 @@ public static class ReferencePhotoStore
         try
         {
             var file = new ClaudeReferencesFile { references = _refList };
-            File.WriteAllText(path, JsonConvert.SerializeObject(file, Formatting.Indented), Encoding.UTF8);
+            AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(file, Formatting.Indented), true);
         }
         catch (Exception ex)
         {

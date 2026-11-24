@@ -748,7 +748,16 @@ class FleaMarketRepository(private val context: Context) {
         childItemIds: List<Int>,
         asStatus: String = "LISTED"
     ): Long = withDbMutationTransaction {
-        val childItems = dao.getItemsWithPhotosByIds(childItemIds)
+        val distinctIds = childItemIds.distinct()
+        require(distinctIds.size >= 2) { "まとめ買いには2点以上の異なる商品が必要です" }
+        require(asStatus in setOf("DRAFT", "DRAFT_DONE", "LISTED", "SHIPPING", "SOLD")) { "無効なステータスです: $asStatus" }
+        val childItems = dao.getItemsWithPhotosByIds(distinctIds)
+        require(childItems.size == distinctIds.size) { "対象の商品の一部が見つかりません" }
+        for (c in childItems) {
+            require(c.item.deletedAt == null) { "ゴミ箱内の商品はまとめられません: ${c.item.title}" }
+            require(c.item.mergedParentId == null && c.item.status != "MERGED") { "既にまとめ済みの商品は選択できません: ${c.item.title}" }
+            require(!isSoldFamilyStatus(c.item.status)) { "売却済み・発送待ちの商品はまとめられません: ${c.item.title}" }
+        }
         val childTitles = childItems.joinToString(", ") { "【${it.item.title}】¥${it.item.price}" }
         val originalTotal = childItems.sumOf { it.item.price }
         val discount = (originalTotal - totalSoldPrice).coerceAtLeast(0)
@@ -783,7 +792,7 @@ class FleaMarketRepository(private val context: Context) {
         val parentId = dao.insertItem(parentItem).toInt()
 
         // 2. 元の個別商品のステータスを「MERGED」に更新（通常一覧から除外、履歴保持）
-        dao.markItemsMerged(childItemIds, parentId, now)
+        dao.markItemsMerged(distinctIds, parentId, now)
 
         // 3. 元の各商品の写真をすべて親商品に引き継ぎ（MD5ハッシュも継承）
         val parentPhotos = mutableListOf<PhotoEntity>()

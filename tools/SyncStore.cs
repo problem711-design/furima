@@ -91,6 +91,139 @@ public class PhotoTrashEntry
     public long fileSizeBytes { get; set; }
 }
 
+public static class AtomicFileWriter
+{
+    public static void WriteBytesAtomic(string path, byte[] bytes, bool keepBackup)
+    {
+        if (string.IsNullOrEmpty(path)) throw new ArgumentNullException("path");
+        if (bytes == null) bytes = new byte[0];
+        string dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+        {
+            Directory.CreateDirectory(dir);
+        }
+        string tmpPath = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+        string bakPath = path + ".bak";
+        try
+        {
+            using (var fs = new FileStream(tmpPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, FileOptions.WriteThrough))
+            {
+                fs.Write(bytes, 0, bytes.Length);
+                fs.Flush(true);
+            }
+            if (File.Exists(path))
+            {
+                try
+                {
+                    File.Replace(tmpPath, path, keepBackup ? bakPath : null, true);
+                    tmpPath = null;
+                    return;
+                }
+                catch
+                {
+                    if (keepBackup)
+                    {
+                        try { File.Copy(path, bakPath, true); } catch { }
+                    }
+                    File.Copy(tmpPath, path, true);
+                }
+            }
+            else
+            {
+                try
+                {
+                    File.Move(tmpPath, path);
+                    tmpPath = null;
+                    return;
+                }
+                catch
+                {
+                    File.Copy(tmpPath, path, true);
+                }
+            }
+        }
+        finally
+        {
+            if (!string.IsNullOrEmpty(tmpPath) && File.Exists(tmpPath))
+            {
+                try { File.Delete(tmpPath); } catch { }
+            }
+        }
+    }
+
+    public static void WriteTextAtomic(string path, string content, bool keepBackup)
+    {
+        byte[] bytes = new UTF8Encoding(false).GetBytes(content ?? "");
+        WriteBytesAtomic(path, bytes, keepBackup);
+    }
+
+    public static string QuarantineCorruptFile(string path)
+    {
+        try
+        {
+            if (string.IsNullOrEmpty(path) || !File.Exists(path)) return "";
+            string stamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+            string corruptPath = path + ".corrupt." + stamp;
+            if (File.Exists(corruptPath))
+            {
+                corruptPath = path + ".corrupt." + stamp + "." + Guid.NewGuid().ToString("N").Substring(0, 6);
+            }
+            File.Move(path, corruptPath);
+            return corruptPath;
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    public static T ReadJsonWithBackup<T>(string path, Func<T, bool> validator, out bool recoveredFromBackup, out string errorDetail) where T : class
+    {
+        recoveredFromBackup = false;
+        errorDetail = "";
+        if (string.IsNullOrEmpty(path)) return null;
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                string json = File.ReadAllText(path, Encoding.UTF8);
+                T obj = JsonConvert.DeserializeObject<T>(json);
+                if (obj != null && (validator == null || validator(obj)))
+                {
+                    return obj;
+                }
+                errorDetail = "JSONがnullまたは不正な形式です";
+            }
+            catch (Exception ex)
+            {
+                errorDetail = ex.Message;
+            }
+        }
+
+        string bakPath = path + ".bak";
+        if (File.Exists(bakPath))
+        {
+            try
+            {
+                string bakJson = File.ReadAllText(bakPath, Encoding.UTF8);
+                T bakObj = JsonConvert.DeserializeObject<T>(bakJson);
+                if (bakObj != null && (validator == null || validator(bakObj)))
+                {
+                    recoveredFromBackup = true;
+                    return bakObj;
+                }
+            }
+            catch (Exception ex)
+            {
+                if (string.IsNullOrEmpty(errorDetail)) errorDetail = ex.Message;
+                else errorDetail = errorDetail + " / .bak: " + ex.Message;
+            }
+        }
+        return null;
+    }
+}
+
 public static class SyncStore
 {
     private static readonly object _configLock = new object();
@@ -119,14 +252,20 @@ public static class SyncStore
         if (_deletedUuidMap != null) return _deletedUuidMap;
         _deletedUuidMap = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         string path = GetDeletedUuidsJsonPath();
-        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _deletedUuidMap;
+        if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !File.Exists(path + ".bak"))) return _deletedUuidMap;
 
         try
         {
-            string json = File.ReadAllText(path, Encoding.UTF8);
-            var entries = JsonConvert.DeserializeObject<List<DeletedUuidEntry>>(json);
+            bool recovered;
+            string errDetail;
+            var entries = AtomicFileWriter.ReadJsonWithBackup<List<DeletedUuidEntry>>(path, list => list != null, out recovered, out errDetail);
             if (entries != null)
             {
+                if (recovered)
+                {
+                    Console.WriteLine("[復旧] deleted_uuids.json を .bak から復元しました");
+                    try { AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(entries, Formatting.Indented), false); } catch { }
+                }
                 long cutoff = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (90L * 24L * 60L * 60L * 1000L);
                 foreach (var entry in entries)
                 {
@@ -138,6 +277,11 @@ public static class SyncStore
                         _deletedUuidMap[clean] = entry.deletedAt;
                     }
                 }
+            }
+            else if (!string.IsNullOrEmpty(errDetail))
+            {
+                string corrupt = AtomicFileWriter.QuarantineCorruptFile(path);
+                Console.WriteLine("[警告] deleted_uuids.json の読み込みに失敗しました: " + errDetail + (string.IsNullOrEmpty(corrupt) ? "" : " (退避: " + corrupt + ")"));
             }
         }
         catch (Exception ex)
@@ -176,7 +320,7 @@ public static class SyncStore
             {
                 Directory.CreateDirectory(dir);
             }
-            File.WriteAllText(path, JsonConvert.SerializeObject(list, Formatting.Indented), Encoding.UTF8);
+            AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(list, Formatting.Indented), true);
         }
         catch (Exception ex)
         {
@@ -420,7 +564,7 @@ public static class SyncStore
             {
                 try
                 {
-                    File.WriteAllText(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), Encoding.UTF8);
+                    AtomicFileWriter.WriteTextAtomic(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), true);
                 }
                 catch (Exception ex)
                 {
@@ -464,7 +608,7 @@ public static class SyncStore
             {
                 try
                 {
-                    File.WriteAllText(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), Encoding.UTF8);
+                    AtomicFileWriter.WriteTextAtomic(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), true);
                 }
                 catch (Exception ex)
                 {
@@ -481,17 +625,27 @@ public static class SyncStore
         string storeJsonPath = Path.Combine(baseDir, "store.json");
         _storeJsonPath = storeJsonPath;
 
-        if (File.Exists(storeJsonPath))
+        if (File.Exists(storeJsonPath) || File.Exists(storeJsonPath + ".bak"))
         {
             try
             {
-                string json = File.ReadAllText(storeJsonPath, Encoding.UTF8);
-                StoreConfig cfg = JsonConvert.DeserializeObject<StoreConfig>(json);
-                if (cfg != null && !string.IsNullOrEmpty(cfg.storeId) && !string.IsNullOrEmpty(cfg.path))
+                bool recovered;
+                string errDetail;
+                StoreConfig cfg = AtomicFileWriter.ReadJsonWithBackup<StoreConfig>(
+                    storeJsonPath,
+                    c => c != null && !string.IsNullOrEmpty(c.storeId) && !string.IsNullOrEmpty(c.path),
+                    out recovered,
+                    out errDetail
+                );
+                if (cfg != null)
                 {
+                    if (recovered)
+                    {
+                        Console.WriteLine("[復旧] store.json を .bak から復元しました");
+                    }
                     _storeId = cfg.storeId;
                     _syncDir = cfg.path;
-                    bool dirty = false;
+                    bool dirty = recovered;
                     if (string.IsNullOrEmpty(cfg.authToken))
                     {
                         _authToken = !string.IsNullOrEmpty(serverAuthToken) ? serverAuthToken : Guid.NewGuid().ToString("N").Substring(0, 12);
@@ -512,7 +666,7 @@ public static class SyncStore
                     {
                         try
                         {
-                            File.WriteAllText(storeJsonPath, JsonConvert.SerializeObject(cfg, Formatting.Indented), Encoding.UTF8);
+                            AtomicFileWriter.WriteTextAtomic(storeJsonPath, JsonConvert.SerializeObject(cfg, Formatting.Indented), !recovered);
                         }
                         catch {}
                     }
@@ -522,6 +676,11 @@ public static class SyncStore
                     }
                     serverAuthToken = _authToken;
                     return;
+                }
+                else if (!string.IsNullOrEmpty(errDetail))
+                {
+                    string corrupt = AtomicFileWriter.QuarantineCorruptFile(storeJsonPath);
+                    Console.WriteLine("[警告] store.json の読み込みに失敗しました: " + errDetail + (string.IsNullOrEmpty(corrupt) ? "" : " (退避: " + corrupt + ")"));
                 }
             }
             catch (Exception ex)
@@ -551,7 +710,7 @@ public static class SyncStore
         try
         {
             string newJson = JsonConvert.SerializeObject(newCfg, Formatting.Indented);
-            File.WriteAllText(storeJsonPath, newJson, Encoding.UTF8);
+            AtomicFileWriter.WriteTextAtomic(storeJsonPath, newJson, true);
         }
         catch (Exception ex)
         {
@@ -889,19 +1048,30 @@ public static class SyncStore
         if (_photoTrashList != null) return _photoTrashList;
         _photoTrashList = new List<PhotoTrashEntry>();
         string path = GetPhotoTrashJsonPath();
-        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _photoTrashList;
+        if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !File.Exists(path + ".bak"))) return _photoTrashList;
 
         try
         {
-            string json = File.ReadAllText(path, Encoding.UTF8);
-            var entries = JsonConvert.DeserializeObject<List<PhotoTrashEntry>>(json);
+            bool recovered;
+            string errDetail;
+            var entries = AtomicFileWriter.ReadJsonWithBackup<List<PhotoTrashEntry>>(path, list => list != null, out recovered, out errDetail);
             if (entries != null)
             {
+                if (recovered)
+                {
+                    Console.WriteLine("[復旧] photo_trash.json を .bak から復元しました");
+                    try { AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(entries, Formatting.Indented), false); } catch { }
+                }
                 foreach (var entry in entries)
                 {
                     if (entry == null || string.IsNullOrEmpty(entry.trashId)) continue;
                     _photoTrashList.Add(entry);
                 }
+            }
+            else if (!string.IsNullOrEmpty(errDetail))
+            {
+                string corrupt = AtomicFileWriter.QuarantineCorruptFile(path);
+                Console.WriteLine("[警告] photo_trash.json の読み込みに失敗しました: " + errDetail + (string.IsNullOrEmpty(corrupt) ? "" : " (退避: " + corrupt + ")"));
             }
         }
         catch (Exception ex)
@@ -922,7 +1092,7 @@ public static class SyncStore
             {
                 Directory.CreateDirectory(dir);
             }
-            File.WriteAllText(path, JsonConvert.SerializeObject(_photoTrashList, Formatting.Indented), Encoding.UTF8);
+            AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(_photoTrashList, Formatting.Indented), true);
         }
         catch (Exception ex)
         {
