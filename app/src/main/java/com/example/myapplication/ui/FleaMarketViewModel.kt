@@ -25,6 +25,7 @@ import com.example.myapplication.data.server.PcSyncForegroundService
 import com.example.myapplication.data.server.PcSyncProgress
 import com.example.myapplication.data.server.SyncCoordinator
 import com.example.myapplication.data.server.SyncPhase
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -163,7 +165,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         items.count { itemWithPhotos ->
             itemWithPhotos.photos.any { !it.isPcSynced && File(it.filePath).exists() }
         }
-    }.stateIn(
+    }.flowOn(Dispatchers.IO).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = 0
@@ -196,8 +198,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
         itemsWithPhotos,
         searchQuery,
         statusFilter,
-        sortOption
-    ) { items, query, status, sort ->
+        sortOption,
+        defaultSettings
+    ) { items, query, status, sort, settings ->
         items.filter { itemWithPhotos ->
             val item = itemWithPhotos.item
             val itemFullText = "${item.title} ${item.description}"
@@ -228,7 +231,6 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                     pA.compareTo(pB)
                 }
                 SortOption.PROFIT_DESC -> {
-                    val settings = defaultSettings.value
                     b.item.getCalculatedProfit(settings).compareTo(a.item.getCalculatedProfit(settings))
                 }
             }
@@ -1439,19 +1441,24 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
     // ハートビート本体の値 (hb) を待たず、軽量な変化カウンタ窓口を自分で定期確認する。
     // 本体が写真同期 (syncMutex) で長時間塞がっていても、承認・完了の検知は止まらない。
     // 例外は握りつぶしてログのみとし、本体の同期には一切干渉しない (5-4 の分離原則を維持)。
+    @Volatile
+    private var lastHeartbeatResponseAtMs: Long = 0L
+
     private fun startClaudeWatchLoop() {
         claudeWatchJob?.cancel()
         claudeWatchJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 val url = _pcServerUrl.value
                 val token = _pcAuthToken.value
-                if (url.isNotBlank() && !_claudeActionInProgress.value) {
+                val heartbeatRecent = (System.currentTimeMillis() - lastHeartbeatResponseAtMs) < 5500L
+                if (url.isNotBlank() && !_claudeActionInProgress.value && !heartbeatRecent) {
                     try {
                         val revision = pcServerClient.fetchClaudeRevision(url, token)
                         if (revision != null && revision > 0L && revision != lastKnownClaudeRevision) {
                             refreshClaudeJobStates(url, token, fromWatch = true)
                         }
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         android.util.Log.e("PC_SYNC", "Claudeジョブ監視に失敗: ${e.message}")
                     }
                 }
@@ -1469,6 +1476,9 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                 val token = _pcAuthToken.value
                 if (url.isNotBlank()) {
                     val hb = pcServerClient.sendHeartbeatWithRevision(url, token)
+                    if (hb.isConnected) {
+                        lastHeartbeatResponseAtMs = System.currentTimeMillis()
+                    }
                     val connected = hb.isConnected
                     syncCoordinator.setPcServerConnected(connected)
 
@@ -1583,9 +1593,12 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                             initialMessage = "自動同期を再開中..."
                         )
                     }
-                    // フェーズ 6-5 是正 (34-4-2): 既読カウンタの変化検知は syncMutex の外で
-                    // ジョブ状態を取り直す (写真同期にブロックされない経路)
-                    if (connected && hb.labelSeenRevision > 0L && hb.labelSeenRevision != lastKnownLabelSeenRevision) {
+                    // フェーズ 6-5 是正 (34-4-2): claudeRevision / labelSeenRevision の変化検知は
+                    // syncMutex の外で行い、重複ポーリングを避ける (写真同期でブロックされた場合のみ監視側が代替)。
+                    if (connected && !_claudeActionInProgress.value &&
+                        ((hb.claudeRevision > 0L && hb.claudeRevision != lastKnownClaudeRevision) ||
+                            (hb.labelSeenRevision > 0L && hb.labelSeenRevision != lastKnownLabelSeenRevision))
+                    ) {
                         refreshClaudeJobStates(url, token, fromWatch = true)
                     }
                     // Claude ジョブの検知は独立した監視コルーチンへ移設した (レビュー 24-4)。

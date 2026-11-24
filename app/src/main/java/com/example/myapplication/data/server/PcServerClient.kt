@@ -205,6 +205,7 @@ class PcServerClient(
                 true
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "pushSettingsToServer 例外: ${e.message}", e)
             false
         }
@@ -303,6 +304,7 @@ class PcServerClient(
                 }
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "createClaudeJob 例外: ${e.message}", e)
             ClaudeJobCreateResult(false, message = "PCサーバーへ接続できませんでした")
         }
@@ -327,6 +329,7 @@ class PcServerClient(
                 if (parsed?.status == "ok") parsed else null
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "fetchClaudeJobs 例外: ${e.message}", e)
             null
         }
@@ -350,6 +353,7 @@ class PcServerClient(
                 if (parsed?.status == "ok") parsed else null
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "fetchClaudeReferences 例外: ${e.message}", e)
             null
         }
@@ -383,6 +387,7 @@ class PcServerClient(
                 if (v >= 0L) v else null
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -410,6 +415,7 @@ class PcServerClient(
                 parsed?.status == "ok"
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "postClaudeApproval 例外: ${e.message}", e)
             false
         }
@@ -436,6 +442,7 @@ class PcServerClient(
                 parsed?.status == "ok"
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "postClaudeJobAck 例外: ${e.message}", e)
             false
         }
@@ -462,6 +469,7 @@ class PcServerClient(
                 parsed?.status == "ok"
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "postClaudeJobCancel 例外: ${e.message}", e)
             false
         }
@@ -491,6 +499,7 @@ class PcServerClient(
                 } else null
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             null
         }
     }
@@ -518,6 +527,7 @@ class PcServerClient(
                 parsed?.status == "ok"
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "postClaudeJobMove 例外: ${e.message}", e)
             false
         }
@@ -548,6 +558,7 @@ class PcServerClient(
                 true
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "fetchAndSyncServerSettings 例外: ${e.message}", e)
             false
         }
@@ -589,6 +600,7 @@ class PcServerClient(
                 true
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "fetchServerSettingsAfterTemplateRegistration 例外: ${e.message}", e)
             false
         }
@@ -629,6 +641,7 @@ class PcServerClient(
                 response.isSuccessful
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             false
         }
     }
@@ -722,6 +735,7 @@ class PcServerClient(
                 }
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             e.printStackTrace()
         }
         hashSet
@@ -1202,6 +1216,7 @@ class PcServerClient(
             // §83-1: キャンセルを通信エラー結果へ変換せず伝播させる
             throw e
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "プロトコル v4 同期例外: ${e.message}", e)
             val errMsg = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
             onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "同期通信エラー", errorDetail = errMsg))
@@ -1239,6 +1254,7 @@ class PcServerClient(
                 )
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "fetchServerItems 例外: ${e.message}", e)
             false
         }
@@ -1382,6 +1398,7 @@ class PcServerClient(
             }
 
             var itemIdToRepairThumbnails: Int? = null
+            var savedTargetItemIdForRepair: Int? = null
             repository.withDbMutationTransaction {
                 val byUuid = if (serverSyncUuid.isNotBlank()) dao.getItemWithPhotosBySyncUuid(serverSyncUuid) else null
                 val byId = if (serverId > 0) dao.getItemWithPhotosById(serverId) else null
@@ -1645,10 +1662,13 @@ class PcServerClient(
                         }
                     }
                 }
+                savedTargetItemIdForRepair = targetItemId
+            }
 
-                val syncedPhotos = dao.getPhotosByItemId(targetItemId)
+            if (itemIdToRepairThumbnails == null && savedTargetItemIdForRepair != null) {
+                val syncedPhotos = dao.getPhotosByItemId(savedTargetItemIdForRepair!!)
                 if (syncedPhotos.any { isPhotoThumbnailDamagedOrMissing(it) }) {
-                    itemIdToRepairThumbnails = targetItemId
+                    itemIdToRepairThumbnails = savedTargetItemIdForRepair
                 }
             }
 
@@ -1656,6 +1676,7 @@ class PcServerClient(
                 try {
                     repairMissingOrCorruptThumbnailsForItem(itemIdToRepairThumbnails!!, baseUrl, token)
                 } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     Log.e("PcServerClient", "Thumbnail repair failed for item $itemIdToRepairThumbnails", e)
                 }
             }
@@ -1730,6 +1751,7 @@ class PcServerClient(
                 targetFile.exists() && targetFile.length() > 0L
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "downloadPhotoToFileByHash 例外: ${e.message}", e)
             tempFile.delete()
             false
@@ -1750,6 +1772,7 @@ class PcServerClient(
             val ok = downloadPhotoToFileByHash(baseUrl, token, md5Hash, tempFile, verifyMd5)
             if (ok && tempFile.exists()) tempFile.readBytes() else null
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "downloadPhotoByHash 例外: ${e.message}", e)
             null
         } finally {
@@ -1839,6 +1862,7 @@ class PcServerClient(
                 response.isSuccessful
             }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             android.util.Log.e("PC_SYNC", "unmergeOnPcServer 例外: ${e.message}", e)
             false
         }

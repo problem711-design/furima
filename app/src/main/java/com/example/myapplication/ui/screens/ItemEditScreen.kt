@@ -78,7 +78,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -244,13 +247,16 @@ fun ItemEditScreen(
                 expenseCostText = item.expenseCost.toString()
                 existingFilePaths.clear()
                 loadedPhotosByPath.clear()
-                itemWithPhotos.photos.forEach { photo ->
-                    val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
-                    val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
-                    if (targetPath.isNotBlank()) {
-                        existingFilePaths.add(targetPath)
-                        loadedPhotosByPath[targetPath] = photo
+                val resolvedPairs = withContext(Dispatchers.IO) {
+                    itemWithPhotos.photos.mapNotNull { photo ->
+                        val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
+                        val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
+                        if (targetPath.isNotBlank()) targetPath to photo else null
                     }
+                }
+                resolvedPairs.forEach { (targetPath, photo) ->
+                    existingFilePaths.add(targetPath)
+                    loadedPhotosByPath[targetPath] = photo
                 }
             }
         } else {
@@ -290,57 +296,74 @@ fun ItemEditScreen(
             if (itemWithPhotos != null) {
                 loadedItem = itemWithPhotos.item
                 val reloadedPhotos = itemWithPhotos.photos
-                val photosById = reloadedPhotos.associateBy { it.id }
+                val existingSnapshot = existingFilePaths.toList()
+                val loadedSnapshot = loadedPhotosByPath.toMap()
+                val initSnapshot = initialExistingFilePaths.toList()
+                val syncResolution = withContext(Dispatchers.IO) {
+                    val photosById = reloadedPhotos.associateBy { it.id }
 
-                fun resolveMatchingPhoto(oldPath: String): PhotoEntity? {
-                    val prevEntity = loadedPhotosByPath[oldPath]
-                    if (prevEntity != null) {
-                        photosById[prevEntity.id]?.let { return it }
-                        if (prevEntity.md5Hash.isNotBlank()) {
-                            reloadedPhotos.firstOrNull { it.md5Hash == prevEntity.md5Hash }?.let { return it }
+                    fun resolveMatchingPhoto(oldPath: String): PhotoEntity? {
+                        val prevEntity = loadedSnapshot[oldPath]
+                        if (prevEntity != null) {
+                            photosById[prevEntity.id]?.let { return it }
+                            if (prevEntity.md5Hash.isNotBlank()) {
+                                reloadedPhotos.firstOrNull { it.md5Hash == prevEntity.md5Hash }?.let { return it }
+                            }
+                        }
+                        val oldName = File(oldPath).name
+                        val thumbName = "THUMB_$oldName"
+                        return reloadedPhotos.firstOrNull {
+                            it.filePath == oldPath ||
+                                it.thumbnailPath == oldPath ||
+                                File(it.filePath).name == thumbName ||
+                                (it.thumbnailPath != null && File(it.thumbnailPath).name == oldName)
                         }
                     }
-                    val oldName = File(oldPath).name
-                    val thumbName = "THUMB_$oldName"
-                    return reloadedPhotos.firstOrNull {
-                        it.filePath == oldPath ||
-                            it.thumbnailPath == oldPath ||
-                            File(it.filePath).name == thumbName ||
-                            (it.thumbnailPath != null && File(it.thumbnailPath).name == oldName)
-                    }
-                }
 
-                val pathReplacements = mutableMapOf<String, String>()
-                for (i in existingFilePaths.indices) {
-                    val oldPath = existingFilePaths[i]
-                    val matched = resolveMatchingPhoto(oldPath) ?: continue
-                    val displayPath = matched.displayFile?.absolutePath ?: matched.filePath
-                    val targetPath = if (File(matched.filePath).exists()) matched.filePath else displayPath
-                    if (targetPath.isNotBlank()) {
-                        loadedPhotosByPath[targetPath] = matched
-                        if (targetPath != oldPath) {
-                            existingFilePaths[i] = targetPath
-                            pathReplacements[oldPath] = targetPath
+                    val pathReplacements = mutableMapOf<String, String>()
+                    val updatedExisting = existingSnapshot.toMutableList()
+                    val loadedUpdates = mutableMapOf<String, PhotoEntity>()
+                    for (i in existingSnapshot.indices) {
+                        val oldPath = existingSnapshot[i]
+                        val matched = resolveMatchingPhoto(oldPath) ?: continue
+                        val displayPath = matched.displayFile?.absolutePath ?: matched.filePath
+                        val targetPath = if (File(matched.filePath).exists()) matched.filePath else displayPath
+                        if (targetPath.isNotBlank()) {
+                            loadedUpdates[targetPath] = matched
+                            if (targetPath != oldPath) {
+                                updatedExisting[i] = targetPath
+                                pathReplacements[oldPath] = targetPath
+                            }
                         }
                     }
-                }
 
-                reloadedPhotos.forEach { photo ->
-                    val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
-                    val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
-                    if (targetPath.isNotBlank()) {
-                        loadedPhotosByPath[targetPath] = photo
+                    reloadedPhotos.forEach { photo ->
+                        val displayPath = photo.displayFile?.absolutePath ?: photo.filePath
+                        val targetPath = if (File(photo.filePath).exists()) photo.filePath else displayPath
+                        if (targetPath.isNotBlank()) {
+                            loadedUpdates[targetPath] = photo
+                        }
+                    }
+
+                    val updatedInit = initSnapshot.map { initPath ->
+                        pathReplacements[initPath] ?: run {
+                            val matched = resolveMatchingPhoto(initPath)
+                            val displayPath = matched?.displayFile?.absolutePath ?: matched?.filePath
+                            val targetPath = if (matched != null && File(matched.filePath).exists()) matched.filePath else displayPath
+                            if (!targetPath.isNullOrBlank()) targetPath else initPath
+                        }
+                    }
+                    Triple(updatedExisting, loadedUpdates, Pair(pathReplacements, updatedInit))
+                }
+                val (updatedExisting, loadedUpdates, pairRest) = syncResolution
+                val (pathReplacements, updatedInit) = pairRest
+                for (i in updatedExisting.indices) {
+                    if (i < existingFilePaths.size && existingFilePaths[i] != updatedExisting[i]) {
+                        existingFilePaths[i] = updatedExisting[i]
                     }
                 }
-
-                initialExistingFilePaths = initialExistingFilePaths.map { initPath ->
-                    pathReplacements[initPath] ?: run {
-                        val matched = resolveMatchingPhoto(initPath)
-                        val displayPath = matched?.displayFile?.absolutePath ?: matched?.filePath
-                        val targetPath = if (matched != null && File(matched.filePath).exists()) matched.filePath else displayPath
-                        if (!targetPath.isNullOrBlank()) targetPath else initPath
-                    }
-                }
+                loadedPhotosByPath.putAll(loadedUpdates)
+                initialExistingFilePaths = updatedInit
 
                 if (pathReplacements.isNotEmpty()) {
                     for (idx in selectedPhotoKeys.indices) {
@@ -621,17 +644,24 @@ fun ItemEditScreen(
 
     val startPreviewIdx = previewStartIndex
     if (startPreviewIdx != null) {
-        val previewItems = buildList {
-            existingFilePaths.forEach { path ->
-                val entity = loadedPhotosByPath[path]
-                if (entity != null) {
-                    add(entity.toPreviewPhotoItem().copy(photoKey = "path:$path"))
-                } else {
-                    add(PreviewPhotoItem(model = File(path), hasLocalOriginal = true, photoKey = "path:$path"))
+        val existingSnap = existingFilePaths.toList()
+        val loadedSnap = loadedPhotosByPath.toMap()
+        val newUrisSnap = newImageUris.toList()
+        val previewItems by produceState<List<PreviewPhotoItem>>(emptyList(), existingSnap, loadedSnap, newUrisSnap) {
+            value = withContext(Dispatchers.IO) {
+                buildList {
+                    existingSnap.forEach { path ->
+                        val entity = loadedSnap[path]
+                        if (entity != null) {
+                            add(entity.toPreviewPhotoItem().copy(photoKey = "path:$path"))
+                        } else {
+                            add(PreviewPhotoItem(model = File(path), hasLocalOriginal = true, photoKey = "path:$path"))
+                        }
+                    }
+                    newUrisSnap.forEach { uri ->
+                        add(PreviewPhotoItem(model = uri, hasLocalOriginal = true, photoKey = "uri:$uri"))
+                    }
                 }
-            }
-            newImageUris.forEach { uri ->
-                add(PreviewPhotoItem(model = uri, hasLocalOriginal = true, photoKey = "uri:$uri"))
             }
         }
         if (previewItems.isNotEmpty()) {

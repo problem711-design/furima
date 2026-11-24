@@ -50,7 +50,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -425,7 +428,10 @@ fun TrashScreen(
                                             .background(MaterialTheme.colorScheme.surfaceVariant),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        if (displayFile != null && displayFile.exists()) {
+                                        val displayFileExists by produceState(initialValue = false, displayFile) {
+                                            value = withContext(Dispatchers.IO) { displayFile != null && displayFile.exists() }
+                                        }
+                                        if (displayFile != null && displayFileExists) {
                                             AsyncImage(
                                                 model = displayFile,
                                                 contentDescription = item.title,

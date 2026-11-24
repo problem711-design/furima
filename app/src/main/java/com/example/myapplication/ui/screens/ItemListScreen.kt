@@ -75,7 +75,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -846,7 +849,10 @@ fun CompactItemCard(
                     .aspectRatio(1.2f)
                     .background(Color.LightGray)
             ) {
-                if (displayImageFile != null && displayImageFile.exists()) {
+                val displayImageExists by produceState(initialValue = false, displayImageFile) {
+                    value = withContext(Dispatchers.IO) { displayImageFile != null && displayImageFile.exists() }
+                }
+                if (displayImageFile != null && displayImageExists) {
                     val cardContext = LocalContext.current
                     AsyncImage(
                         model = remember(displayImageFile) {
@@ -867,7 +873,11 @@ fun CompactItemCard(
                 }
 
                 // ステータスバッジ ＆ まとめバッジ
-                val hasUnsynced = photos.any { !it.isPcSynced && java.io.File(it.filePath).exists() }
+                val hasUnsynced by produceState(initialValue = false, photos) {
+                    value = withContext(Dispatchers.IO) {
+                        photos.any { !it.isPcSynced && java.io.File(it.filePath).exists() }
+                    }
+                }
                 val isAllSynced = photos.isNotEmpty() && photos.all { it.isPcSynced }
 
                 Row(

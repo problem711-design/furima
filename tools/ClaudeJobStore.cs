@@ -475,6 +475,24 @@ public static class ClaudeJobStore
         }
     }
 
+    public static List<ClaudeJob> GetJobsForExpirySweep()
+    {
+        lock (_jobLock)
+        {
+            var list = LoadJobsLocked();
+            var copy = new List<ClaudeJob>();
+            foreach (var job in list)
+            {
+                if (job == null) continue;
+                if (job.status == "approval_pending" || job.status == "approved" || job.status == "processing")
+                {
+                    copy.Add(CloneJob(job));
+                }
+            }
+            return copy;
+        }
+    }
+
     public static ClaudeJob GetJob(string jobId)
     {
         if (string.IsNullOrEmpty(jobId)) return null;

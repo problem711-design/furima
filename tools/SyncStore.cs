@@ -54,6 +54,62 @@ public class DefaultSettingsConfig
             settingsUpdatedAt = 0
         };
     }
+
+    public DefaultSettingsConfig Clone()
+    {
+        var copy = new DefaultSettingsConfig
+        {
+            defaultFeeRatePercent = this.defaultFeeRatePercent,
+            defaultShippingCost = this.defaultShippingCost,
+            defaultExpenseCost = this.defaultExpenseCost,
+            activePresetId = this.activePresetId,
+            settingsUpdatedAt = this.settingsUpdatedAt,
+            presets = new List<FeePresetConfig>(),
+            titleTemplates = new List<TextTemplateConfig>(),
+            descriptionTemplates = new List<TextTemplateConfig>(),
+            promptTemplates = new List<TextTemplateConfig>()
+        };
+        if (this.presets != null)
+        {
+            foreach (var p in this.presets)
+            {
+                if (p == null) continue;
+                copy.presets.Add(new FeePresetConfig
+                {
+                    id = p.id,
+                    name = p.name,
+                    feeRatePercent = p.feeRatePercent,
+                    shippingCost = p.shippingCost,
+                    expenseCost = p.expenseCost
+                });
+            }
+        }
+        if (this.titleTemplates != null)
+        {
+            foreach (var t in this.titleTemplates)
+            {
+                if (t == null) continue;
+                copy.titleTemplates.Add(new TextTemplateConfig { id = t.id, name = t.name, content = t.content });
+            }
+        }
+        if (this.descriptionTemplates != null)
+        {
+            foreach (var t in this.descriptionTemplates)
+            {
+                if (t == null) continue;
+                copy.descriptionTemplates.Add(new TextTemplateConfig { id = t.id, name = t.name, content = t.content });
+            }
+        }
+        if (this.promptTemplates != null)
+        {
+            foreach (var t in this.promptTemplates)
+            {
+                if (t == null) continue;
+                copy.promptTemplates.Add(new TextTemplateConfig { id = t.id, name = t.name, content = t.content });
+            }
+        }
+        return copy;
+    }
 }
 
 public class StoreConfig
@@ -426,8 +482,7 @@ public static class SyncStore
                 }
                 // フェーズ 6-8 (§41.4): ディープコピーを返す。呼び出し側が戻り値を変更しても
                 // 保持中の設定へ影響しない (列挙中の変更例外の防止も兼ねる)
-                return JsonConvert.DeserializeObject<DefaultSettingsConfig>(
-                    JsonConvert.SerializeObject(_currentConfig.defaultSettings));
+                return _currentConfig.defaultSettings.Clone();
             }
             return DefaultSettingsConfig.CreateDefault();
         }
@@ -797,6 +852,58 @@ public static class SyncStore
             }
         }
         return missingHashes.Count;
+    }
+
+    public static List<KeyValuePair<string, string>> SnapshotPhotoPathsForMissingCheck(
+        List<Dictionary<string, object>> itemsDb,
+        Dictionary<string, string> hashToFilePathMap)
+    {
+        var list = new List<KeyValuePair<string, string>>();
+        if (itemsDb == null) return list;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in itemsDb)
+        {
+            if (item == null) continue;
+            if (item.ContainsKey("photos") && item["photos"] != null)
+            {
+                foreach (var photo in NormalizePhotosList(item["photos"]))
+                {
+                    if (photo != null && photo.ContainsKey("md5Hash") && photo["md5Hash"] != null)
+                    {
+                        string hash = photo["md5Hash"].ToString().Trim();
+                        if (!string.IsNullOrEmpty(hash) && seen.Add(hash))
+                        {
+                            string filePath = "";
+                            if (hashToFilePathMap != null)
+                            {
+                                string mapped;
+                                if (hashToFilePathMap.TryGetValue(hash, out mapped) && !string.IsNullOrEmpty(mapped))
+                                {
+                                    filePath = mapped;
+                                }
+                            }
+                            list.Add(new KeyValuePair<string, string>(hash, filePath));
+                        }
+                    }
+                }
+            }
+        }
+        return list;
+    }
+
+    public static int CountMissingFilesFromSnapshot(List<KeyValuePair<string, string>> snapshot)
+    {
+        if (snapshot == null || snapshot.Count == 0) return 0;
+        int missing = 0;
+        for (int i = 0; i < snapshot.Count; i++)
+        {
+            string fp = snapshot[i].Value;
+            if (string.IsNullOrEmpty(fp) || !File.Exists(fp))
+            {
+                missing++;
+            }
+        }
+        return missing;
     }
 
     public static long GetDirectorySizeBytes(string dirPath)

@@ -85,6 +85,7 @@ import com.example.myapplication.data.local.FeePreset
 import com.example.myapplication.data.local.TextTemplate
 import com.example.myapplication.ui.FleaMarketViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
@@ -193,6 +194,7 @@ fun SettingsStorageScreen(
     }
 
     LaunchedEffect(thumbQuality, thumbDim, itemsWithPhotos) {
+        delay(250)
         val candidatePaths = itemsWithPhotos.flatMap { it.photos }
             .filter { !it.isOriginalDeleted && it.filePath.isNotBlank() }
             .map { it.filePath }

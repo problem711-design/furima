@@ -34,6 +34,11 @@ class FurimaServerNative
     private static ServerLogWriter logWriter = null;
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
+    private static long lastFullPhotoScanTicks = 0;
+    private static long lastExpirySweepTicks = 0;
+    private static long lastMissingCountTicks = 0;
+    private static int cachedMissingCount = 0;
+    private static int missingCountDirty = 1;
     // claudeRevision の実体は ClaudeJobStore 側で永続化する (フェーズ 6-1a)。
     // サーバー再起動後も単調増加を引き継ぐため、メモリ保持にはしない。
     // Build 13 (13-2): 結果・エラーの登録を直列化するロック。
@@ -161,6 +166,7 @@ class FurimaServerNative
 
     private static long BumpDataRevision()
     {
+        Interlocked.Exchange(ref missingCountDirty, 1);
         return Interlocked.Increment(ref dataRevision);
     }
 
@@ -829,7 +835,20 @@ class FurimaServerNative
             hashToFilePathMap = nextMap;
             photoStatCache = nextCache;
         }
+        Interlocked.Exchange(ref lastFullPhotoScanTicks, DateTime.UtcNow.Ticks);
+        Interlocked.Exchange(ref missingCountDirty, 1);
         Console.WriteLine("インデックス完了: " + nextMap.Count + "件のユニーク写真ハッシュをロードしました。");
+    }
+
+    private static void ScanAndIndexLocalPhotosIfStale(int minIntervalSec)
+    {
+        long nowTicks = DateTime.UtcNow.Ticks;
+        long prevTicks = Interlocked.Read(ref lastFullPhotoScanTicks);
+        if (prevTicks > 0 && (nowTicks - prevTicks) < (long)minIntervalSec * TimeSpan.TicksPerSecond)
+        {
+            return;
+        }
+        ScanAndIndexLocalPhotos();
     }
 
     private static void StartFolderAutoImportWatcher()
@@ -1857,30 +1876,51 @@ class FurimaServerNative
             }
             else if (rawPath == "/api/server/status")
             {
-                // フェーズ 6-7 是正 (Build 12 / 46-4): 失効の遅延評価をステータス応答でも行い、
-                // PC 管理画面の常時表示 (承認待ち・待機中) がスマホ未接続でも実態と一致するようにする。
-                // 変更があれば各評価ヘルパーが claudeRevision を進めるため、この応答の claudeRevision に
-                // 反映され、ダッシュボードのポーリングが遷移を検知してジョブを再取得する。
-                // (一覧取得 HandleGetClaudeJobs と同じ評価。lockObj は保持せずに実行する)
-                foreach (var sweepJob in ClaudeJobStore.GetJobs(null))
+                long nowUtcTicks = DateTime.UtcNow.Ticks;
+                long prevSweep = Interlocked.Read(ref lastExpirySweepTicks);
+                if (prevSweep == 0 || (nowUtcTicks - prevSweep) >= 15L * TimeSpan.TicksPerSecond)
                 {
-                    ApplyApprovalPendingExpiry(sweepJob);
-                    ApplyTokenExpiry(sweepJob);
+                    if (Interlocked.CompareExchange(ref lastExpirySweepTicks, nowUtcTicks, prevSweep) == prevSweep)
+                    {
+                        foreach (var sweepJob in ClaudeJobStore.GetJobsForExpirySweep())
+                        {
+                            ApplyApprovalPendingExpiry(sweepJob);
+                            ApplyTokenExpiry(sweepJob);
+                        }
+                    }
                 }
                 bool isConnected = (DateTime.Now - lastHeartbeat).TotalSeconds < 25;
                 int missingCount;
                 int trashCount = 0;
                 int indexedPhotosCount = 0;
                 int totalItemsCount = 0;
+                List<KeyValuePair<string, string>> missingSnapshot = null;
+                long prevMissingTicks = Interlocked.Read(ref lastMissingCountTicks);
+                bool needMissingRefresh = Interlocked.Exchange(ref missingCountDirty, 0) == 1
+                    || prevMissingTicks == 0
+                    || (nowUtcTicks - prevMissingTicks) >= 30L * TimeSpan.TicksPerSecond;
                 lock (lockObj)
                 {
                     indexedPhotosCount = hashToFilePathMap.Count;
                     totalItemsCount = itemsDb.Count;
-                    missingCount = SyncStore.CountMissingFiles(itemsDb, hashToFilePathMap);
+                    if (needMissingRefresh)
+                    {
+                        missingSnapshot = SyncStore.SnapshotPhotoPathsForMissingCheck(itemsDb, hashToFilePathMap);
+                    }
                     foreach (var item in itemsDb)
                     {
                         if (IsItemTrashed(item)) trashCount++;
                     }
+                }
+                if (missingSnapshot != null)
+                {
+                    missingCount = SyncStore.CountMissingFilesFromSnapshot(missingSnapshot);
+                    cachedMissingCount = missingCount;
+                    Interlocked.Exchange(ref lastMissingCountTicks, nowUtcTicks);
+                }
+                else
+                {
+                    missingCount = cachedMissingCount;
                 }
 
                 var dict = new Dictionary<string, object>
@@ -2220,6 +2260,7 @@ class FurimaServerNative
                 List<string> syncedHashes = new List<string>();
                 List<string> neededHashes = new List<string>();
                 bool dataChanged = false;
+                var pendingSyncTxtWrites = new List<KeyValuePair<string, string>>();
 
                 lock (lockObj)
                 {
@@ -2393,8 +2434,8 @@ class FurimaServerNative
                             string itemDirPath = ResolveOrCreateItemFolder(assignedId, title);
 
                             string txtPath = Path.Combine(itemDirPath, "商品情報_説明文.txt");
-                            string txtContent = "【商品ID】 " + assignedId + "\n【タイトル】 " + title + "\n【販売価格】 ¥" + price.ToString("N0") + "\n【純利益】 ¥" + profit.ToString("N0") + "\n【ステータス】 " + statusLabel + "\n\n--- 商品説明 ---\n" + description;
-                            File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
+                            string txtContent = "【商品ID】 " + assignedId + "\r\n【タイトル】 " + title + "\r\n【販売価格】 ¥" + price.ToString("N0") + "\r\n【純利益】 ¥" + profit.ToString("N0") + "\r\n【ステータス】 " + statusLabel + "\r\n\r\n--- 商品説明 ---\r\n" + description;
+                            pendingSyncTxtWrites.Add(new KeyValuePair<string, string>(txtPath, txtContent));
 
                             JArray photosArr = item["photos"] as JArray;
                             List<Dictionary<string, object>> savedPhotosList = new List<Dictionary<string, object>>();
@@ -2521,14 +2562,22 @@ class FurimaServerNative
                         }
 
                         // プロトコルv3以前の互換動作は廃止（無条件のディレクトリ物理削除は一切行わない）
-                        ScanAndIndexLocalPhotos();
                     }
+                }
+
+                foreach (var tw in pendingSyncTxtWrites)
+                {
+                    try { File.WriteAllText(tw.Key, tw.Value, Encoding.UTF8); } catch { }
                 }
 
                 if (dataChanged)
                 {
                     BumpDataRevision();
                     SaveItemsDbToDisk();
+                }
+                if (itemsArr != null)
+                {
+                    ScanAndIndexLocalPhotosIfStale(30);
                 }
 
                 JObject dsObj = json["defaultSettings"] as JObject;
@@ -3170,6 +3219,7 @@ class FurimaServerNative
         {
             List<int> targetIds = ParseIdListFromRequest(req);
             int affected = 0;
+            var pendingBatchTxtWrites = new List<KeyValuePair<string, string>>();
             lock (lockObj)
             {
                 long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -3486,7 +3536,7 @@ class FurimaServerNative
                             "【純利益】 ¥" + profit.ToString("N0") + "\r\n" +
                             "【ステータス】 " + nextStatusLabel + "\r\n\r\n" +
                             "--- 商品説明 ---\r\n" + description;
-                        File.WriteAllText(txtPath, txtContent, Encoding.UTF8);
+                        pendingBatchTxtWrites.Add(new KeyValuePair<string, string>(txtPath, txtContent));
                     }
                     catch (Exception tex)
                     {
@@ -3495,6 +3545,11 @@ class FurimaServerNative
 
                     affected++;
                 }
+            }
+
+            foreach (var tw in pendingBatchTxtWrites)
+            {
+                try { File.WriteAllText(tw.Key, tw.Value, Encoding.UTF8); } catch { }
             }
 
             if (affected > 0)
@@ -7838,19 +7893,24 @@ class FurimaServerNative
 
     private static void ServePhotoByHash(HttpListenerResponse res, string hash)
     {
+        string filePath = null;
         lock (lockObj)
         {
-            string filePath;
-            if (hashToFilePathMap.TryGetValue(hash, out filePath) && File.Exists(filePath))
+            if (!hashToFilePathMap.TryGetValue(hash, out filePath))
             {
-                byte[] bytes = File.ReadAllBytes(filePath);
-                string photoContentType = DetectImageMimeType(bytes);
-                res.ContentType = string.IsNullOrEmpty(photoContentType) ? "application/octet-stream" : photoContentType;
-                res.ContentLength64 = bytes.Length;
-                res.OutputStream.Write(bytes, 0, bytes.Length);
-                res.OutputStream.Close();
-                return;
+                filePath = null;
             }
+        }
+        if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
+        {
+            byte[] bytes = File.ReadAllBytes(filePath);
+            string photoContentType = DetectImageMimeType(bytes);
+            res.ContentType = string.IsNullOrEmpty(photoContentType) ? "application/octet-stream" : photoContentType;
+            res.Headers.Add("Cache-Control", "public, max-age=31536000, immutable");
+            res.ContentLength64 = bytes.Length;
+            res.OutputStream.Write(bytes, 0, bytes.Length);
+            res.OutputStream.Close();
+            return;
         }
         res.StatusCode = 404;
         res.Close();

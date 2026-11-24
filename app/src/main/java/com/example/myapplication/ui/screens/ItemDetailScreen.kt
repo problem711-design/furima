@@ -54,10 +54,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -160,8 +163,11 @@ fun ItemDetailScreen(
 
     val startIdx = previewStartIndex
     if (startIdx != null && photos.isNotEmpty()) {
-        PhotoPreviewDialog(
-            photos = photos.map { it.toPreviewPhotoItem() },
+        val previewPhotos by produceState(initialValue = emptyList(), photos) {
+            value = withContext(Dispatchers.IO) { photos.map { it.toPreviewPhotoItem() } }
+        }
+        if (previewPhotos.isNotEmpty()) PhotoPreviewDialog(
+            photos = previewPhotos,
             initialIndex = startIdx,
             isPcServerConnected = isPcServerConnected,
             onFindCachedOriginal = { hash -> viewModel.findCachedOriginalPhotoFile(hash) },

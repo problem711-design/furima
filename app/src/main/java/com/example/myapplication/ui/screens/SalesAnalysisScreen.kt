@@ -40,6 +40,7 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -83,120 +84,165 @@ fun SalesAnalysisScreen(
     val defaultSettings by viewModel.defaultSettings.collectAsState()
     val timeRange by viewModel.timeRange.collectAsState()
 
-    val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
+    val formatter = remember { NumberFormat.getCurrencyInstance(Locale.JAPAN) }
 
-    // 期間フィルタリング
-    val startOfPeriod = Calendar.getInstance().apply {
-        when (timeRange) {
-            TimeRange.THIS_WEEK -> {
-                set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            TimeRange.THIS_MONTH -> {
-                set(Calendar.DAY_OF_MONTH, 1)
-                set(Calendar.HOUR_OF_DAY, 0)
-                set(Calendar.MINUTE, 0)
-                set(Calendar.SECOND, 0)
-                set(Calendar.MILLISECOND, 0)
-            }
-            TimeRange.ALL_TIME -> {
-                timeInMillis = 0L
-            }
-        }
-    }.timeInMillis
-
-    val soldItems = itemsWithPhotos.filter {
-        isSoldFamilyStatus(it.item.status) && ((it.item.soldAt ?: it.item.createdAt) >= startOfPeriod)
-    }
-
-    // 1. 基本数値集計
-    var totalSales = 0
-    var totalProfit = 0
-    var totalFees = 0
-    var totalShipping = 0
-    var totalExpenses = 0
-
-    // まとめ買い分析データ
-    var bundleItemCount = 0
-    var totalBundleDiscount = 0
-    var totalEstimatedShippingSaved = 0
-
-    val allLeadTimeDays = mutableListOf<Double>()
-    var speedUnder1Day = 0
-    var speed1to3Days = 0
-    var speed4to7Days = 0
-    var speedOver8Days = 0
-
-    // 価格帯バケットの定義
-    val tiers = listOf(
-        PriceTierStats("〜¥999 (低価格)", 0, 999),
-        PriceTierStats("¥1,000〜¥2,999 (ボリューム)", 1000, 2999),
-        PriceTierStats("¥3,000〜¥4,999 (ミドル)", 3000, 4999),
-        PriceTierStats("¥5,000〜¥9,999 (高価格)", 5000, 9999),
-        PriceTierStats("¥10,000〜 (プレミアム)", 10000, Int.MAX_VALUE)
+    data class SalesSummaryComputed(
+        val soldItems: List<com.example.myapplication.data.local.ItemWithPhotos>,
+        val totalSales: Int,
+        val totalProfit: Int,
+        val totalFees: Int,
+        val totalShipping: Int,
+        val totalExpenses: Int,
+        val bundleItemCount: Int,
+        val totalBundleDiscount: Int,
+        val totalEstimatedShippingSaved: Int,
+        val speedUnder1Day: Int,
+        val speed1to3Days: Int,
+        val speed4to7Days: Int,
+        val speedOver8Days: Int,
+        val tiers: List<PriceTierStats>,
+        val overallAvgLeadDays: Double,
+        val overallProfitMargin: Int,
+        val mostPopularTier: PriceTierStats?,
+        val highestRevenueTier: PriceTierStats?
     )
 
-    for (itemWithPhotos in soldItems) {
-        val item = itemWithPhotos.item
-        val price = if (item.soldPrice > 0) item.soldPrice else item.price
-        val feeRate = item.getEffectiveFeeRatePercent(defaultSettings)
-        val fee = (price * feeRate) / 100
-        val shipping = item.getEffectiveShippingCost(defaultSettings)
-        val expense = item.getEffectiveExpenseCost(defaultSettings)
-        val profit = item.getCalculatedProfit(defaultSettings)
+    val computed = remember(itemsWithPhotos, defaultSettings, timeRange) {
+        val startOfPeriod = Calendar.getInstance().apply {
+            when (timeRange) {
+                TimeRange.THIS_WEEK -> {
+                    set(Calendar.DAY_OF_WEEK, firstDayOfWeek)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                TimeRange.THIS_MONTH -> {
+                    set(Calendar.DAY_OF_MONTH, 1)
+                    set(Calendar.HOUR_OF_DAY, 0)
+                    set(Calendar.MINUTE, 0)
+                    set(Calendar.SECOND, 0)
+                    set(Calendar.MILLISECOND, 0)
+                }
+                TimeRange.ALL_TIME -> {
+                    timeInMillis = 0L
+                }
+            }
+        }.timeInMillis
 
-        totalSales += price
-        totalProfit += profit
-        totalFees += fee
-        totalShipping += shipping
-        totalExpenses += expense
-
-        // まとめ買い情報の集計
-        if (item.mergedChildCount > 1 || item.bundleLevel > 0) {
-            bundleItemCount++
-            totalBundleDiscount += item.discountAmount
-            // 個別に発送した場合の推定送料 (単品送料 * 子商品数) - まとめ発送の実際の送料
-            val estOriginalShipping = defaultSettings.defaultShippingCost * item.mergedChildCount
-            val savedShipping = (estOriginalShipping - shipping).coerceAtLeast(0)
-            totalEstimatedShippingSaved += savedShipping
+        val sold = itemsWithPhotos.filter {
+            isSoldFamilyStatus(it.item.status) && ((it.item.soldAt ?: it.item.createdAt) >= startOfPeriod)
         }
 
-        // 売却リードタイム計算 (日数)
-        val soldTime = item.soldAt ?: item.createdAt
-        val leadTimeMillis = (soldTime - item.createdAt).coerceAtLeast(0)
-        val leadTimeDays = leadTimeMillis.toDouble() / (1000.0 * 60 * 60 * 24)
-        allLeadTimeDays.add(leadTimeDays)
+        var tSales = 0
+        var tProfit = 0
+        var tFees = 0
+        var tShipping = 0
+        var tExpenses = 0
+        var bCount = 0
+        var bDiscount = 0
+        var bShipSaved = 0
+        val leadList = mutableListOf<Double>()
+        var sUnder1 = 0
+        var s1to3 = 0
+        var s4to7 = 0
+        var sOver8 = 0
 
-        if (leadTimeDays < 1.0) {
-            speedUnder1Day++
-        } else if (leadTimeDays <= 3.0) {
-            speed1to3Days++
-        } else if (leadTimeDays <= 7.0) {
-            speed4to7Days++
-        } else {
-            speedOver8Days++
+        val tierList = listOf(
+            PriceTierStats("〜¥999 (低価格)", 0, 999),
+            PriceTierStats("¥1,000〜¥2,999 (ボリューム)", 1000, 2999),
+            PriceTierStats("¥3,000〜¥4,999 (ミドル)", 3000, 4999),
+            PriceTierStats("¥5,000〜¥9,999 (高価格)", 5000, 9999),
+            PriceTierStats("¥10,000〜 (プレミアム)", 10000, Int.MAX_VALUE)
+        )
+
+        for (itemWithPhotos in sold) {
+            val item = itemWithPhotos.item
+            val price = if (item.soldPrice > 0) item.soldPrice else item.price
+            val feeRate = item.getEffectiveFeeRatePercent(defaultSettings)
+            val fee = (price * feeRate) / 100
+            val shipping = item.getEffectiveShippingCost(defaultSettings)
+            val expense = item.getEffectiveExpenseCost(defaultSettings)
+            val profit = item.getCalculatedProfit(defaultSettings)
+
+            tSales += price
+            tProfit += profit
+            tFees += fee
+            tShipping += shipping
+            tExpenses += expense
+
+            if (item.mergedChildCount > 1 || item.bundleLevel > 0) {
+                bCount++
+                bDiscount += item.discountAmount
+                val estOriginalShipping = defaultSettings.defaultShippingCost * item.mergedChildCount
+                val savedShipping = (estOriginalShipping - shipping).coerceAtLeast(0)
+                bShipSaved += savedShipping
+            }
+
+            val soldTime = item.soldAt ?: item.createdAt
+            val leadTimeMillis = (soldTime - item.createdAt).coerceAtLeast(0)
+            val leadTimeDays = leadTimeMillis.toDouble() / (1000.0 * 60 * 60 * 24)
+            leadList.add(leadTimeDays)
+
+            if (leadTimeDays < 1.0) sUnder1++
+            else if (leadTimeDays <= 3.0) s1to3++
+            else if (leadTimeDays <= 7.0) s4to7++
+            else sOver8++
+
+            val matchedTier = tierList.find { price in it.minPrice..it.maxPrice }
+            if (matchedTier != null) {
+                matchedTier.count++
+                matchedTier.totalSales += price
+                matchedTier.totalProfit += profit
+                matchedTier.leadTimeDaysList.add(leadTimeDays)
+            }
         }
 
-        // 価格帯への割り当て
-        val matchedTier = tiers.find { price in it.minPrice..it.maxPrice }
-        if (matchedTier != null) {
-            matchedTier.count++
-            matchedTier.totalSales += price
-            matchedTier.totalProfit += profit
-            matchedTier.leadTimeDaysList.add(leadTimeDays)
-        }
+        val avgLead = if (leadList.isNotEmpty()) leadList.average() else 0.0
+        val margin = if (tSales > 0) ((tProfit.toDouble() / tSales) * 100).toInt() else 0
+        val popular = tierList.filter { it.count > 0 }.maxByOrNull { it.count }
+        val highestRev = tierList.filter { it.totalSales > 0 }.maxByOrNull { it.totalSales }
+
+        SalesSummaryComputed(
+            soldItems = sold,
+            totalSales = tSales,
+            totalProfit = tProfit,
+            totalFees = tFees,
+            totalShipping = tShipping,
+            totalExpenses = tExpenses,
+            bundleItemCount = bCount,
+            totalBundleDiscount = bDiscount,
+            totalEstimatedShippingSaved = bShipSaved,
+            speedUnder1Day = sUnder1,
+            speed1to3Days = s1to3,
+            speed4to7Days = s4to7,
+            speedOver8Days = sOver8,
+            tiers = tierList,
+            overallAvgLeadDays = avgLead,
+            overallProfitMargin = margin,
+            mostPopularTier = popular,
+            highestRevenueTier = highestRev
+        )
     }
 
-    val overallAvgLeadDays = if (allLeadTimeDays.isNotEmpty()) allLeadTimeDays.average() else 0.0
-    val overallProfitMargin = if (totalSales > 0) ((totalProfit.toDouble() / totalSales) * 100).toInt() else 0
-
-    // スマート・インサイト分析
-    val mostPopularTier = tiers.filter { it.count > 0 }.maxByOrNull { it.count }
-    val highestRevenueTier = tiers.filter { it.totalSales > 0 }.maxByOrNull { it.totalSales }
-    val highestMarginTier = tiers.filter { it.count > 0 }.maxByOrNull { it.profitMargin }
+    val soldItems = computed.soldItems
+    val totalSales = computed.totalSales
+    val totalProfit = computed.totalProfit
+    val totalFees = computed.totalFees
+    val totalShipping = computed.totalShipping
+    val totalExpenses = computed.totalExpenses
+    val bundleItemCount = computed.bundleItemCount
+    val totalBundleDiscount = computed.totalBundleDiscount
+    val totalEstimatedShippingSaved = computed.totalEstimatedShippingSaved
+    val speedUnder1Day = computed.speedUnder1Day
+    val speed1to3Days = computed.speed1to3Days
+    val speed4to7Days = computed.speed4to7Days
+    val speedOver8Days = computed.speedOver8Days
+    val tiers = computed.tiers
+    val overallAvgLeadDays = computed.overallAvgLeadDays
+    val overallProfitMargin = computed.overallProfitMargin
+    val mostPopularTier = computed.mostPopularTier
+    val highestRevenueTier = computed.highestRevenueTier
 
     Scaffold(
         topBar = {
