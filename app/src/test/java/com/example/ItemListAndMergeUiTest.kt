@@ -1,7 +1,10 @@
 package com.example
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -10,6 +13,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.unit.dp
 import com.example.myapplication.data.local.DefaultSettings
 import com.example.myapplication.data.local.ItemEntity
 import com.example.myapplication.data.local.ItemWithPhotos
@@ -46,36 +50,38 @@ class ItemListAndMergeUiTest {
 
         composeTestRule.setContent {
             MaterialTheme {
-                CompactItemCard(
-                    itemWithPhotos = mergedItem,
-                    defaultFeePercent = 5,
-                    defaultShipping = 210,
-                    defaultExpense = 55,
-                    isSelectionMode = true,
-                    isSelected = false,
-                    onSelectToggle = { toggledIds.add(mergedItem.item.id) },
-                    onClick = {
-                        if (mergedItem.item.status != "MERGED" && mergedItem.item.deletedAt == null) {
-                            toggledIds.add(mergedItem.item.id)
+                Column(modifier = Modifier.width(200.dp)) {
+                    CompactItemCard(
+                        itemWithPhotos = mergedItem,
+                        defaultFeePercent = 5,
+                        defaultShipping = 210,
+                        defaultExpense = 55,
+                        isSelectionMode = true,
+                        isSelected = false,
+                        onSelectToggle = { toggledIds.add(mergedItem.item.id) },
+                        onClick = {
+                            if (mergedItem.item.status != "MERGED" && mergedItem.item.deletedAt == null) {
+                                toggledIds.add(mergedItem.item.id)
+                            }
                         }
-                    }
-                )
-                CompactItemCard(
-                    itemWithPhotos = listedItem,
-                    defaultFeePercent = 5,
-                    defaultShipping = 210,
-                    defaultExpense = 55,
-                    isSelectionMode = true,
-                    isSelected = selectedState.value,
-                    onSelectToggle = {
-                        selectedState.value = !selectedState.value
-                        toggledIds.add(listedItem.item.id)
-                    },
-                    onClick = {
-                        selectedState.value = !selectedState.value
-                        toggledIds.add(listedItem.item.id)
-                    }
-                )
+                    )
+                    CompactItemCard(
+                        itemWithPhotos = listedItem,
+                        defaultFeePercent = 5,
+                        defaultShipping = 210,
+                        defaultExpense = 55,
+                        isSelectionMode = true,
+                        isSelected = selectedState.value,
+                        onSelectToggle = {
+                            selectedState.value = !selectedState.value
+                            toggledIds.add(listedItem.item.id)
+                        },
+                        onClick = {
+                            selectedState.value = !selectedState.value
+                            toggledIds.add(listedItem.item.id)
+                        }
+                    )
+                }
             }
         }
 
