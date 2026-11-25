@@ -99,6 +99,7 @@ internal partial class FurimaServerNative
         // 免除するのは Bearer 層のみで、ジョブトークン等の検証は各ハンドラで従来どおり行う。
         if (IsTrustedClaudeExemptRequest(req, path))
         {
+            RecordClaudePatrolContact();
             return true;
         }
 
@@ -152,20 +153,30 @@ internal partial class FurimaServerNative
 
     // 送信元が許可アドレスと一致するか。判定は RemoteEndPoint のみで行い、転送ヘッダは使わない。
     // IPv4-mapped IPv6 は IPv4 へ正規化してから比較する。
-    private static bool IsTrustedClaudeExemptRequest(HttpListenerRequest req, string path)
+    internal static bool IsTrustedClaudeIp(IPAddress remote, bool hasForwardedHeaders, string configuredTrustedIp)
     {
-        // レビュー 24-1 補足ガード: 転送ヘッダを持つリクエストは免除対象にしない (防御的措置)
-        if (HasForwardedHeaders(req)) return false;
-        if (!IsTrustedClaudeExemptPath(req.HttpMethod, path)) return false;
-        string configured = SyncStore.GetTrustedMuseIp();
-        if (string.IsNullOrEmpty(configured)) return false;
+        if (hasForwardedHeaders || remote == null || string.IsNullOrEmpty(configuredTrustedIp)) return false;
         IPAddress allowed;
-        if (!IPAddress.TryParse(configured, out allowed)) return false;
-        IPAddress remote = req.RemoteEndPoint != null ? req.RemoteEndPoint.Address : null;
-        if (remote == null) return false;
+        if (!IPAddress.TryParse(configuredTrustedIp, out allowed)) return false;
         if (remote.IsIPv4MappedToIPv6) remote = remote.MapToIPv4();
         if (allowed.IsIPv4MappedToIPv6) allowed = allowed.MapToIPv4();
         return remote.Equals(allowed);
+    }
+
+    private static bool IsTrustedClaudeIp(HttpListenerRequest req)
+    {
+        if (req == null) return false;
+        if (HasForwardedHeaders(req)) return false;
+        IPAddress remote = req.RemoteEndPoint != null ? req.RemoteEndPoint.Address : null;
+        return IsTrustedClaudeIp(remote, false, SyncStore.GetTrustedMuseIp());
+    }
+
+    private static bool IsTrustedClaudeExemptRequest(HttpListenerRequest req, string path)
+    {
+        // レビュー 24-1 補足ガード: 転送ヘッダを持つリクエストは免除対象にしない (防御的措置)
+        if (req == null || HasForwardedHeaders(req)) return false;
+        if (!IsTrustedClaudeExemptPath(req.HttpMethod, path)) return false;
+        return IsTrustedClaudeIp(req);
     }
 
     // 許可アドレスの設定値の検証と正規化。空欄は「免除オフ」として有効。

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Text;
 
@@ -107,6 +108,36 @@ public static class FurimaServerTests
                 AssertEquals(".png", FurimaServerNative.DetectImageExtension(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }), "PNG detection failed");
                 AssertEquals(".jpg", FurimaServerNative.DetectImageExtension(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }), "JPG detection failed");
                 AssertEquals(".gif", FurimaServerNative.DetectImageExtension(new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }), "GIF detection failed");
+            });
+
+            RunTest("FurimaServerNative.IsTrustedClaudeIp validates exact IP, IPv4-mapped IPv6, and rejects forwarded/untrusted", () =>
+            {
+                string trusted = "100.64.10.20";
+                AssertTrue(FurimaServerNative.IsTrustedClaudeIp(IPAddress.Parse("100.64.10.20"), false, trusted), "Exact IPv4 should match");
+                AssertTrue(FurimaServerNative.IsTrustedClaudeIp(IPAddress.Parse("::ffff:100.64.10.20"), false, trusted), "IPv4-mapped IPv6 should match");
+                AssertTrue(!FurimaServerNative.IsTrustedClaudeIp(IPAddress.Parse("100.64.10.20"), true, trusted), "Forwarded header must be rejected");
+                AssertTrue(!FurimaServerNative.IsTrustedClaudeIp(IPAddress.Parse("100.64.10.21"), false, trusted), "Different IP must be rejected");
+                AssertTrue(!FurimaServerNative.IsTrustedClaudeIp(IPAddress.Parse("100.64.10.20"), false, ""), "Empty config must be rejected");
+            });
+
+            RunTest("SyncStore persists lastClaudePatrolContactAt across store.json reload and SaveDefaultSettings", () =>
+            {
+                string baseDir = Path.Combine(tempRoot, "sync_patrol_contact");
+                Directory.CreateDirectory(baseDir);
+                string token = "toktest123";
+                SyncStore.Initialize(baseDir, ref token);
+                AssertTrue(SyncStore.SetTrustedMuseIp("100.64.1.50"), "SetTrustedMuseIp failed");
+                long ts = 1790000123456L;
+                SyncStore.SetLastClaudePatrolContactAt(ts, true);
+                AssertTrue(SyncStore.GetLastClaudePatrolContactAt() == ts, "Patrol contact timestamp mismatch in memory");
+
+                var defaults = SyncStore.GetDefaultSettings();
+                SyncStore.SaveDefaultSettings(defaults);
+
+                string token2 = "";
+                SyncStore.Initialize(baseDir, ref token2);
+                AssertEquals("100.64.1.50", SyncStore.GetTrustedMuseIp(), "trustedMuseIp lost on reload");
+                AssertTrue(SyncStore.GetLastClaudePatrolContactAt() == ts, "lastClaudePatrolContactAt lost on reload");
             });
         }
         finally

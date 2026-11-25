@@ -34,6 +34,7 @@ internal partial class FurimaServerNative
     private static ServerLogWriter logWriter = null;
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
+    private static long lastClaudeWatchContactAt = 0;
     private static long lastFullPhotoScanTicks = 0;
     private static long lastExpirySweepTicks = 0;
     private static long lastMissingCountTicks = 0;
@@ -194,6 +195,22 @@ internal partial class FurimaServerNative
     private static long GetClaudeRevision()
     {
         return ClaudeJobStore.GetRevision();
+    }
+
+    internal static long GetLastClaudeWatchContactAt()
+    {
+        return Interlocked.Read(ref lastClaudeWatchContactAt);
+    }
+
+    internal static void RecordClaudeWatchContact()
+    {
+        Interlocked.Exchange(ref lastClaudeWatchContactAt, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    }
+
+    internal static void RecordClaudePatrolContact()
+    {
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        SyncStore.SetLastClaudePatrolContactAt(now);
     }
 
     private static string EnsureItemSyncUuid(Dictionary<string, object> item)
@@ -668,6 +685,10 @@ internal partial class FurimaServerNative
             {
                 // フェーズ 6-3: Muse 側の見張り用に変化カウンタだけを公開する。
                 // lastHeartbeat は更新しない (ポーリングでスマホ接続表示が点灯し続けないように)。
+                if (IsTrustedClaudeIp(req))
+                {
+                    RecordClaudeWatchContact();
+                }
                 SendJson(res, new Dictionary<string, object>
                 {
                     { "claudeRevision", GetClaudeRevision() }
@@ -772,6 +793,9 @@ internal partial class FurimaServerNative
                     { "settingsRevision", GetSettingsRevision() },
                     { "claudeRevision", GetClaudeRevision() },
                     { "labelSeenRevision", ClaudeJobStore.GetLabelSeenRevision() },
+                    { "lastClaudeWatchContactAt", GetLastClaudeWatchContactAt() },
+                    { "lastClaudePatrolContactAt", SyncStore.GetLastClaudePatrolContactAt() },
+                    { "trustedMuseIpConfigured", !string.IsNullOrEmpty(SyncStore.GetTrustedMuseIp()) },
                     { "permanentlyDeletedUuids", SyncStore.GetPermanentlyDeletedUuids() }
                 };
                 SendJson(res, dict);

@@ -191,6 +191,20 @@
                             <p id='claude-col-references' class='text-base font-black text-teal-900'>0件</p>
                         </button>
                     </div>
+                    <div id='claude-trusted-ip-warning' class='hidden bg-amber-50 border border-amber-200 rounded p-2 text-[10px] text-amber-800 space-y-1'>
+                        <p class='font-bold leading-snug'><i class='fa-solid fa-triangle-exclamation text-amber-600 mr-1'></i>許可アドレス未設定のため自動巡回・監視記録が無効です</p>
+                        <button type='button' onclick='openSettingsModal()' class='underline font-bold text-amber-900 hover:text-amber-700'>設定画面で登録する</button>
+                    </div>
+                    <div id='claude-contact-status' class='bg-slate-50 p-2 rounded border border-slate-100 space-y-1 text-[10px]'>
+                        <div class='flex items-center justify-between gap-2'>
+                            <span class='text-slate-500 font-medium'>最終監視</span>
+                            <span id='claude-watch-contact-text' class='font-mono font-bold text-slate-700'>未記録</span>
+                        </div>
+                        <div class='flex items-center justify-between gap-2'>
+                            <span class='text-slate-500 font-medium'>最終巡回</span>
+                            <span id='claude-patrol-contact-text' class='font-mono font-bold text-slate-700'>未記録</span>
+                        </div>
+                    </div>
                     <button type='button' onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-list-check text-xs'></i> ジョブ一覧を開く
                     </button>
@@ -1255,6 +1269,9 @@
         let lastKnownDataRevision = null;
         let lastKnownSettingsRevision = null;
         let lastKnownClaudeRevision = null;
+        let lastClaudeWatchContactAt = 0;
+        let lastClaudePatrolContactAt = 0;
+        let trustedMuseIpConfigured = null;
         let currentViewerItemId = null;
         let currentViewerTab = 'group';
         let selectedViewerPhotoKeys = new Set();
@@ -1866,6 +1883,8 @@
                 const data = await res.json().catch(() => null);
                 if (res.ok && data && data.status === 'ok') {
                     document.getElementById('settings-trusted-claude-ip').value = data.trustedMuseIp || '';
+                    trustedMuseIpConfigured = !!data.trustedMuseIp;
+                    renderClaudeContactStatus();
                     showToast(data.trustedMuseIp ? '許可アドレスを保存しました' : '許可アドレスを解除しました');
                 } else {
                     showToast((data && data.message) || '許可アドレスの保存に失敗しました');
@@ -2128,6 +2147,57 @@
                     statusElem.title = '未接続';
                     statusElem.innerHTML = `<i class='fa-solid fa-circle-exclamation text-amber-500'></i><span class='hidden sm:inline'>未接続</span>`;
                 }
+            }
+            if (typeof statusData.lastClaudeWatchContactAt === 'number') {
+                lastClaudeWatchContactAt = statusData.lastClaudeWatchContactAt;
+            }
+            if (typeof statusData.lastClaudePatrolContactAt === 'number') {
+                lastClaudePatrolContactAt = statusData.lastClaudePatrolContactAt;
+            }
+            if (typeof statusData.trustedMuseIpConfigured === 'boolean') {
+                trustedMuseIpConfigured = statusData.trustedMuseIpConfigured;
+            }
+            renderClaudeContactStatus();
+        }
+
+        function formatClaudeRelativeContact(tsMs) {
+            if (!tsMs || tsMs <= 0) return '未記録';
+            const diffSec = Math.max(0, Math.floor((Date.now() - tsMs) / 1000));
+            if (diffSec < 60) return 'たった今';
+            const diffMin = Math.floor(diffSec / 60);
+            if (diffMin < 60) return diffMin + '分前';
+            const diffHour = Math.floor(diffMin / 60);
+            if (diffHour < 24) return diffHour + '時間前';
+            return Math.floor(diffHour / 24) + '日前';
+        }
+
+        function renderClaudeContactStatus() {
+            const warnEl = document.getElementById('claude-trusted-ip-warning');
+            if (warnEl) {
+                if (trustedMuseIpConfigured === false) warnEl.classList.remove('hidden');
+                else warnEl.classList.add('hidden');
+            }
+            const watchEl = document.getElementById('claude-watch-contact-text');
+            if (watchEl) {
+                watchEl.innerText = formatClaudeRelativeContact(lastClaudeWatchContactAt);
+                watchEl.title = lastClaudeWatchContactAt > 0
+                    ? new Date(lastClaudeWatchContactAt).toLocaleString('ja-JP')
+                    : '監視ポーリング未記録';
+                const hour = new Date().getHours();
+                const inPatrolWindow = hour >= 10 && hour < 22;
+                const staleWatch = !lastClaudeWatchContactAt || (Date.now() - lastClaudeWatchContactAt) > 15 * 60 * 1000;
+                if (trustedMuseIpConfigured === true && inPatrolWindow && staleWatch) {
+                    watchEl.className = 'font-mono font-bold text-amber-700';
+                } else {
+                    watchEl.className = 'font-mono font-bold text-slate-700';
+                }
+            }
+            const patrolEl = document.getElementById('claude-patrol-contact-text');
+            if (patrolEl) {
+                patrolEl.innerText = formatClaudeRelativeContact(lastClaudePatrolContactAt);
+                patrolEl.title = lastClaudePatrolContactAt > 0
+                    ? new Date(lastClaudePatrolContactAt).toLocaleString('ja-JP')
+                    : '実巡回コンタクト未記録';
             }
         }
 

@@ -120,6 +120,7 @@ public class StoreConfig
     // フェーズ 6-3 (案2): Muse 端末の許可アドレス。サーバー専用領域であり、
     // スマホと同期される DefaultSettingsConfig には絶対に入れない (同期で上書き消去されるため)。
     public string trustedMuseIp { get; set; }
+    public long lastClaudePatrolContactAt { get; set; }
     public string createdAt { get; set; }
     public DefaultSettingsConfig defaultSettings { get; set; }
 }
@@ -290,6 +291,8 @@ public static class SyncStore
     private static string _storeId = "";
     private static string _syncDir = "";
     private static string _authToken = "";
+    private static long _lastClaudePatrolPersistMs = 0;
+    private const long PatrolContactPersistIntervalMs = 30000L;
     private static Dictionary<string, long> _deletedUuidMap = null;
     private static List<PhotoTrashEntry> _photoTrashList = null;
 
@@ -648,6 +651,58 @@ public static class SyncStore
                 return _currentConfig.trustedMuseIp;
             }
             return "";
+        }
+    }
+
+    public static long GetLastClaudePatrolContactAt()
+    {
+        lock (_configLock)
+        {
+            if (_currentConfig != null && _currentConfig.lastClaudePatrolContactAt > 0)
+            {
+                return _currentConfig.lastClaudePatrolContactAt;
+            }
+            return 0;
+        }
+    }
+
+    public static void SetLastClaudePatrolContactAt(long unixMs)
+    {
+        SetLastClaudePatrolContactAt(unixMs, false);
+    }
+
+    public static void SetLastClaudePatrolContactAt(long unixMs, bool forcePersist)
+    {
+        if (unixMs <= 0) return;
+        lock (_configLock)
+        {
+            if (_currentConfig == null)
+            {
+                _currentConfig = new StoreConfig
+                {
+                    storeId = _storeId,
+                    path = _syncDir,
+                    authToken = _authToken,
+                    createdAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ssK")
+                };
+            }
+            if (unixMs > _currentConfig.lastClaudePatrolContactAt)
+            {
+                _currentConfig.lastClaudePatrolContactAt = unixMs;
+            }
+            bool due = forcePersist || _lastClaudePatrolPersistMs == 0 || (unixMs - _lastClaudePatrolPersistMs) >= PatrolContactPersistIntervalMs;
+            if (due && !string.IsNullOrEmpty(_storeJsonPath))
+            {
+                try
+                {
+                    AtomicFileWriter.WriteTextAtomic(_storeJsonPath, JsonConvert.SerializeObject(_currentConfig, Formatting.Indented), true);
+                    _lastClaudePatrolPersistMs = unixMs;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[警告] store.json の最終巡回時刻保存に失敗しました: " + ex.Message);
+                }
+            }
         }
     }
 
