@@ -1,155 +1,93 @@
 # 巡回拾い漏れ・到達性修正計画 (Patrol Reliability Fix Plan)
 
-- 策定: 2026-11-25（**計画のみ・未実装**。実装着手は本計画のレビュー合意とユーザーの go が前提）
-- 改訂: 2026-11-25（非 24/7 運用・権限制約レビューを反映し、起動時自動ウェイク／起動時期限延長／Watch・Worker 2系統コンタクト／再起動時ポート待機を追記）
-- 前提となる現在地: 全体コードレビュー＆安定化・軽量化・構造見直し（監査 Phase A〜D、`REVIEW_FULL_CODEBASE_AUDIT.md` §6 で完了記録）適用済み。現行バージョンは **v1.5 (Build 20) / versionCode 1520**（Phase 6 Step 5 完了時点から不変）。PC サーバーは `partial class` 分割済み（`FurimaServerNative.Core.cs` / `.Auth.cs` / `.Claude.cs` / `.ClaudeDelivery.cs` 他）、ダッシュボード実体は `tools/web/dashboard.html`。
+- 策定: 2026-11-25（ユーザー合意・実装着手）
+- 改訂: 2026-11-25（案B「自動待機落ち完全廃止＋`processing` 完全延長なし＆`done_with_errors` 終端」・`v1.6 (Build 1)` 採番を確定）
+- 前提となる現在地: 全体コードレビュー＆安定化・軽量化・構造見直し（監査 Phase A〜D、`REVIEW_FULL_CODEBASE_AUDIT.md` §6 で完了記録）適用済み。現行バージョンは **v1.5 (Build 20) / versionCode 1520** → 本改修をもって **v1.6 (Build 1) / versionCode 1601** へ統一更新する。
 - 対象の問題: 「Museに送る」の自動巡回（Muse 側フック `claude-revision-watch`、180 秒間隔ポーリング）が、ジョブを長期間拾えないことがある。
 
 ---
 
-## 1. 実測事実（2026-11-23 / 11-25 のフックログ・サーバー記録・実機確認による）
+## 1. 実測事実と運用前提
 
-### 1.1 確認できたこと
+### 1.1 実測の要点
+1. **到達失敗の長期継続**: 2026-11-24 09:57〜11-25 14:45 にかけて約 28 時間 48 分、`GET /api/claude/revision` が連続失敗。また Muse 側の VM 自体も間欠稼働（停止・差し替えが発生）。
+2. **トークン失効による待機落ち**: 未着手 30 分失効により承認済みジョブが `waiting` へ落ちていた。一方で、起床して処理へ入った後は正常に完了する。
+3. **固定条件・権限制約**:
+   - PC サーバーは常時稼働ではなく、再起動・再接続・AP 切り替えが発生する。
+   - ユーザーには LAN ルーターのポート開放、Windows ファイアウォール設定、URL 予約（`urlacl`）変更に関する管理者権限がない。
+   - 運用開始以来 `localhost:8080` 以外が使用された実績はない（Tailscale / `cloudflared` 構成のためルーター開放は不要）。
 
-1. **到達失敗の長期継続**: 2026-11-24 09:57:46 から 11-25 14:45:54 まで約 **28 時間 48 分**、フックのポーリング自体は 180 秒間隔で回り続けていたのに、`GET /api/claude/revision` の取得が **連続 100% 失敗**（`revision fetch inconclusive`）した。同 11-24 中は成功 198 回に対し失敗 281 回。
-2. **ポーリング空白とユーザー活動の相関**: ポーリング自体が止まる空白が複数回あり、その復帰時刻はユーザーの Muse アプリ活動とほぼ一致した（11-25 08:27–10:20 の約 113 分 → 復帰 10:20:55 ≒ メインチャット発言 10:21／13:23–14:45 の約 82 分 → 復帰 14:45:54 ≒ フリマ開発チャット発言 14:46:19。11-23 も起床 00:41:59 ≒ チャット 00:42）。Muse 側の実行環境は常駐ではなく、停止・差し替えが起きる（11-25 の VM は同日 14:36 起動だったことを uptime で実測）。
-3. **トークン失効による待機落ち**: 承認済みジョブの実行トークンは「未着手 30 分」で失効し、未処理分は待機キューへ落ちる（現行仕様）。11-25 14:08 に承認されたジョブは、巡回が届かない間に失効して待機落ちし、ユーザーが気づいて再承認するまで処理されなかった。
-4. **起床後は正常**: いったん巡回が起きてサーバーへ届けば、処理は最後まで自律で回る（11-25 は 5 件＋再承認 1 件＋追加 1 件がすべて `done`）。判定ロジックや生成・返却の経路そのものに欠陥は見つかっていない。
-
-### 1.2 原因として確定していないこと・運用上の確定条件
-
-- 1.1-1 の到達失敗の内訳（PC のスリープ／電源、PC 側 Tailscale 停止、サーバーの待ち受け縮小＝後述 §2-3 のいずれか、または複合）は、Muse 側のログだけでは切り分けられていない。
-- ポートずれ説はほぼ否定済み: 管理画面は運用開始以来常に `localhost:8080` で開けており、それ以外のポートが使用された実績はない（ユーザー実測）。
-- **ユーザー環境の権限制約（2026-11-25 確認）**: ユーザー側には LAN ルーターのポート開放、Windows ファイアウォール設定、URL 予約（`urlacl`）変更に関する管理者権限がない。そのため、新たな受信ポート許可を要求する待ち受け方式変更（例: `TcpListener` での新規待ち受け等）は採らず、現行 `HttpListener` ベースで安全に改善できる範囲を前提とする（Tailscale / `cloudflared` 経由のためルーター開放自体は元々不要）。
-
-### 1.3 設計前提の誤り（本計画の出発点）
-
-現行設計は「サーバーは常時稼働」「Muse 側は常時起きている」の二重の前提に立っているが、実態はどちらも違う。サーバーはユーザーが起動・停止し、PC の電源・再起動・再接続・AP（アクセスポイント）の切り替えも発生する。Muse 側の環境も間欠的にしか起きていない。**よって修正の方針は、単一原因の特定と除去ではなく、「どちら側がどれだけ長く落ちていても、サーバー起動・復帰したときに自動で合図を出し直し、期限切れさせずに必ず拾い直せる」構造にすること**とする。
+### 1.2 設計方針
+- **「どちら側が落ちていても、サーバー起動・復帰したときに自動で合図を出し直し、未着手ジョブが勝手に待機落ちしない」構造にする**。
+- **トークン消費の異常防止（最優先）**:
+  - トークン消費が始まっていない **`approval_pending`（承認待ち）** と **`approved`（開始待ち）** の時間切れ自動待機落ちは仕様上 **完全廃止（案B）** とする。
+  - 1 枚でも写真取得が始まった **`processing`（処理中）** のみを厳格に保護し、**`waiting` 戻しを完全禁止＋サーバー起動時の期限延長なし（完全延長なし）＋期限切れ時は `done_with_errors`（エラー終端）で停止** させる。
 
 ---
 
-## 2. 現行コードの該当箇所（全体見直し後の構成で確認済み）
+## 2. 現行コードの問題箇所
 
-1. **合図と起床条件**（Muse 側フック `claude_revision_watch.sh`）: 起床は「`claudeRevision` の変化」「時間帯入り（10:00）」「初回」の 3 契機のみ。起床判定が成功すると基準リビジョンを前進させるため、**その後にワーカーが失敗・未実行でも、同じジョブでは二度と起床しない**（契機の消費）。また、`claudeRevision` は `claude_jobs.json` に永続化されているため、**サーバーを再起動しただけでは値が変化せず**、過去の空振りリビジョンのまま再巡回が起きない。
-2. **トークン失効と承認待ち失効**（`tools/FurimaServerNative.Claude.cs` / `ClaudeJobStore.cs`）:
-   - `ClaudeJob` には `approvedAt` フィールドが存在せず、承認時に `jobTokenExpiresAt = now + 30分` のみを記録する。`ApplyTokenExpiry` と `/api/server/status` 等の 15 秒 sweep は**壁時計のみ**で判定するため、**巡回が一度も到達していない間や、サーバー停止（30 分超）を挟んだ再起動直後**に即失効（未着手は待機落ち、`processing` は期限切れエラー終端）する。着手後のスライディング延長（6-1b）は既存のまま維持する。
-   - あわせて `ApplyApprovalPendingExpiry` も `approvalRequestedAt` からの壁時計 10 分で `waiting` へ戻すため、リクエスト直後のサーバー停止や一時切断を挟むと承認前に待機落ちする。
-3. **待ち受け・起動時ポート確保**（`tools/FurimaServerNative.Core.cs` `TryStartHttpListener` / `Main`）:
-   - `http://+:port/` を試し、失敗すると `localhost` + `127.0.0.1` のみに縮小する。どちらの場合も `boundUrl` は `http://localhost:port/` で、**縮小したかどうかが画面・表示からは判別できない**。縮小時はスマホ（`cloudflared` → `localhost`）と PC ダッシュボードは正常だが、Tailscale 経由の Muse だけが到達できない。
-   - また、`Main` のポート確保ループは 8080 が直前プロセスの終了直後（`TIME_WAIT` 等）で一瞬でも塞がっていると待機せず即 8081 へ遷移する。
-4. **ミューズカラム**（`tools/web/dashboard.html`、フェーズ 6-7）: 処理中・承認待ち・待機中・エラー・参考画像件数の表示のみで、巡回の生死（最終コンタクト）を示す情報と、起床を促す操作は無い。
-5. **リビジョンのバンプ経路と公開カウンタ**（`FurimaServerNative.Claude.cs` / `Core.cs`）: ジョブ作成・承認・移動等で `BumpClaudeRevision()` が呼ばれるが、**「ジョブ状態を変えずに合図だけを進める」専用経路（手動・起動時自動）が無い**。また、`GET /api/claude/revision` は `claudeRevision` のみを返し、実行可能ジョブ数やサーバー起動世代を返さない。
+1. **合図と起床条件**: `claudeRevision` は `claude_jobs.json` に永続化されているため、サーバー再起動だけでは値が進まず、過去リビジョンで空振りしたジョブで再起床しない。`GET /api/claude/revision` は `claudeRevision` のみ返し、`executableCount` や起動世代を持たない。
+2. **タイムアウトと待機落ち**（`FurimaServerNative.Claude.cs`）:
+   - `ApplyApprovalPendingExpiry` が 10 分で `waiting` へ戻す。
+   - `ApplyTokenExpiry` が `approved` を 30 分で `waiting` へ戻し、さらに `results`/`errors` がともに空の `processing` まで `waiting` へ戻してしまう穴がある。
+3. **待ち受け・ポート確保**（`FurimaServerNative.Core.cs` `TryStartHttpListener` / `Main`）: `http://+:{port}/` 失敗時にサイレントで `localhost` 限定へ縮小しても `boundUrl` が同じで見分けがつかない。また、直前プロセス終了直後の一時占有で即 8081 へズレる。
+4. **ミューズカラム**（`tools/web/dashboard.html`）: 巡回の生死（最終監視／最終巡回）・手動ウェイク操作・`trustedMuseIp` 未設定時の案内が無い。
 
 ---
 
-## 3. 設計原則
+## 3. 修正フェーズ計画（各フェーズ完了ごとにコミット＆プッシュ）
 
-1. **合図は届くまで残る・再起動で自動的に出し直す**: サーバー再起動時に実行可能ジョブが残っていれば自動で合図を更新し、また起床契機が消費されても処理可能ジョブが残っている限り再起床できること。
-2. **失効は「サーバー稼働中に拾う機会があったのに拾わなかった」ときだけ**: 巡回が到達していない時間およびサーバー停止中の時間は、トークンの寿命から除外する（起動時に寿命を再延長する）。
-3. **表示・警告・対応は、管理者／ネットワーク権限なしで完結するものだけ**: URL 予約（`urlacl`）やファイアウォール・ルーターポート開放を前提とする警告や機構変更は行わない（2026-11-25 ユーザー確認）。ユーザーが取れる行動は「サーバーアプリの再起動」「ダッシュボードからの起こし直し」「チャットで Muse を起こす」の 3 つに限られるため、表示はこの判断に使える情報に絞る。
-4. **小さい変更から順に**: 依存の少ないサーバー側の小変更 → 中核（失効条件＋起動時復旧）→ 任意の診断表示、の順に実装し、各段でレビューを受ける。
+### Phase P1. 監視・実巡回コンタクトの記録・表示 ＋ 信頼済み IP 未設定警告
+- `FurimaServerNative.Auth.cs`: `IsTrustedClaudeIp(HttpListenerRequest req)` を共通化（転送ヘッダなし＋`trustedMuseIp` 一致、IPv4-mapped IPv6 正規化）。
+- `FurimaServerNative.Core.cs` / `SyncStore.cs`:
+  - `GET /api/claude/revision` 到達かつ `IsTrustedClaudeIp` 一致時に **`lastClaudeWatchContactAt`** をメモリへ記録（ディスク I/O 回避）。
+  - `IsTrustedClaudeExemptRequest` 通過時に **`lastClaudePatrolContactAt`** をメモリ＋ `store.json`（トップレベル `StoreConfig`）へ記録。
+  - `GET /api/server/status` に `lastClaudeWatchContactAt`、`lastClaudePatrolContactAt`、`trustedMuseIpConfigured`（bool）を追加。
+- `tools/web/dashboard.html`:
+  - ミューズカラムに「最終監視／最終巡回」を表示（10:00〜22:00 で最終監視が 15 分超経過なら控えめな注意色）。
+  - `trustedMuseIpConfigured === false` の場合、ミューズカラム内に控えめな未設定案内＋設定モーダルを開く導線を表示。
+- `tools/tests/FurimaServerTests.cs`: `SyncStore` / `IsTrustedClaudeIp` / コンタクト記録に関する単体テスト追加。
 
----
+### Phase P2. 手動「巡回を起こし直す」ボタン ＋ サーバー起動時の自動ウェイク
+- `ClaudeJobStore.cs`: 起動時用の `WakeOnStartupIfExecutable()` を追加（`approved` または `processing` ジョブが 1 件以上ある場合のみ `claudeRevision` を +1 保存）。
+- `FurimaServerNative.Core.cs` / `.Claude.cs`:
+  - `Main` の `ClaudeJobStore.CleanupOnStartup()` 直後に `WakeOnStartupIfExecutable()` を実行。
+  - `POST /api/claude/wake`（Bearer 必須・PC ローカル経路のみ、Muse 免除対象外）を追加し、ジョブ状態を変えず `BumpClaudeRevision()` のみ実行してサマリと `claudeRevision` を返す。
+- `tools/web/dashboard.html`: ミューズカラムに「巡回を起こし直す」ボタン＋短い説明（「巡回の合図を出し直します」）を追加。
+- `tools/tests/FurimaServerTests.cs`: `WakeOnStartupIfExecutable` の単体テスト追加。
 
-## 4. 修正項目
+### Phase P3. 自動待機落ち完全廃止（案B）＋ `processing` 完全延長なし＆`done_with_errors` 停止
+- `FurimaServerNative.Claude.cs`:
+  - `ApplyApprovalPendingExpiry`: 10 分タイムアウトによる自動 `waiting` 落ちを **廃止**（常に `false`）。
+  - `ApplyTokenExpiry`:
+    - `approved`（未着手）の期限切れ待機落ちを **廃止**（`job.status != "processing"` なら即 `false`）。
+    - **`processing`（処理中）のみ**、起動時延長なしで `jobTokenExpiresAt` 超過を評価し、`results` / `errors` が 0 件であっても **絶対に `waiting` には戻さず**、未処理写真へ期限切れエラーを記録して `done` / `done_with_errors` で終端停止させる。
+    - `HandleClaudeApproval` では安全ロック用 `jobToken` を発行し、`jobTokenExpiresAt` は `0`（開始時に 30 分計測開始）として、`HandleGetClaudeJob` では既存のワーカー互換のため未設定時は `now + 30分` を返す。
+- `tools/tests/FurimaServerTests.cs`:
+  - `approval_pending` / `approved` が時間経過で `waiting` に落ちないテスト
+  - `processing` が結果・エラー 0 件で期限切れになった際、`waiting` にならず `done_with_errors` へ終端するテスト
+  - `processing` が 30 分経過後に延長されず停止するテスト
 
-### P1. 最終巡回コンタクトの記録と表示（サーバー・小）
-
-- 現行の `IsTrustedClaudeExemptRequest`（`/api/claude/jobs` 等）だけでなく、監視フックの定常ポーリング `GET /api/claude/revision`（`AuthenticateRequest` の前段で免除されている）にも到達記録を設ける。ジョブ変化が無い平時に `revision` だけ正常応答している間も、監視が生きていることが分かるようにする：
-  - **`lastClaudeWatchContactAt`**（監視疎通）: `GET /api/claude/revision` が「転送ヘッダなし＋送信元 IP が `trustedMuseIp` に一致」した場合にメモリへ記録（ディスク I/O 抑制のため、毎回の `store.json` 書き込みは行わず、一定間隔またはメモリ保持とする）。
-  - **`lastClaudePatrolContactAt`**（実巡回・ジョブ取得）: `IsTrustedClaudeExemptRequest` を通ったリクエスト（`/api/claude/jobs` 等）に限り、メモリ＋ `store.json` のサーバー専用領域へ記録する（スマホ・PC 自身のアクセスで更新しない）。
-- `GET /api/server/status` の応答に `lastClaudeWatchContactAt` と `lastClaudePatrolContactAt` を追加する。
-- ダッシュボードのミューズカラムに「最終監視／最終巡回：○分前」を表示する。10:00〜22:00 の時間帯に **監視疎通（`lastClaudeWatchContactAt`）** が 15 分を超えて古い場合（または実巡回待ちが長引いている場合）は、件数表示とは別に控えめな注意色にする（警告文ではなく時刻情報として出す）。
-- 変更ファイル: `tools/FurimaServerNative.Auth.cs`（信頼済み IP 判定ヘルパーの共通化）、`tools/FurimaServerNative.Claude.cs` / `.Core.cs`（記録＋ status 応答）、`tools/SyncStore.cs`（永続化フィールド）、`tools/web/dashboard.html`。必要なら `DashboardHtml.cs` 側の埋め込み追随。
-- テスト: `tools/tests/FurimaServerTests.cs` に、信頼済みアドレスからのアクセス（`revision` と `jobs` 双方）でのみ各時刻が更新され、転送ヘッダ付きや他 IP では更新されないことの単体テストを追加する。
-
-### P2. 「巡回を起こし直す」手動ボタン ＋ サーバー起動時の自動ウェイク（サーバー・小）
-
-- **手動ボタン（既存計画）**: ミューズカラムにボタンを追加する。押下で新設エンドポイント `POST /api/claude/wake`（Bearer 必須・PC ローカル経路のみ）を呼び、サーバーは **ジョブ状態を一切変えずに `BumpClaudeRevision()` だけ**を行う。応答は現在の件数サマリと `claudeRevision`。
-  - 効果と限界を明記する: 「次にポーリングが届いた瞬間に必ず起床させる予約」であり、PC 電源オフ・Tailscale 停止・待ち受け縮小・Muse 環境スリープの間は即時には効かないが、どちら側が復帰しても拾いが保証される。ボタンの脇に短い説明文（「巡回の合図を出し直します」程度）を置く。
-- **起動時自動ウェイク（2026-11-25 追加）**: サーバー起動時（`ClaudeJobStore.CleanupOnStartup()` 相当、待ち受け開始前）に、`approved` または `processing` の未完了ジョブが 1 件でも存在する場合、**自動で `BumpClaudeRevision()` を 1 回実行**する。これにより、手動で起こし直すのと同じ再合図がサーバー再起動だけで自動的にかかり、過去リビジョンの消費による無反応を防ぐ。
-- P1 と組み合わせることで、ユーザーは「サーバー再起動だけで自動再合図、稼働中ならボタンを押して数分以内に最終監視／巡回が更新されるか確認する」という、権限なしで完結する復旧手順を持てる。
-- 変更ファイル: `tools/FurimaServerNative.Claude.cs` / `tools/ClaudeJobStore.cs`（起動時自動ウェイク＋ `POST /api/claude/wake`）、`tools/web/dashboard.html`（ボタン＋呼び出し）。
-- テスト: `FurimaServerTests.cs` に、実行可能ジョブありの起動時に `claudeRevision` が加算され、0 件のときは加算されないテストを追加する。
-
-### P3. トークン失効・承認待ち失効の非 24/7 対応（サーバー・中／本計画の中核）
-
-- 現行の問題:
-  1. `approved` → 30 分壁時計で待機落ち（`ApplyTokenExpiry`）。未接触でも失効する。
-  2. 非 24/7 環境では、1 回以上コンタクトがあったジョブや `processing` ジョブでも、**PC サーバーを 30 分以上停止して再起動した瞬間に壁時計超過で即失効**する。
-  3. `approval_pending` も壁時計 10 分で待機落ちする（`ApplyApprovalPendingExpiry`）。
-- 変更案（推奨・非 24/7 補強版）:
-  1. **`approvedAt` の追加**: `ClaudeJob`（`ClaudeJobStore.cs`）に `approvedAt`（Unix ミリ秒）を追加し、`HandleClaudeApproval` 承認時に記録、`CloneJob` / `ToPublicClaudeJob` に引き継ぐ。
-  2. **コンタクト連動の失効判定**: `approvedAt` より後に信頼済み Muse からの巡回コンタクト（`lastClaudePatrolContactAt`）が一度も無い場合、その `approved` ジョブは失効させない（巡回が拾う機会自体が無かったため）。コンタクトがあった後の未着手経過時間で従来どおり 30 分評価を行う。着手済み（`processing`）のスライディング延長（6-1b）と部分処理済みエラー終端ルールは維持する。
-  3. **サーバー再起動時の期限自動延長＋起動直後グレース（2026-11-25 追加）**:
-     - サーバー起動時（`ClaudeJobStore.CleanupOnStartup()`）に、残っている `approved` / `processing` ジョブの `jobTokenExpiresAt` を `Math.Max(jobTokenExpiresAt, 起動時刻 + 30分)` へ自動延長する（`approvedAt` が未設定の旧データがあれば `起動時刻` で補完）。
-     - 同様に、残っている `approval_pending` ジョブについても起動時に `approvalRequestedAt` を `Math.Max(approvalRequestedAt, 起動時刻)` へ補正（または起動後グレースピリオドを設定）し、サーバー停止中の経過時間だけで起動直後に承認待ちやジョブが即死する事故を防ぐ。
-     - 起動後、巡回が次の 180 秒ポーリングを完了できる余裕を確保するため、サーバー起動直後の一定時間（例: 起動時刻から 10 分間）は一括 sweep 等によるトークン失効を猶予するオプションも併用可とする。
-- 代替案（レビュー比較用・単純版）: 寿命を一律「次の巡回時間帯終了（22:00）まで、最低 2 時間」＋「起動時 30 分延長」へ延ばす案。実装はさらに小さいが、PC 稼働中に巡回が 30 分反応しない異常の検知・待機戻しが遅れる。
-- どちらを採るかは §6 の合意事項とする。失効で待機へ落ちたジョブの再リクエスト手順（手動のみ）は現行どおり変更しない。
-- 変更ファイル: `tools/ClaudeJobStore.cs`（`approvedAt` 追加・起動時期限補正）、`tools/FurimaServerNative.Claude.cs`（失効評価・sweep・承認ハンドラ）、`tools/FurimaServerNative.Core.cs`（起動時連携）。
-- テスト: `FurimaServerTests.cs` に以下を追加:
-  - 承認後コンタクト無しでは 40 分経過しても失効しない
-  - 承認後コンタクトあり＋その後 30 分経過で失効する
-  - サーバー停止（経過時間 1 時間超）を模擬した起動時補正で `approved` / `processing` / `approval_pending` が即失効せず再開できる
-  - 着手済みジョブの部分失敗終端ルールは従来どおり維持される
-
-### P4. フック側・ポーリングの自己回復強化（Muse 側メイン・サーバー補助）
-
-- **Muse 側（repo 変更なし）**:
-  - フックの状態ファイルに最終起床時刻を持ち、「処理可能ジョブが残っているのに前回起床から 15 分以上経過」したら、リビジョン変化がなくても再起床する（§2-1「契機の消費」解消）。
-  - 処理役（ワーカー）手順の接続先を、監視スクリプト側で導入済みの予備探査（8080 → 8081 → 8082）と揃える。
-- **サーバー側補助（任意・後方互換）**:
-  - `GET /api/claude/revision` の応答 JSON へ、個人情報を含まない `executableCount`（`approved` + `processing` 件数）および `serverBootId`（起動ごとの短い識別子）を同梱する拡張を検討する。これにより Muse 側は 15 分タイマーを待たず「サーバーが再起動した／実行可能ジョブが残っているのに前回と別世代」を即座に検知できる（既存スクリプトが `claudeRevision` のみ読んでも後方互換）。
-- Muse 側の運用スクリプト変更自体は repo 外だが、計画全体の整合のためここに記録する。
-
-### P5. 待ち受けモードの可視化 ＋ 再起動直後の 8080 ポート確保リトライ（サーバー・小）
-
-- **待ち受けモード可視化**: 起動時に確定した待ち受けモード（全アドレス `http://+:{port}/` か、`localhost` のみへ縮退したか）と実ポートを、コンソール出力に明示する（現行は `boundUrl` が同一表記のため判別不能）。あわせて `/api/server/status` に `listenerMode` / `actualPort` を追加し、設定画面のサーバー情報として小さく表示する。
-  - これは警告ではなく状態表示であり、「巡回が届かないときにユーザーが再起動や状況把握を行える」ことに限る。`urlacl` やポート開放に関する警告は出さない（§3-3）。
-- **クイック再起動時の 8080 確保安定化（2026-11-25 追加）**: `Main` で `desiredPort`（8080）を奪う際、前のサーバー終了直後の一時的な `TIME_WAIT` 等で即 8081 へ逃げないよう、`desiredPort` のみ短いリトライ（例: 300ms × 5 回＝最大 1.5 秒待機）を行ってから空きポート探索へ進む。ファイアウォールや管理者権限は一切不要で、`localhost:8080` 固定運用の安定性を高める。
-
-### 対象外（本計画でやらないこと）
-
-- サーバーから Muse への能動的なプッシュ（Muse 側に受け口が無く成立しない）。
-- URL 予約（`urlacl`）、Windows ファイアウォール設定変更、ルーターポート開放を前提とした変更・警告（ユーザーの権限外）。
-- Phase 6-12（生成方式の選択、白背景サンプル待ちで保留中）への干渉。
-- 既決の「信頼済み Claude IP が空のときのダッシュボード警告」は本計画とは別項目として扱い、同バッチに含めるかどうかは §6 の判断事項とする。
+### Phase P4 / P5. `/api/claude/revision` 補助情報 ＋ 待ち受け可視化・8080 リトライ ＋ `v1.6 (Build 1)` 統一
+- `FurimaServerNative.Core.cs`:
+  - `serverBootId`（起動ごとの 8 文字ランダム識別子）を保持。
+  - `GET /api/claude/revision` 応答に `executableCount`（`approved` + `processing` 件数）および `serverBootId` を追加（後方互換・個人情報なし）。
+  - `TryStartHttpListener` で `listenerMode`（`"all"` / `"localhost"`）を返し、コンソール起動表示と `GET /api/server/status`（`listenerMode`, `actualPort`）へ追加。
+  - `Main` で `desiredPort`（8080）確保時のみ短い待機リトライ（300ms × 5 回）を行ってから他ポート探索へ進む。
+- `tools/web/dashboard.html`: 設定モーダルにサーバー待ち受け情報（`listenerMode` / `actualPort`）を表示。
+- **バージョン統一 (`v1.6 (Build 1)`)**:
+  - `app/build.gradle.kts`: `versionName = "1.6"`, `versionCode = 1601`
+  - `app/src/main/java/com/example/myapplication/data/server/WebDashboardHtml.kt`: `v1.6 (Build 1)`
+  - `tools/web/dashboard.html`: `v1.6 (Build 1)`
+  - `tools/tests/photo-sync-integrity-build17.test.mjs`: バージョン一致テストを `v1.6 (Build 1)` / `versionCode = 1601` に更新。
+- 検証: `node --test` 全件パス、Android `gradle testDebugUnitTest` パス、C# テストおよび実機チェック準備完了。
 
 ---
 
-## 5. 実装順序・採番・検証
-
-- **順序**: P1 → P2（手動ボタン＋起動時自動ウェイク）→ P3（`approvedAt` ＋コンタクト連動＋起動時期限延長）→ P5（待ち受け可視化＋8080 リトライ）。P4 は Muse 側で並行可。各 P を 1 コミット単位とし、push は都度ユーザーの承認を得る。
-- **採番**: 全体を 1 バッチとし、**v1.5 (Build 21)**（不具合修正バッチのためステップ増分なし、Build +1）とし、版表記 3 箇所（`app/build.gradle.kts` / `tools/web/dashboard.html` / `WebDashboardHtml.kt`）をバッチ最終コミットで 1 回だけ同時更新する。
-- **レビュー**: 実装前に §6 の判断事項を確定したうえで着手する。従来どおり全量レビュー＋合意形成を維持する。
-- **検証**:
-  - CI（build-check）: PC サーバーのコンパイル、Android の assembleDebug＋単体テスト、追加した C# 単体テストの合格。
-  - 実機確認リスト（実装後にユーザー確認）:
-    1. 巡回ジョブを承認し、Muse に一切触れず 40 分以上置いても待機落ちしないこと（P3）。その後 Muse を起こすと自動で処理されること。
-    2. 巡回ジョブを残したまま PC サーバーを 30 分以上停止→再起動しても、ジョブが待機落ち・エラー終端せず、起動時自動ウェイクで次のポーリングで自動処理されること（P2＋P3）。
-    3. ダッシュボードの「最終監視／最終巡回」が、巡回の疎通にあわせて更新されること（P1）。
-    4. 「巡回を起こし直す」ボタンを押した後、次のポーリングで起床し、滞留ジョブが処理されること（P2）。
-    5. サーバー再起動時のコンソール・設定画面で待ち受けモード（全アドレス／`localhost` のみ）が判別でき、クイック再起動でも 8080 が維持されること（P5）。
-
----
-
-## 6. 判断事項（ユーザーの決定待ち）
-
-1. **P3 の失効方式**: 推奨案（`approvedAt` ＋コンタクト連動＋サーバー起動時 30 分自動延長）か、代替案（一律 22:00 / 最低 2 時間延長＋起動時延長）か。
-2. **P4 のサーバー側補助**: `GET /api/claude/revision` へ `executableCount` / `serverBootId` を同梱するか（後方互換・個人情報なし）。
-3. **P5（待ち受けモードの可視化＋8080 リトライ）**: 本バッチに含めるか。
-4. **信頼済み IP 未設定警告**: 既決の「信頼済み Claude IP が空のときのダッシュボード警告」を本バッチに同梱するか、別バッチのままにするか（P1 / P3 が `trustedMuseIp` 依存のため同梱推奨）。
-
-### 6.1 Muse の推奨（2026-11-25 検討・記録）
-
-本計画の策定者（Muse）が、非 24/7 運用・権限制約を反映した改訂版（折衷案）を検討した結果として、以下の推奨を記録する。**これは推奨であり、決定ではない。** 最終決定は、ユーザーが別エージェントとも検討したうえで行う。
-
-折衷案そのものへの評価: 起動時自動ウェイク（P2 追加分）と起動時の期限補正（P3 追加分）は、リビジョンが永続化されるためサーバー再起動だけでは合図が再送されない点、およびサーバー停止を挟むと処理中・承認待ちまで壁時計で即失効する点という、初版の 2 つの穴を塞いでおり、実運用（非 24/7・再起動頻繁）に即している。監視／実巡回の 2 系統コンタクト（P1 改訂）も、平時のポーリングを実巡回と誤認しないための正しい分離である。よって改訂版を支持する。
-
-1. **P3 の失効方式 → 推奨案**（`approvedAt` ＋コンタクト連動＋サーバー起動時 30 分自動延長）。理由: 一律延長は「PC 稼働中に巡回が反応しない異常」の検知と待機戻しまで遅らせるが、推奨案は未接触の間だけ失効を止め、接触があった後の異常は従来どおり 30 分で検知できる。
-2. **P4 のサーバー側補助 → 同梱を推奨**。理由: `executableCount` / `serverBootId` により Muse 側は 15 分タイマーを待たずにサーバー再起動と残ジョブを即検知でき、後方互換のため既存スクリプトにも影響しない。
-3. **P5 → 本バッチに含めることを推奨**。理由: 可視化は警告ではなく状態表示であり、8080 リトライは管理者権限を必要としない自動の安定化で、ユーザーの `localhost:8080` 固定運用に直接効く。
-4. **信頼済み IP 未設定警告 → 同梱を推奨**。理由: P1 / P3 は `trustedMuseIp` が前提であり、未設定だと両機能が無言で無効化されるため、同じバッチで警告を入れるのが安全である。
-
-実装レビュー時の確認点として 1 件記録する: 起動時の期限延長により `processing` ジョブがサーバー再起動のたびに再び有効化される点。結果登録は冪等（同一写真の再登録はスキップされる）ため実害は小さい見込みだが、延長の上限や回数の考え方は実装時に確認する。
+## 4. 決定事項サマリ（2026-11-25 確定）
+1. **P3 方式**: 案B（自動待機落ち完全廃止）＋ `processing` は**完全延長なし**で期限切れ時に必ず `done_with_errors` へ停止。
+2. **P4 サーバー補助**: 同梱（`executableCount` / `serverBootId`）。
+3. **P5 待ち受け可視化＋8080 リトライ**: 同梱（権限不要の範囲）。
+4. **信頼済み IP 未設定警告**: 同梱。
+5. **バージョン**: 本改修完了をもって **`v1.6 (Build 1)`**（`versionCode = 1601`）へ全箇所統一。
