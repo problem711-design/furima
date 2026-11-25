@@ -104,9 +104,9 @@ public static class FurimaServerTests
 
             RunTest("FurimaServerNative.DetectImageExtension detects JPEG/PNG/GIF/WEBP magic bytes", () =>
             {
-                AssertEquals(".png", FurimaServerNative.DetectImageExtension(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D }), "PNG detection failed");
+                AssertEquals(".png", FurimaServerNative.DetectImageExtension(new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }), "PNG detection failed");
                 AssertEquals(".jpg", FurimaServerNative.DetectImageExtension(new byte[] { 0xFF, 0xD8, 0xFF, 0xE0 }), "JPG detection failed");
-                AssertEquals(".gif", FurimaServerNative.DetectImageExtension(new byte[] { 0x47, 0x49, 0x46, 0x38 }), "GIF detection failed");
+                AssertEquals(".gif", FurimaServerNative.DetectImageExtension(new byte[] { 0x47, 0x49, 0x46, 0x38, 0x39, 0x61 }), "GIF detection failed");
             });
         }
         finally

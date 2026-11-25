@@ -24,10 +24,11 @@ jobs:
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
           "%CSC%" /nologo /codepage:65001 /out:furima-sync.exe /target:exe FurimaSyncNative.cs /reference:Newtonsoft.Json.dll /reference:System.Net.Http.dll
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-          "%CSC%" /nologo /codepage:65001 /out:tests\furima-server-tests.exe /target:exe /main:FurimaServerTests tests\FurimaServerTests.cs FurimaServerNative.Core.cs FurimaServerNative.Auth.cs FurimaServerNative.Persistence.cs FurimaServerNative.Sync.cs FurimaServerNative.Items.cs FurimaServerNative.Photos.cs FurimaServerNative.MuseRef.cs FurimaServerNative.Claude.cs FurimaServerNative.ClaudeDelivery.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /resource:web\dashboard.html,FurimaDashboard.html /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
+          "%CSC%" /nologo /codepage:65001 /out:furima-server-tests.exe /target:exe /main:FurimaServerTests tests\FurimaServerTests.cs FurimaServerNative.Core.cs FurimaServerNative.Auth.cs FurimaServerNative.Persistence.cs FurimaServerNative.Sync.cs FurimaServerNative.Items.cs FurimaServerNative.Photos.cs FurimaServerNative.MuseRef.cs FurimaServerNative.Claude.cs FurimaServerNative.ClaudeDelivery.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /resource:web\dashboard.html,FurimaDashboard.html /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-          tests\furima-server-tests.exe
+          furima-server-tests.exe
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          del /q furima-server-tests.exe furima-server.exe furima-sync.exe
       - name: Dashboard & golden label tests - JS side
         run: node --test tools/tests/claude-label.test.mjs tools/tests/dashboard-ui-phase6-16.test.mjs tools/tests/photo-sync-integrity-build17.test.mjs
 
