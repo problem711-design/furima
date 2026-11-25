@@ -89,6 +89,11 @@
 
 ## 更新履歴 (Changelog)
 
+### [2026-11-25] 巡回拾い漏れ・到達性修正計画の策定（計画のみ・未実装）
+- 全体コードレビュー＆安定化・軽量化・構造見直し（監査 Phase A〜D、`REVIEW_FULL_CODEBASE_AUDIT.md` §6 で完了記録）の適用後の現行コード（v1.5 Build 20 / versionCode 1520、サーバー `partial class` 分割・ダッシュボード `tools/web/dashboard.html` 化済み）を前提に、「Museに送る」自動巡回の拾い漏れ問題に対する修正計画を `PLAN_PATROL_RELIABILITY_FIX.md` に策定した（**ドキュメントのみ・コード変更なし**）。
+- 実測の要点: 2026-11-24 09:57 から 11-25 14:45 まで約 28 時間 48 分、ポーリングは回っていたのに revision 取得が連続 100% 失敗。ポーリング空白の復帰はユーザーのアプリ活動と相関。承認済みジョブは未着手 30 分のトークン失効で待機落ちした。設計前提（サーバー常時稼働・Muse 側常駐）の誤りを出発点とし、「どちら側が落ちていても復帰時に必ず拾い直せる」構造への修正として P1（最終巡回コンタクトの記録・表示）→ P2（巡回を起こし直すボタン＝リビジョン強制バンプ）→ P3（トークン失効条件を巡回コンタクト連動へ）→ P5（待ち受けモード可視化・任意）を小さい順に定義。Muse 側フックの再起床は P4 として repo 外で記録。
+- 次のアクション: レビュー担当が計画を確認し、計画 §6 の判断事項（P3 の方式、P5 の要否、既決の信頼済み IP 空警告の同梱可否）についてユーザーの決定を得てから実装に着手する。採番は実装バッチで **v1.5 (Build 21)** を予定。
+
 ### [2026-11-20] 写真同期整合性バグ修正 ＆ 画面オフ耐性強化 (バージョン 1.4 Build 17)
 - `PLAN_PHOTO_SYNC_INTEGRITY_FIX.md` の 5 本柱を最優先バッチとして実装完了した（詳細報告は `REVIEW_CLAUDE_SEND_PHASE6.md` §82）。
 - **柱 1（空 MD5・欠損写真の遮断と自動浄化）**: `FleaMarketRepository.saveItem()` の `existingFilePaths` 経路へファイル実在・サイズ・非空 MD5 検証と異常件数コールバック（`ItemEditScreen` で Toast 通知）を追加し、`PcServerClient.syncDeltaToPcServer`・`mergeServerItemsFromJson`・`FurimaServerNative.HandleSyncItems` の全送受信経路で空 MD5 を除外した。さらにスマホ同期前の純ゴースト自動浄化（`cleanupGhostBlankMd5Photos`）と PC 起動時 `LoadItemsDbFromDisk` の初回バックアップ（`.bak_empty_md5`）付き自動除去を追加した。
