@@ -78,7 +78,7 @@ public static class FurimaServerTests
                 string json = "{\"references\":[{\"md5\":\"" + md5 + "\",\"displayName\":\"test\",\"fileName\":\"ref.jpg\",\"addedAt\":12345}]}";
                 File.WriteAllText(refPath + ".bak", json, Encoding.UTF8);
 
-                var refs = ReferencePhotoStore.List();
+                var refs = ReferencePhotoStore.GetEntries();
                 AssertTrue(refs.Count == 1, "Expected 1 recovered reference, got " + refs.Count);
                 AssertEquals(md5, refs[0].md5, "Recovered MD5 mismatch");
                 AssertTrue(File.Exists(refPath), "Primary claude_references.json should be restored on disk");
@@ -86,9 +86,9 @@ public static class FurimaServerTests
 
             RunTest("ClaudeJobStore.IsValidMd5 validates 32-char lowercase hex", () =>
             {
-                AssertTrue(ClaudeJobStore.IsValidMd5("0123456789abcdef0123456789abcdef"), "Valid MD5 rejected");
-                AssertTrue(!ClaudeJobStore.IsValidMd5("0123456789ABCDEF0123456789ABCDEF"), "Uppercase should be rejected");
-                AssertTrue(!ClaudeJobStore.IsValidMd5("short"), "Short string should be rejected");
+                AssertTrue(ReferencePhotoStore.IsValidMd5("0123456789abcdef0123456789abcdef"), "Valid MD5 rejected");
+                AssertTrue(!ReferencePhotoStore.IsValidMd5("0123456789ABCDEF0123456789ABCDEF"), "Uppercase should be rejected");
+                AssertTrue(!ReferencePhotoStore.IsValidMd5("short"), "Short string should be rejected");
             });
 
             RunTest("FurimaServerNative.MatchesIfNoneMatch handles quoted, weak, multi, and wildcard ETags", () =>
@@ -97,7 +97,7 @@ public static class FurimaServerTests
                 string etag = "\"" + h + "\"";
                 AssertTrue(FurimaServerNative.MatchesIfNoneMatch(etag, etag, h), "Exact ETag failed");
                 AssertTrue(FurimaServerNative.MatchesIfNoneMatch("W/" + etag, etag, h), "Weak ETag failed");
-                AssertTrue(FurimaServerNative.MatchesIfNoneMatch("\"other\", " + etag, h), "Multi-ETag failed");
+                AssertTrue(FurimaServerNative.MatchesIfNoneMatch("\"other\", " + etag, etag, h), "Multi-ETag failed");
                 AssertTrue(FurimaServerNative.MatchesIfNoneMatch("*", etag, h), "Wildcard failed");
                 AssertTrue(!FurimaServerNative.MatchesIfNoneMatch("\"different\"", etag, h), "Non-matching ETag matched");
             });
