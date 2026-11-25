@@ -675,6 +675,14 @@ public static class ReferencePhotoStore
     private static readonly object _refLock = new object();
     private static List<ClaudeReferenceEntry> _refList = null;
 
+    internal static void ResetCacheForTest()
+    {
+        lock (_refLock)
+        {
+            _refList = null;
+        }
+    }
+
     public static string GetPhotosDir()
     {
         if (string.IsNullOrEmpty(SyncStore.SyncDir)) return "";

@@ -297,6 +297,14 @@ public static class SyncStore
     public static string SyncDir { get { return _syncDir; } }
     public static string AuthToken { get { return _authToken; } }
 
+    internal static void SetSyncDirForTest(string dir)
+    {
+        lock (_configLock)
+        {
+            _syncDir = dir ?? "";
+        }
+    }
+
     private static string GetDeletedUuidsJsonPath()
     {
         if (string.IsNullOrEmpty(_syncDir)) return "";

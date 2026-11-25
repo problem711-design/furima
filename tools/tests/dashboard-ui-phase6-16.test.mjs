@@ -9,37 +9,29 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
 const csPath = path.join(repoRoot, 'tools', 'DashboardHtml.cs');
+const htmlPath = path.join(repoRoot, 'tools', 'web', 'dashboard.html');
 
-test('DashboardHtml.cs の C# verbatim 文字列内に未エスケープのダブルクォートが存在しない', () => {
+test('DashboardHtml.cs が埋め込みリソース FurimaDashboard.html を読み込み __AUTH_TOKEN__ を置換する', () => {
     const cs = readFileSync(csPath, 'utf8');
-    const startIdx = cs.indexOf('return @"');
-    assert.ok(startIdx >= 0, 'return @" が見つからない');
-    const bodyStart = startIdx + 'return @"'.length;
-    const bodyEnd = cs.lastIndexOf('";');
-    assert.ok(bodyEnd > bodyStart, '末尾の "; が見つからない');
-    const body = cs.slice(bodyStart, bodyEnd);
-    for (let i = 0; i < body.length; i++) {
-        if (body[i] === '"') {
-            assert.equal(body[i + 1], '"', `未エスケープの " を検出 (offset ${i})`);
-            i++;
-        }
-    }
+    const html = readFileSync(htmlPath, 'utf8');
+    assert.ok(cs.includes('"FurimaDashboard.html"'), '埋め込みリソース名 FurimaDashboard.html の参照がない');
+    assert.ok(cs.includes('GetManifestResourceStream'), 'GetManifestResourceStream が使われていない');
+    assert.ok(html.includes("const AUTH_TOKEN = '__AUTH_TOKEN__';"), 'dashboard.html に __AUTH_TOKEN__ プレースホルダがない');
 });
 
 test('§51 項目1: ヘッダーが 1 行＋狭幅時ドロップダウン選択へ切り替わる', () => {
-    const cs = readFileSync(csPath, 'utf8');
-    const headerMatch = cs.match(/<header[\s\S]*?<\/header>/);
+    const html = readFileSync(htmlPath, 'utf8');
+    const headerMatch = html.match(/<header[\s\S]*?<\/header>/);
     assert.ok(headerMatch, '<header> が見つからない');
     const header = headerMatch[0];
     assert.ok(header.includes("id='filter-select'"), '狭幅用 #filter-select がない');
     assert.ok(!header.includes('overflow-x-auto'), '左方向溢れの原因となる overflow-x-auto がヘッダーに残っている');
-    assert.ok(cs.includes("filterSelect.value = filter"), 'setFilter に #filter-select 同期がない');
-    assert.ok(cs.includes("['filter-opt-all'"), 'updateStats に <option> 件数同期がない');
+    assert.ok(html.includes("filterSelect.value = filter"), 'setFilter に #filter-select 同期がない');
+    assert.ok(html.includes("['filter-opt-all'"), 'updateStats に <option> 件数同期がない');
 });
 
 test('§51 共通・項目2・3・4: 3 モーダルのスクロール枠分離とプレビュー・単品操作の契約を満たす', () => {
-    const cs = readFileSync(csPath, 'utf8');
-    const html = cs.replace(/""/g, '"');
+    const html = readFileSync(htmlPath, 'utf8');
     for (const id of ['claude-references-grid', 'claude-reference-picker-grid', 'photo-trash-grid']) {
         const line = html.split('\n').find(l => l.includes(`id='${id}'`));
         assert.ok(line, `${id} が見つからない`);
@@ -76,7 +68,7 @@ function extractJsBlock(src, marker) {
 }
 
 test('§52 項目1: #toast が z-[200] 最前面で _hideTimer により連打時の早期消滅を防ぐ', () => {
-    const html = readFileSync(csPath, 'utf8').replace(/""/g, '"');
+    const html = readFileSync(htmlPath, 'utf8');
     const toastLine = html.split('\n').find(l => l.includes("id='toast'"));
     assert.ok(toastLine, '#toast が見つからない');
     assert.ok(toastLine.includes('z-[200]'), '#toast に z-[200] が設定されていない');
@@ -129,7 +121,7 @@ test('§52 項目1: #toast が z-[200] 最前面で _hideTimer により連打�
 });
 
 test('§52 項目2: 全 15 モーダル背景が bindSafeBackdropClose 経由となりドラッグアウトで閉じない', () => {
-    const html = readFileSync(csPath, 'utf8').replace(/""/g, '"');
+    const html = readFileSync(htmlPath, 'utf8');
     const modalIds = [
         'batch-edit-modal',
         'merge-modal',

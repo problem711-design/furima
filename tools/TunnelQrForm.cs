@@ -504,8 +504,8 @@ public class TunnelQrForm : Form
                     : "トンネル接続不可\n\nローカル接続を\nご利用ください";
                 using (Font font = new Font("Meiryo UI", 9.5F, FontStyle.Regular))
                 using (Brush brush = new SolidBrush(Color.FromArgb(100, 116, 139)))
+                using (StringFormat sf = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
                 {
-                    StringFormat sf = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
                     g.DrawString(msg, font, brush, new RectangleF(10, 10, 220, 220), sf);
                 }
             }

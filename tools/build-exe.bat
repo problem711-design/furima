@@ -22,7 +22,7 @@ timeout /t 1 /nobreak >nul
 
 echo.
 echo [1/2] Building furima-server.exe (/target:winexe)...
-%CSC% /nologo /codepage:65001 /out:furima-server.exe /target:winexe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
+%CSC% /nologo /codepage:65001 /out:furima-server.exe /target:winexe FurimaServerNative.Core.cs FurimaServerNative.Auth.cs FurimaServerNative.Persistence.cs FurimaServerNative.Sync.cs FurimaServerNative.Items.cs FurimaServerNative.Photos.cs FurimaServerNative.MuseRef.cs FurimaServerNative.Claude.cs FurimaServerNative.ClaudeDelivery.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /resource:web\dashboard.html,FurimaDashboard.html /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
 if %ERRORLEVEL% neq 0 (
     echo [FAILED] furima-server.exe build error.
     pause

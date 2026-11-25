@@ -32,5 +32,6 @@ debug.keystore
 /.artifacts/
 /tools/cloudflared.exe
 /tools/server.log
-
-
+/tools/*.exe
+/tools/*.zip
+/tools/tests/*.exe

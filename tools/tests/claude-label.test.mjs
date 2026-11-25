@@ -13,10 +13,10 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
 
-const cs = readFileSync(path.join(repoRoot, 'tools', 'DashboardHtml.cs'), 'utf8');
-const scriptMatch = cs.match(/<script>([\s\S]*?)<\/script>/);
-assert.ok(scriptMatch, 'DashboardHtml.cs の inline script が見つからない');
-const js = scriptMatch[1].replace(/""/g, '"');
+const html = readFileSync(path.join(repoRoot, 'tools', 'web', 'dashboard.html'), 'utf8');
+const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+assert.ok(scriptMatch, 'tools/web/dashboard.html の inline script が見つからない');
+const js = scriptMatch[1];
 
 // 宣言の開始位置から波括弧の対応で 1 ブロック分を切り出す
 function extractBlock(src, marker) {

@@ -27,10 +27,10 @@ function extractBlock(src, marker) {
 }
 
 test('DashboardHtml.cs 内の inline script 構文が有効で buildViewerTrashTargets が正常動作する', () => {
-    const cs = readFileSync(path.join(repoRoot, 'tools', 'DashboardHtml.cs'), 'utf8');
-    const scriptMatch = cs.match(/<script>([\s\S]*?)<\/script>/);
-    assert.ok(scriptMatch, 'DashboardHtml.cs の inline script が見つからない');
-    const js = scriptMatch[1].replace(/""/g, '"');
+    const html = readFileSync(path.join(repoRoot, 'tools', 'web', 'dashboard.html'), 'utf8');
+    const scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
+    assert.ok(scriptMatch, 'tools/web/dashboard.html の inline script が見つからない');
+    const js = scriptMatch[1];
 
     // JS 全体の構文チェック
     new vm.Script(js, { filename: 'DashboardHtml.inline.js' });
@@ -85,7 +85,7 @@ test('DashboardHtml.cs 内の inline script 構文が有効で buildViewerTrashT
 });
 
 test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.5 (Build 20) に統一されている', () => {
-    const cs = readFileSync(path.join(repoRoot, 'tools', 'DashboardHtml.cs'), 'utf8');
+    const cs = readFileSync(path.join(repoRoot, 'tools', 'web', 'dashboard.html'), 'utf8');
     const kt = readFileSync(
         path.join(repoRoot, 'app', 'src', 'main', 'java', 'com', 'example', 'myapplication', 'data', 'server', 'WebDashboardHtml.kt'),
         'utf8'

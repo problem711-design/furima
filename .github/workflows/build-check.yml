@@ -2,6 +2,7 @@ name: build-check
 
 # コミットされた状態のままコンパイルが通るかを push のたびに自動確認する。
 # ここで確認するのはコンパイルまで (実機動作は対象外)。
+
 on:
   push:
     branches: [main]
@@ -13,18 +14,22 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build furima-server.exe / furima-sync.exe (same commands as tools/build-exe.bat)
+      - name: Build furima-server.exe / furima-sync.exe and run C# unit tests
         shell: cmd
         working-directory: tools
         run: |
           set CSC=%SystemRoot%\Microsoft.NET\Framework64\v4.0.30319\csc.exe
           if not exist "%CSC%" set CSC=%SystemRoot%\Microsoft.NET\Framework\v4.0.30319\csc.exe
-          "%CSC%" /nologo /codepage:65001 /out:furima-server.exe /target:winexe FurimaServerNative.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
+          "%CSC%" /nologo /codepage:65001 /out:furima-server.exe /target:winexe FurimaServerNative.Core.cs FurimaServerNative.Auth.cs FurimaServerNative.Persistence.cs FurimaServerNative.Sync.cs FurimaServerNative.Items.cs FurimaServerNative.Photos.cs FurimaServerNative.MuseRef.cs FurimaServerNative.Claude.cs FurimaServerNative.ClaudeDelivery.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /resource:web\dashboard.html,FurimaDashboard.html /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
           "%CSC%" /nologo /codepage:65001 /out:furima-sync.exe /target:exe FurimaSyncNative.cs /reference:Newtonsoft.Json.dll /reference:System.Net.Http.dll
           if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-      - name: Golden label fixtures - JS side (plan 41.5)
-        run: node --test tools/tests/claude-label.test.mjs
+          "%CSC%" /nologo /codepage:65001 /out:tests\furima-server-tests.exe /target:exe /main:FurimaServerTests tests\FurimaServerTests.cs FurimaServerNative.Core.cs FurimaServerNative.Auth.cs FurimaServerNative.Persistence.cs FurimaServerNative.Sync.cs FurimaServerNative.Items.cs FurimaServerNative.Photos.cs FurimaServerNative.MuseRef.cs FurimaServerNative.Claude.cs FurimaServerNative.ClaudeDelivery.cs SyncStore.cs DashboardHtml.cs TunnelQrForm.cs ClaudeJobStore.cs /resource:web\dashboard.html,FurimaDashboard.html /reference:Newtonsoft.Json.dll /reference:System.Windows.Forms.dll /reference:System.Drawing.dll
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+          tests\furima-server-tests.exe
+          if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+      - name: Dashboard & golden label tests - JS side
+        run: node --test tools/tests/claude-label.test.mjs tools/tests/dashboard-ui-phase6-16.test.mjs tools/tests/photo-sync-integrity-build17.test.mjs
 
   android:
     name: Android app (assembleDebug)
@@ -71,5 +76,5 @@ jobs:
           gradle-version: '9.6.0'
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
-      - name: Unit tests - Android side (golden label fixtures, plan 41.5)
+      - name: Unit tests - Android side
         run: gradle testDebugUnitTest --stacktrace
