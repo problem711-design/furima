@@ -1051,8 +1051,8 @@ fun SettingsStorageScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
                     )
                     Text(
-                        // フェーズ 6-9 (Build 14): 通し番号 (1414 等) ではなく下 2 桁のビルド番号を表示する
-                        text = "バージョン $versionName (Build ${versionCode % 100})",
+                        // AUDIT-015: Build 100 到達時の % 100 桁戻りを防ぐため versionCode をそのまま表示する
+                        text = "バージョン $versionName (Build $versionCode)",
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                     )

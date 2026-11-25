@@ -83,8 +83,10 @@ import com.example.myapplication.data.local.PhotoEntity
 import com.example.myapplication.data.server.ClaudeJobDto
 import com.example.myapplication.ui.screens.claudeLabelColor
 import com.example.myapplication.ui.screens.claudeLabelText
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 data class PreviewPhotoItem(
@@ -95,13 +97,13 @@ data class PreviewPhotoItem(
     val photoKey: String = ""
 )
 
-fun PhotoEntity.toPreviewPhotoItem(): PreviewPhotoItem {
+suspend fun PhotoEntity.toPreviewPhotoItem(): PreviewPhotoItem = withContext(Dispatchers.IO) {
     val origFile = filePath.takeIf { it.isNotBlank() }?.let { File(it) }
     val origExists = !isOriginalDeleted &&
         origFile != null &&
         origFile.exists() &&
         !origFile.absolutePath.equals(thumbnailPath, ignoreCase = true)
-    return PreviewPhotoItem(
+    PreviewPhotoItem(
         model = if (origExists) origFile else displayFile,
         md5Hash = md5Hash,
         hasLocalOriginal = origExists
@@ -471,8 +473,9 @@ fun PhotoPreviewDialog(
                                 isFetchingHash = activeHash
                                 scope.launch {
                                     val fetched = onFetchOriginal(activeHash)
+                                    val fetchedExists = withContext(Dispatchers.IO) { fetched != null && fetched.exists() }
                                     isFetchingHash = null
-                                    if (fetched != null && fetched.exists()) {
+                                    if (fetchedExists && fetched != null) {
                                         cachedOriginals[activeHash] = fetched
                                         Toast.makeText(context, "PCから高画質原本を取得しました", Toast.LENGTH_SHORT).show()
                                     } else {

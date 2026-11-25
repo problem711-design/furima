@@ -3219,7 +3219,6 @@ class FurimaServerNative
         {
             List<int> targetIds = ParseIdListFromRequest(req);
             int affected = 0;
-            var pendingBatchTxtWrites = new List<KeyValuePair<string, string>>();
             lock (lockObj)
             {
                 long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -3438,6 +3437,7 @@ class FurimaServerNative
             int priceValue = ParseIntSafe(json["priceValue"], 0);
 
             int affected = 0;
+            var pendingBatchTxtWrites = new List<KeyValuePair<string, string>>();
             lock (lockObj)
             {
                 long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -7907,6 +7907,10 @@ class FurimaServerNative
             string photoContentType = DetectImageMimeType(bytes);
             res.ContentType = string.IsNullOrEmpty(photoContentType) ? "application/octet-stream" : photoContentType;
             res.Headers.Add("Cache-Control", "public, max-age=31536000, immutable");
+            if (!string.IsNullOrEmpty(hash))
+            {
+                res.Headers.Add("ETag", "\"" + hash.Replace("\"", "") + "\"");
+            }
             res.ContentLength64 = bytes.Length;
             res.OutputStream.Write(bytes, 0, bytes.Length);
             res.OutputStream.Close();
