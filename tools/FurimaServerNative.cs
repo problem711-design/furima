@@ -39,6 +39,7 @@ class FurimaServerNative
     private static long lastMissingCountTicks = 0;
     private static int cachedMissingCount = 0;
     private static int missingCountDirty = 1;
+    private static int missingRefreshInProgress = 0;
     // claudeRevision の実体は ClaudeJobStore 側で永続化する (フェーズ 6-1a)。
     // サーバー再起動後も単調増加を引き継ぐため、メモリ保持にはしない。
     // Build 13 (13-2): 結果・エラーの登録を直列化するロック。
@@ -1896,31 +1897,53 @@ class FurimaServerNative
                 int totalItemsCount = 0;
                 List<KeyValuePair<string, string>> missingSnapshot = null;
                 long prevMissingTicks = Interlocked.Read(ref lastMissingCountTicks);
-                bool needMissingRefresh = Interlocked.Exchange(ref missingCountDirty, 0) == 1
+                bool dirtyTriggered = Interlocked.Exchange(ref missingCountDirty, 0) == 1;
+                bool needMissingRefresh = false;
+                if (dirtyTriggered
                     || prevMissingTicks == 0
-                    || (nowUtcTicks - prevMissingTicks) >= 30L * TimeSpan.TicksPerSecond;
-                lock (lockObj)
+                    || (nowUtcTicks - prevMissingTicks) >= 30L * TimeSpan.TicksPerSecond)
                 {
-                    indexedPhotosCount = hashToFilePathMap.Count;
-                    totalItemsCount = itemsDb.Count;
+                    if (Interlocked.CompareExchange(ref missingRefreshInProgress, 1, 0) == 0)
+                    {
+                        needMissingRefresh = true;
+                    }
+                    else if (dirtyTriggered)
+                    {
+                        Interlocked.Exchange(ref missingCountDirty, 1);
+                    }
+                }
+                try
+                {
+                    lock (lockObj)
+                    {
+                        indexedPhotosCount = hashToFilePathMap.Count;
+                        totalItemsCount = itemsDb.Count;
+                        if (needMissingRefresh)
+                        {
+                            missingSnapshot = SyncStore.SnapshotPhotoPathsForMissingCheck(itemsDb, hashToFilePathMap);
+                        }
+                        foreach (var item in itemsDb)
+                        {
+                            if (IsItemTrashed(item)) trashCount++;
+                        }
+                    }
+                    if (missingSnapshot != null)
+                    {
+                        missingCount = SyncStore.CountMissingFilesFromSnapshot(missingSnapshot);
+                        Interlocked.Exchange(ref cachedMissingCount, missingCount);
+                        Interlocked.Exchange(ref lastMissingCountTicks, DateTime.UtcNow.Ticks);
+                    }
+                    else
+                    {
+                        missingCount = Interlocked.CompareExchange(ref cachedMissingCount, 0, 0);
+                    }
+                }
+                finally
+                {
                     if (needMissingRefresh)
                     {
-                        missingSnapshot = SyncStore.SnapshotPhotoPathsForMissingCheck(itemsDb, hashToFilePathMap);
+                        Interlocked.Exchange(ref missingRefreshInProgress, 0);
                     }
-                    foreach (var item in itemsDb)
-                    {
-                        if (IsItemTrashed(item)) trashCount++;
-                    }
-                }
-                if (missingSnapshot != null)
-                {
-                    missingCount = SyncStore.CountMissingFilesFromSnapshot(missingSnapshot);
-                    cachedMissingCount = missingCount;
-                    Interlocked.Exchange(ref lastMissingCountTicks, nowUtcTicks);
-                }
-                else
-                {
-                    missingCount = cachedMissingCount;
                 }
 
                 var dict = new Dictionary<string, object>
@@ -2068,7 +2091,7 @@ class FurimaServerNative
             {
                 string trashId = rawPath.Substring("/api/photo-trash/".Length);
                 trashId = trashId.Substring(0, trashId.Length - "/image".Length).Trim();
-                ServePhotoTrashImage(res, trashId);
+                ServePhotoTrashImage(req, res, trashId);
             }
             else if (rawPath == "/api/photo-trash/restore" && req.HttpMethod == "POST")
             {
@@ -2216,7 +2239,7 @@ class FurimaServerNative
             else if (rawPath.StartsWith("/api/photos/"))
             {
                 string hash = rawPath.Substring("/api/photos/".Length).Trim();
-                ServePhotoByHash(res, hash);
+                ServePhotoByHash(req, res, hash);
             }
             else
             {
@@ -5002,7 +5025,7 @@ class FurimaServerNative
         }
     }
 
-    private static void ServePhotoTrashImage(HttpListenerResponse res, string trashId)
+    private static void ServePhotoTrashImage(HttpListenerRequest req, HttpListenerResponse res, string trashId)
     {
         try
         {
@@ -5019,7 +5042,7 @@ class FurimaServerNative
             }
             if (entry != null && !string.IsNullOrEmpty(entry.md5Hash))
             {
-                ServePhotoByHash(res, entry.md5Hash);
+                ServePhotoByHash(req, res, entry.md5Hash);
                 return;
             }
         }
@@ -7891,7 +7914,25 @@ class FurimaServerNative
         }
     }
 
-    private static void ServePhotoByHash(HttpListenerResponse res, string hash)
+    private static bool MatchesIfNoneMatch(string ifNoneMatchHeader, string etag, string rawHash)
+    {
+        if (string.IsNullOrEmpty(ifNoneMatchHeader) || string.IsNullOrEmpty(etag)) return false;
+        string[] parts = ifNoneMatchHeader.Split(',');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            string token = parts[i].Trim();
+            if (token == "*") return true;
+            if (token.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+            {
+                token = token.Substring(2).Trim();
+            }
+            if (string.Equals(token, etag, StringComparison.OrdinalIgnoreCase)) return true;
+            if (!string.IsNullOrEmpty(rawHash) && string.Equals(token.Trim('"'), rawHash, StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static void ServePhotoByHash(HttpListenerRequest req, HttpListenerResponse res, string hash)
     {
         string filePath = null;
         lock (lockObj)
@@ -7903,13 +7944,23 @@ class FurimaServerNative
         }
         if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
         {
+            string cleanHash = !string.IsNullOrEmpty(hash) ? hash.Replace("\"", "") : "";
+            string etag = !string.IsNullOrEmpty(cleanHash) ? ("\"" + cleanHash + "\"") : "";
+            if (!string.IsNullOrEmpty(etag) && MatchesIfNoneMatch(req != null ? req.Headers["If-None-Match"] : null, etag, cleanHash))
+            {
+                res.StatusCode = 304;
+                res.Headers.Add("Cache-Control", "public, max-age=31536000, immutable");
+                res.Headers.Add("ETag", etag);
+                res.Close();
+                return;
+            }
             byte[] bytes = File.ReadAllBytes(filePath);
             string photoContentType = DetectImageMimeType(bytes);
             res.ContentType = string.IsNullOrEmpty(photoContentType) ? "application/octet-stream" : photoContentType;
             res.Headers.Add("Cache-Control", "public, max-age=31536000, immutable");
-            if (!string.IsNullOrEmpty(hash))
+            if (!string.IsNullOrEmpty(etag))
             {
-                res.Headers.Add("ETag", "\"" + hash.Replace("\"", "") + "\"");
+                res.Headers.Add("ETag", etag);
             }
             res.ContentLength64 = bytes.Length;
             res.OutputStream.Write(bytes, 0, bytes.Length);

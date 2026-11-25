@@ -734,15 +734,19 @@ public static class ReferencePhotoStore
         if (_refList != null) return _refList;
         _refList = new List<ClaudeReferenceEntry>();
         string path = GetJsonPath();
-        if (string.IsNullOrEmpty(path) || !File.Exists(path)) return _refList;
+        if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !File.Exists(path + ".bak"))) return _refList;
         try
         {
             bool rec;
             string err;
-            var file = AtomicFileWriter.ReadJsonWithBackup<ClaudeReferencesFile>(path, null, out rec, out err);
-            if (rec) Console.WriteLine("[復旧] claude_references.json を .bak から復元しました");
+            var file = AtomicFileWriter.ReadJsonWithBackup<ClaudeReferencesFile>(path, f => f != null && f.references != null, out rec, out err);
             if (file != null && file.references != null)
             {
+                if (rec)
+                {
+                    Console.WriteLine("[復旧] claude_references.json を .bak から復元しました");
+                    try { AtomicFileWriter.WriteTextAtomic(path, JsonConvert.SerializeObject(file, Formatting.Indented), false); } catch { }
+                }
                 foreach (var e in file.references)
                 {
                     if (e == null || !IsValidMd5((e.md5 ?? "").Trim().ToLowerInvariant())) continue;
@@ -751,6 +755,11 @@ public static class ReferencePhotoStore
                     if (e.fileName == null) e.fileName = "";
                     _refList.Add(e);
                 }
+            }
+            else if (!string.IsNullOrEmpty(err))
+            {
+                string corrupt = AtomicFileWriter.QuarantineCorruptFile(path);
+                Console.WriteLine("[警告] claude_references.json の読み込みに失敗しました: " + err + (string.IsNullOrEmpty(corrupt) ? "" : " (退避: " + corrupt + ")"));
             }
         }
         catch (Exception ex)

@@ -58,3 +58,157 @@ test('§51 共通・項目2・3・4: 3 モーダルのスクロール枠分離�
     assert.ok(scriptMatch, 'inline script が見つからない');
     new vm.Script(scriptMatch[1], { filename: 'DashboardHtml.phase6-16.js' });
 });
+
+function extractJsBlock(src, marker) {
+    const start = src.indexOf(marker);
+    assert.ok(start >= 0, 'marker が見つからない: ' + marker);
+    const braceStart = src.indexOf('{', start);
+    let depth = 0;
+    for (let i = braceStart; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) return src.slice(start, i + 1);
+        }
+    }
+    throw new Error('波括弧が閉じない: ' + marker);
+}
+
+test('§52 項目1: #toast が z-[200] 最前面で _hideTimer により連打時の早期消滅を防ぐ', () => {
+    const html = readFileSync(csPath, 'utf8').replace(/""/g, '"');
+    const toastLine = html.split('\n').find(l => l.includes("id='toast'"));
+    assert.ok(toastLine, '#toast が見つからない');
+    assert.ok(toastLine.includes('z-[200]'), '#toast に z-[200] が設定されていない');
+    assert.ok(!toastLine.includes('z-50'), '#toast に旧 z-50 が残っている');
+
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+    const showToastSrc = extractJsBlock(script, 'function showToast');
+    assert.ok(showToastSrc.includes('_hideTimer'), 'showToast が _hideTimer を制御していない');
+
+    const classSet = new Set(['translate-y-20', 'opacity-0']);
+    const toastEl = {
+        _hideTimer: null,
+        classList: {
+            add: (...cls) => cls.forEach(c => classSet.add(c)),
+            remove: (...cls) => cls.forEach(c => classSet.delete(c)),
+            contains: (c) => classSet.has(c)
+        }
+    };
+    const msgEl = { innerText: '' };
+    const timers = new Map();
+    let nextTimerId = 1;
+    const ctx = vm.createContext({
+        document: {
+            getElementById: (id) => (id === 'toast' ? toastEl : id === 'toast-msg' ? msgEl : null)
+        },
+        setTimeout: (fn, ms) => {
+            const id = nextTimerId++;
+            timers.set(id, { fn, ms });
+            return id;
+        },
+        clearTimeout: (id) => {
+            timers.delete(id);
+        }
+    });
+    vm.runInContext(showToastSrc + '; globalThis.__showToast = showToast;', ctx);
+
+    ctx.__showToast('1件目');
+    assert.equal(timers.size, 1);
+    const firstId = [...timers.keys()][0];
+    ctx.__showToast('2件目');
+    assert.equal(timers.has(firstId), false, '連続通知時に前回のタイマーが clearTimeout されていない');
+    assert.equal(timers.size, 1);
+    assert.equal(msgEl.innerText, '2件目');
+    assert.ok(classSet.has('opacity-100'));
+
+    const remaining = [...timers.values()][0];
+    remaining.fn();
+    assert.ok(classSet.has('opacity-0'));
+    assert.ok(classSet.has('translate-y-20'));
+});
+
+test('§52 項目2: 全 15 モーダル背景が bindSafeBackdropClose 経由となりドラッグアウトで閉じない', () => {
+    const html = readFileSync(csPath, 'utf8').replace(/""/g, '"');
+    const modalIds = [
+        'batch-edit-modal',
+        'merge-modal',
+        'photo-viewer-modal',
+        'photo-lightbox-modal',
+        'claude-references-modal',
+        'claude-reference-picker-modal',
+        'claude-reference-preview-modal',
+        'photo-trash-modal',
+        'photo-trash-preview-modal',
+        'claude-jobs-modal',
+        'cleanup-modal',
+        'add-modal',
+        'edit-modal',
+        'settings-modal',
+        'template-editor-modal'
+    ];
+    for (const id of modalIds) {
+        const line = html.split('\n').find(l => l.includes(`id='${id}'`));
+        assert.ok(line, `${id} が見つからない`);
+        assert.ok(!/onclick=['"]close/.test(line), `${id} 背景に inline onclick='close...()' が残っている`);
+    }
+
+    const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+    const bindSrc = extractJsBlock(script, 'function bindSafeBackdropClose');
+    const initSrc = extractJsBlock(script, 'function initSafeModalBackdrops');
+    for (const id of modalIds) {
+        assert.ok(initSrc.includes(`'${id}'`), `initSafeModalBackdrops に ${id} が登録されていない`);
+    }
+
+    const els = new Map();
+    const makeEl = (id) => {
+        const listeners = {};
+        return {
+            id,
+            addEventListener: (type, fn) => {
+                (listeners[type] = listeners[type] || []).push(fn);
+            },
+            dispatch: (type, target) => {
+                for (const fn of (listeners[type] || [])) fn({ target });
+            }
+        };
+    };
+    const stubNames = [
+        'closeBatchEditModal', 'closeMergeModal', 'closePhotoViewer', 'closePhotoLightbox',
+        'closeClaudeReferencesModal', 'closeClaudeReferencePicker', 'closeClaudeReferencePreview',
+        'closePhotoTrashModal', 'closePhotoTrashPreview', 'closeClaudeJobsModal',
+        'closeCleanupModal', 'closeAddModal', 'closeEditModal', 'closeSettingsModal',
+        'closeTemplateEditorModal'
+    ];
+    const sandbox = {
+        document: {
+            getElementById: (id) => {
+                if (!els.has(id)) els.set(id, makeEl(id));
+                return els.get(id);
+            }
+        },
+        closedCount: {}
+    };
+    for (const fnName of stubNames) {
+        sandbox.closedCount[fnName] = 0;
+        sandbox[fnName] = () => { sandbox.closedCount[fnName]++; };
+    }
+    const ctx = vm.createContext(sandbox);
+    vm.runInContext(bindSrc + '\n' + initSrc + '; initSafeModalBackdrops();', ctx);
+
+    const editModal = els.get('edit-modal');
+    assert.ok(editModal, 'edit-modal が登録されていない');
+    const innerInput = { id: 'edit-title-input' };
+
+    // 入力欄で mousedown -> 背景外へドラッグアウトして click が背景に発火 -> 閉じないこと
+    editModal.dispatch('pointerdown', innerInput);
+    editModal.dispatch('mousedown', innerInput);
+    editModal.dispatch('click', editModal);
+    assert.equal(ctx.closedCount.closeEditModal, 0, 'モーダル内からのドラッグアウトで閉じてしまった');
+
+    // 背景を直接押して離した場合のみ閉じること
+    editModal.dispatch('pointerdown', editModal);
+    editModal.dispatch('mousedown', editModal);
+    editModal.dispatch('click', editModal);
+    assert.equal(ctx.closedCount.closeEditModal, 1, '背景直接クリックでモーダルが閉じなかった');
+});

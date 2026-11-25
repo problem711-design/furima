@@ -20,7 +20,7 @@ public static class DashboardHtml
 </head>
 <body class='bg-slate-100 text-slate-800 min-h-screen'>
     <!-- トースト通知 -->
-    <div id='toast' class='fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-lg shadow-xl text-xs font-bold flex items-center gap-2 transform transition-all duration-300 translate-y-20 opacity-0 pointer-events-none'>
+    <div id='toast' class='fixed bottom-5 right-5 z-[200] bg-slate-900 text-white px-4 py-2.5 rounded-lg shadow-xl text-xs font-bold flex items-center gap-2 transform transition-all duration-300 translate-y-20 opacity-0 pointer-events-none'>
         <i class='fa-solid fa-circle-check text-emerald-400'></i>
         <span id='toast-msg'>コピーしました</span>
     </div>
@@ -256,7 +256,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 一括編集モーダル (部分更新＋サンプルプレビュー) -->
-    <div id='batch-edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeBatchEditModal()'>
+    <div id='batch-edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
@@ -320,7 +320,7 @@ public static class DashboardHtml
     </div>
 
     <!-- まとめ買い作成モーダル -->
-    <div id='merge-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeMergeModal()'>
+    <div id='merge-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-xl max-w-lg w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-purple-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
@@ -397,7 +397,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 写真ギャラリービューアーモーダル (写真D&D / クリップボードコピー / グループ分け対応) -->
-    <div id='photo-viewer-modal' class='fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-3 sm:p-5' onclick='closePhotoViewer()'>
+    <div id='photo-viewer-modal' class='fixed inset-0 bg-black/80 z-50 hidden flex items-center justify-center p-3 sm:p-5'>
         <div class='bg-white rounded-xl max-w-4xl w-full max-h-[90vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-indigo-800 text-white px-5 py-3 flex items-center justify-between border-b border-indigo-900'>
                 <div class='flex items-center gap-2.5 overflow-hidden'>
@@ -514,7 +514,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 全画面原寸写真ライトボックスモーダル (次の写真 / 前の写真 送り戻し対応) -->
-    <div id='photo-lightbox-modal' class='fixed inset-0 bg-black/95 z-[60] hidden flex flex-col justify-between p-3 sm:p-5' onclick='closePhotoLightbox()'>
+    <div id='photo-lightbox-modal' class='fixed inset-0 bg-black/95 z-[60] hidden flex flex-col justify-between p-3 sm:p-5'>
         <div class='w-full max-w-6xl mx-auto flex flex-wrap items-center justify-between gap-2 bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 text-white shadow-xl' onclick='event.stopPropagation()'>
             <div class='flex items-center gap-2.5 overflow-hidden'>
                 <span id='lightbox-counter' class='text-xs font-mono font-bold bg-indigo-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
@@ -564,7 +564,7 @@ public static class DashboardHtml
     </div>
 
     <!-- フェーズ 6-13: 参考画像コレクション管理モーダル (管理は PC のみ) -->
-    <div id='claude-references-modal' class='fixed inset-0 bg-black/60 z-[65] hidden flex items-center justify-center p-4' onclick='closeClaudeReferencesModal()'>
+    <div id='claude-references-modal' class='fixed inset-0 bg-black/60 z-[65] hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col overflow-hidden' onclick='event.stopPropagation()'>
             <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0'>
                 <h3 class='text-sm font-black text-slate-800 flex items-center gap-2'><i class='fa-solid fa-image text-teal-600'></i> 参考画像コレクション</h3>
@@ -584,7 +584,7 @@ public static class DashboardHtml
     </div>
 
     <!-- フェーズ 6-13: 参考画像ピッカー (送信時に 1 枚選ぶ・クリックで拡大プレビュー確認) -->
-    <div id='claude-reference-picker-modal' class='fixed inset-0 bg-black/60 z-[75] hidden flex items-center justify-center p-4' onclick='closeClaudeReferencePicker()'>
+    <div id='claude-reference-picker-modal' class='fixed inset-0 bg-black/60 z-[75] hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden' onclick='event.stopPropagation()'>
             <div class='px-5 py-3 border-b border-slate-200 flex items-center justify-between shrink-0'>
                 <div>
@@ -600,7 +600,7 @@ public static class DashboardHtml
     </div>
 
     <!-- フェーズ 6-16 (§51): 参考画像 拡大プレビューモーダル (管理 / ピッカー共用) -->
-    <div id='claude-reference-preview-modal' class='fixed inset-0 bg-black/90 z-[80] hidden flex flex-col justify-between p-3 sm:p-5' onclick='closeClaudeReferencePreview()'>
+    <div id='claude-reference-preview-modal' class='fixed inset-0 bg-black/90 z-[80] hidden flex flex-col justify-between p-3 sm:p-5'>
         <div class='w-full max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2 bg-slate-900/95 border border-slate-700 rounded-xl px-4 py-2.5 text-white shadow-xl shrink-0' onclick='event.stopPropagation()'>
             <div class='flex items-center gap-2.5 min-w-0'>
                 <span id='claude-ref-preview-counter' class='text-xs font-mono font-bold bg-teal-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
@@ -636,7 +636,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 写真単位ゴミ箱モーダル (案A: _photo_trash 復元・完全削除) -->
-    <div id='photo-trash-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5' onclick='closePhotoTrashModal()'>
+    <div id='photo-trash-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5'>
         <div class='bg-white rounded-xl max-w-4xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-rose-800 text-white px-5 py-3 flex items-center justify-between border-b border-rose-900 shrink-0'>
                 <div class='flex items-center gap-2.5'>
@@ -678,7 +678,7 @@ public static class DashboardHtml
     </div>
 
     <!-- フェーズ 6-16 (§51): 写真ゴミ箱 拡大プレビューモーダル -->
-    <div id='photo-trash-preview-modal' class='fixed inset-0 bg-black/90 z-[80] hidden flex flex-col justify-between p-3 sm:p-5' onclick='closePhotoTrashPreview()'>
+    <div id='photo-trash-preview-modal' class='fixed inset-0 bg-black/90 z-[80] hidden flex flex-col justify-between p-3 sm:p-5'>
         <div class='w-full max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2 bg-slate-900/95 border border-slate-700 rounded-xl px-4 py-2.5 text-white shadow-xl shrink-0' onclick='event.stopPropagation()'>
             <div class='flex items-center gap-2.5 min-w-0 flex-1'>
                 <span id='photo-trash-preview-counter' class='text-xs font-mono font-bold bg-rose-600 px-2.5 py-1 rounded-md shrink-0'>1 / 1</span>
@@ -749,7 +749,7 @@ public static class DashboardHtml
     </div>
 
     <!-- Muse 送信ジョブ一覧モーダル -->
-    <div id='claude-jobs-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5' onclick='closeClaudeJobsModal()'>
+    <div id='claude-jobs-modal' class='fixed inset-0 bg-black/70 z-[55] hidden flex items-center justify-center p-3 sm:p-5'>
         <div class='bg-white rounded-xl max-w-3xl w-full max-h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-violet-800 text-white px-5 py-3 flex items-center justify-between border-b border-violet-900'>
                 <div class='flex items-center gap-2.5'>
@@ -777,7 +777,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 30日経過写真クリーンアップモーダル -->
-    <div id='cleanup-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeCleanupModal()'>
+    <div id='cleanup-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-xl max-w-2xl w-full max-h-[85vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between border-b border-slate-800'>
                 <div class='flex items-center gap-2.5'>
@@ -831,7 +831,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 新規商品追加モーダル (スマホ同等UI) -->
-    <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeAddModal()'>
+    <div id='add-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-xl max-w-2xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-emerald-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
@@ -969,7 +969,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 商品編集モーダル (Yahoo!フリマ・スマホ同等UI) -->
-    <div id='edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeEditModal()'>
+    <div id='edit-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-xl max-w-xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-indigo-700 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
@@ -1116,7 +1116,7 @@ public static class DashboardHtml
     </div>
 
     <!-- 設定・プリセット・テンプレート管理モーダル -->
-    <div id='settings-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4' onclick='closeSettingsModal()'>
+    <div id='settings-modal' class='fixed inset-0 bg-black/60 z-50 hidden flex items-center justify-center p-4'>
         <div class='bg-white rounded-xl max-w-2xl w-full shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-slate-800 text-white px-5 py-3.5 flex items-center justify-between'>
                 <div class='flex items-center gap-2'>
@@ -1219,7 +1219,7 @@ public static class DashboardHtml
     </div>
 
     <!-- テンプレート全画面スタイル編集モーダル -->
-    <div id='template-editor-modal' class='fixed inset-0 bg-black/70 z-[60] hidden flex items-center justify-center p-3 sm:p-6' onclick='closeTemplateEditorModal()'>
+    <div id='template-editor-modal' class='fixed inset-0 bg-black/70 z-[60] hidden flex items-center justify-center p-3 sm:p-6'>
         <div class='bg-white rounded-xl w-full max-w-4xl h-[88vh] shadow-2xl flex flex-col overflow-hidden border border-slate-200' onclick='event.stopPropagation()'>
             <div class='bg-slate-800 text-white px-5 py-3.5 flex items-center justify-between shrink-0'>
                 <div class='flex items-center gap-2'>
@@ -1321,13 +1321,32 @@ public static class DashboardHtml
 
         function showToast(msg) {
             const toast = document.getElementById('toast');
-            document.getElementById('toast-msg').innerText = msg;
+            if (!toast) return;
+            const msgEl = document.getElementById('toast-msg');
+            if (msgEl) msgEl.innerText = msg;
+            clearTimeout(toast._hideTimer);
             toast.classList.remove('translate-y-20', 'opacity-0');
             toast.classList.add('translate-y-0', 'opacity-100');
-            setTimeout(() => {
+            toast._hideTimer = setTimeout(() => {
                 toast.classList.remove('translate-y-0', 'opacity-100');
                 toast.classList.add('translate-y-20', 'opacity-0');
             }, 2500);
+        }
+
+        function bindSafeBackdropClose(modalId, closeFn) {
+            const el = document.getElementById(modalId);
+            if (!el || typeof closeFn !== 'function') return;
+            let downOnBackdrop = false;
+            const markDown = (e) => {
+                downOnBackdrop = !!e && e.target === el;
+            };
+            el.addEventListener('pointerdown', markDown);
+            el.addEventListener('mousedown', markDown);
+            el.addEventListener('click', (e) => {
+                const shouldClose = downOnBackdrop && !!e && e.target === el;
+                downOnBackdrop = false;
+                if (shouldClose) closeFn();
+            });
         }
 
         async function copyText(text, label, btnElem) {
@@ -1442,7 +1461,29 @@ public static class DashboardHtml
             }
         }
 
+        function initSafeModalBackdrops() {
+            const modalBackdropBindings = [
+                ['batch-edit-modal', closeBatchEditModal],
+                ['merge-modal', closeMergeModal],
+                ['photo-viewer-modal', closePhotoViewer],
+                ['photo-lightbox-modal', closePhotoLightbox],
+                ['claude-references-modal', closeClaudeReferencesModal],
+                ['claude-reference-picker-modal', closeClaudeReferencePicker],
+                ['claude-reference-preview-modal', closeClaudeReferencePreview],
+                ['photo-trash-modal', closePhotoTrashModal],
+                ['photo-trash-preview-modal', closePhotoTrashPreview],
+                ['claude-jobs-modal', closeClaudeJobsModal],
+                ['cleanup-modal', closeCleanupModal],
+                ['add-modal', closeAddModal],
+                ['edit-modal', closeEditModal],
+                ['settings-modal', closeSettingsModal],
+                ['template-editor-modal', closeTemplateEditorModal]
+            ];
+            modalBackdropBindings.forEach(([id, fn]) => bindSafeBackdropClose(id, fn));
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            initSafeModalBackdrops();
             fetchSettings();
             fetchItems();
             refreshPhotoTrashCount();

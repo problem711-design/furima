@@ -1526,6 +1526,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                                         )
                                     }
                                 } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
                                     syncCoordinator.updateSyncProgress(
                                         PcSyncProgress(
                                             phase = SyncPhase.ERROR,
@@ -1571,6 +1572,7 @@ class FleaMarketViewModel(application: Application) : AndroidViewModel(applicati
                                         )
                                     }
                                 } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
                                     syncCoordinator.updateSyncProgress(
                                         PcSyncProgress(
                                             phase = SyncPhase.ERROR,
