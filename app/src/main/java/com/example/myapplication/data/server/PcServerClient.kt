@@ -1,35 +1,9 @@
 package com.example.myapplication.data.server
 
 import android.content.Context
-import android.util.Log
-import android.graphics.BitmapFactory
 import com.example.myapplication.data.FleaMarketRepository
 import com.example.myapplication.data.PhotoStorageManager
-import com.example.myapplication.data.local.DefaultSettings
-import com.example.myapplication.data.local.FeePreset
-import com.example.myapplication.data.local.PhotoEntity
-import com.example.myapplication.data.local.isSoldFamilyStatus
-import com.example.myapplication.data.local.mergedChildStatusLabelOf
-import com.example.myapplication.data.local.statusLabelOf
-import com.example.myapplication.data.local.TextTemplate
-import com.squareup.moshi.Moshi
-import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import okhttp3.MediaType
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody
-import okhttp3.RequestBody.Companion.toRequestBody
-import okio.BufferedSink
-import org.json.JSONObject
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 
 enum class SyncPhase {
     IDLE,
@@ -62,187 +36,32 @@ data class PcSyncResult(
     val storeId: String? = null
 )
 
-private class StreamingFileRequestBody(
-    private val file: File,
-    private val mediaType: MediaType,
-    private val onProgressBytes: (Long) -> Unit
-) : RequestBody() {
-    override fun contentType(): MediaType = mediaType
-    override fun contentLength(): Long = file.length()
-    override fun writeTo(sink: BufferedSink) {
-        val buffer = ByteArray(16 * 1024)
-        var sentThisFile = 0L
-        var lastReportedBytes = 0L
-        FileInputStream(file).use { input ->
-            var read: Int
-            while (input.read(buffer).also { read = it } != -1) {
-                sink.write(buffer, 0, read)
-                sentThisFile += read
-                if (sentThisFile - lastReportedBytes >= 64 * 1024L) {
-                    lastReportedBytes = sentThisFile
-                    onProgressBytes(sentThisFile)
-                }
-            }
-        }
-        if (sentThisFile != lastReportedBytes) {
-            onProgressBytes(sentThisFile)
-        }
-    }
-}
-
 class PcServerClient(
     private val context: Context,
     private val repository: FleaMarketRepository
 ) {
-    private val photoStorageManager = PhotoStorageManager(context)
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .writeTimeout(30, TimeUnit.SECONDS)
-        .build()
-
-    private val prefs = context.getSharedPreferences("pc_sync_prefs", Context.MODE_PRIVATE)
-
-    private val moshi = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
-
-    private val syncItemsRequestAdapter = moshi.adapter(SyncItemsRequest::class.java)
-    private val syncItemsResponseAdapter = moshi.adapter(SyncItemsResponse::class.java)
-    private val syncPhotoResponseAdapter = moshi.adapter(SyncPhotoResponse::class.java)
-    private val syncSettingsAdapter = moshi.adapter(SyncSettingsDto::class.java)
-    private val createClaudeJobRequestAdapter = moshi.adapter(CreateClaudeJobRequestDto::class.java)
-    private val claudeJobResponseAdapter = moshi.adapter(ClaudeJobResponseDto::class.java)
-    private val claudeLabelSeenBatchRequestAdapter = moshi.adapter(ClaudeLabelSeenBatchRequestDto::class.java)
-    private val claudeLabelSeenResponseAdapter = moshi.adapter(ClaudeLabelSeenResponseDto::class.java)
-    private val claudeJobListResponseAdapter = moshi.adapter(ClaudeJobListResponseDto::class.java)
-    private val claudeReferencesResponseAdapter = moshi.adapter(ClaudeReferencesResponseDto::class.java)
-    private val claudeApprovalRequestAdapter = moshi.adapter(ClaudeApprovalRequestDto::class.java)
-
-    private fun toSyncSettingsDto(settings: DefaultSettings): SyncSettingsDto {
-        return SyncSettingsDto(
-            defaultFeeRatePercent = settings.defaultFeeRatePercent,
-            defaultShippingCost = settings.defaultShippingCost,
-            defaultExpenseCost = settings.defaultExpenseCost,
-            activePresetId = settings.activePresetId,
-            presets = settings.presets.map { p ->
-                SyncFeePresetDto(
-                    id = p.id,
-                    name = p.name,
-                    feeRatePercent = p.feeRatePercent,
-                    shippingCost = p.shippingCost,
-                    expenseCost = p.expenseCost
-                )
-            },
-            titleTemplates = settings.titleTemplates.map { t ->
-                SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
-            },
-            descriptionTemplates = settings.descriptionTemplates.map { t ->
-                SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
-            },
-            promptTemplates = settings.promptTemplates.map { t ->
-                SyncTextTemplateDto(id = t.id, name = t.name, content = t.content)
-            },
-            settingsUpdatedAt = settings.settingsUpdatedAt
-        )
-    }
-
-    private fun applyServerSettingsDto(dto: SyncSettingsDto, base: DefaultSettings): DefaultSettings {
-        val mergedPresets = dto.presets.map { p ->
-            FeePreset(
-                id = p.id,
-                name = p.name,
-                feeRatePercent = p.feeRatePercent.coerceAtLeast(0),
-                shippingCost = p.shippingCost.coerceAtLeast(0),
-                expenseCost = p.expenseCost.coerceAtLeast(0)
-            )
-        }.ifEmpty { base.presets }
-        val resolvedActiveId = if (mergedPresets.any { it.id == dto.activePresetId }) {
-            dto.activePresetId
-        } else {
-            mergedPresets.firstOrNull()?.id ?: base.activePresetId
-        }
-        return base.copy(
-            defaultFeeRatePercent = dto.defaultFeeRatePercent.coerceAtLeast(0),
-            defaultShippingCost = dto.defaultShippingCost.coerceAtLeast(0),
-            defaultExpenseCost = dto.defaultExpenseCost.coerceAtLeast(0),
-            activePresetId = resolvedActiveId,
-            presets = mergedPresets,
-            titleTemplates = dto.titleTemplates.map { t ->
-                TextTemplate(id = t.id, name = t.name, content = t.content)
-            },
-            descriptionTemplates = dto.descriptionTemplates.map { t ->
-                TextTemplate(id = t.id, name = t.name, content = t.content)
-            },
-            promptTemplates = dto.promptTemplates.map { t ->
-                TextTemplate(id = t.id, name = t.name, content = t.content)
-            },
-            settingsUpdatedAt = dto.settingsUpdatedAt
-        )
-    }
-
-    suspend fun pushSettingsToServer(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val currentSettings = repository.defaultSettings.value
-            val jsonStr = syncSettingsAdapter.toJson(toSyncSettingsDto(currentSettings))
-            val body = jsonStr.toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/settings").put(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string()
-                if (!respStr.isNullOrBlank()) {
-                    val serverDto = syncSettingsAdapter.fromJson(respStr)
-                    if (serverDto != null && serverDto.settingsUpdatedAt > 0L) {
-                        repository.updateDefaultSettings(
-                            applyServerSettingsDto(serverDto, repository.defaultSettings.value),
-                            stampNow = false
-                        )
-                    }
-                }
-                true
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "pushSettingsToServer 例外: ${e.message}", e)
-            false
-        }
-    }
-
     data class ClaudeJobCreateResult(
         val success: Boolean,
         val jobId: String = "",
         val message: String = "",
-        // フェーズ 6-8: テンプレート登録の結果 (ジョブ作成の成否とは切り離して伝える)
         val templateRegistered: Boolean = false,
         val templateRegisterError: String? = null
     )
 
-    // フェーズ 6-8 (§55.6-3 / §41.4): 手打ちプロンプトの履歴は端末ローカルにのみ直近 3 件を
-    // 保持する (同期される設定には絶対に入れない)
-    fun getClaudeFreeTextHistory(): List<String> {
-        val raw = prefs.getString("claude_free_text_history", null) ?: return emptyList()
-        return try {
-            val arr = org.json.JSONArray(raw)
-            (0 until arr.length()).map { arr.optString(it) }.filter { it.isNotBlank() }
-        } catch (e: Exception) {
-            emptyList()
-        }
-    }
+    private val photoStorageManager = PhotoStorageManager(context)
+    private val transport = PcServerTransport(context, repository)
+    private val claudeApi = PcClaudeApiClient(transport)
+    private val deltaSyncUploader = PcDeltaSyncUploader(transport, repository, photoStorageManager)
+    private val serverItemMergeEngine = ServerItemMergeEngine(context, transport, repository, photoStorageManager)
 
-    fun pushClaudeFreeTextHistory(text: String) {
-        val trimmed = text.trim()
-        if (trimmed.isBlank()) return
-        val next = (listOf(trimmed) + getClaudeFreeTextHistory().filter { it != trimmed }).take(3)
-        val arr = org.json.JSONArray()
-        next.forEach { arr.put(it) }
-        prefs.edit().putString("claude_free_text_history", arr.toString()).apply()
-    }
+    suspend fun pushSettingsToServer(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Boolean = transport.pushSettingsToServer(baseUrl, token)
 
-    // 「Museに送る」ジョブを作成する (フェーズ 5-3)。商品特定は itemUuid (syncUuid) を必須とする (Q1)。
-    // フェーズ 6-8: promptText を渡すと手打ちジョブになる (templateId より優先される)。
+    fun getClaudeFreeTextHistory(): List<String> = transport.getClaudeFreeTextHistory()
+    fun pushClaudeFreeTextHistory(text: String) = transport.pushClaudeFreeTextHistory(text)
+
     suspend fun createClaudeJob(
         itemId: Int,
         itemUuid: String,
@@ -257,1615 +76,155 @@ class PcServerClient(
         referenceFileName: String = "",
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): ClaudeJobCreateResult = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) {
-                return@withContext ClaudeJobCreateResult(false, message = "PCサーバーのURLが未設定です")
-            }
-            if (itemUuid.isBlank()) {
-                return@withContext ClaudeJobCreateResult(false, message = "商品の同期IDが未確定です（先にPCと同期してください）")
-            }
-            if (photos.isEmpty()) {
-                return@withContext ClaudeJobCreateResult(false, message = "送信する写真がありません")
-            }
-            val reqDto = CreateClaudeJobRequestDto(
-                itemId = itemId,
-                itemUuid = itemUuid,
-                photos = photos.map { ClaudeJobPhotoDto(md5 = it.first, fileName = it.second) },
-                templateId = templateId,
-                origin = "phone",
-                queue = queue,
-                promptText = promptText,
-                customPromptName = customPromptName,
-                registerTemplateName = registerTemplateName,
-                referenceMd5 = referenceMd5,
-                stampNumber = stampNumber,
-                referenceFileName = referenceFileName
-            )
-            val body = createClaudeJobRequestAdapter.toJson(reqDto)
-                .toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs").post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                val respStr = response.body?.string()
-                val parsed = if (!respStr.isNullOrBlank()) {
-                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                } else null
-                if (response.isSuccessful && parsed?.status == "ok" && parsed.job != null) {
-                    ClaudeJobCreateResult(
-                        true,
-                        jobId = parsed.job.jobId,
-                        templateRegistered = parsed.templateRegistered,
-                        templateRegisterError = parsed.templateRegisterError
-                    )
-                } else {
-                    ClaudeJobCreateResult(false, message = parsed?.message ?: "サーバーエラー (${response.code})")
-                }
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "createClaudeJob 例外: ${e.message}", e)
-            ClaudeJobCreateResult(false, message = "PCサーバーへ接続できませんでした")
-        }
-    }
+    ): ClaudeJobCreateResult = claudeApi.createClaudeJob(
+        itemId = itemId,
+        itemUuid = itemUuid,
+        photos = photos,
+        templateId = templateId,
+        queue = queue,
+        promptText = promptText,
+        customPromptName = customPromptName,
+        registerTemplateName = registerTemplateName,
+        referenceMd5 = referenceMd5,
+        stampNumber = stampNumber,
+        referenceFileName = referenceFileName,
+        baseUrl = baseUrl,
+        token = token
+    )
 
-    // Claude ジョブ一覧を取得する (フェーズ 5-4)。失敗時は null を返し、呼び出し側で状態を維持する。
-    // レビュー 24-4: ジョブ一覧と変化カウンタをセットで返す (反映側でカウンタも進めるため)
     suspend fun fetchClaudeJobs(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): ClaudeJobListResponseDto? = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs").get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val respStr = response.body?.string()
-                if (respStr.isNullOrBlank()) return@withContext null
-                val parsed = try { claudeJobListResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                if (parsed?.status == "ok") parsed else null
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "fetchClaudeJobs 例外: ${e.message}", e)
-            null
-        }
-    }
+    ): ClaudeJobListResponseDto? = claudeApi.fetchClaudeJobs(baseUrl, token)
 
-    // フェーズ 6-13 (§47.10): 参考画像コレクションの一覧を取得する (スマホは取得・選択のみ)。
     suspend fun fetchClaudeReferences(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): ClaudeReferencesResponseDto? = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/references").get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val respStr = response.body?.string()
-                if (respStr.isNullOrBlank()) return@withContext null
-                val parsed = try { claudeReferencesResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                if (parsed?.status == "ok") parsed else null
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "fetchClaudeReferences 例外: ${e.message}", e)
-            null
-        }
-    }
+    ): ClaudeReferencesResponseDto? = claudeApi.fetchClaudeReferences(baseUrl, token)
 
-    // フェーズ 6-13 (§47.11-3): 参考画像の表示用 URL と認証トークンを返す。
-    // PC サーバーの全ルートは Bearer 必須のため、Coil のリクエストに Authorization ヘッダーを付ける用途。
-    fun claudeReferenceImageUrl(md5: String, thumb: Boolean): Pair<String, String>? {
-        val cleanUrl = getSavedServerUrl().trimEnd('/')
-        if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || md5.isBlank()) return null
-        val path = if (thumb) "/api/claude/references/$md5/thumb" else "/api/claude/references/$md5"
-        return (cleanUrl + path) to getSavedAuthToken()
-    }
+    fun claudeReferenceImageUrl(md5: String, thumb: Boolean): Pair<String, String>? =
+        claudeApi.claudeReferenceImageUrl(md5, thumb)
 
-    // 変化カウンタだけを取得する軽量窓口 (フェーズ 6-3 / レビュー 24-4)。
-    // 認証不要・サーバー側の最終接続時刻も更新しないため、独立監視の定期確認に使う。
     suspend fun fetchClaudeRevision(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Long? = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext null
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/revision").get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val respStr = response.body?.string()
-                if (respStr.isNullOrBlank()) return@withContext null
-                val v = org.json.JSONObject(respStr).optLong("claudeRevision", -1L)
-                if (v >= 0L) v else null
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            null
-        }
-    }
+    ): Long? = claudeApi.fetchClaudeRevision(baseUrl, token)
 
-    // Claude ジョブの承認/拒否を送信する (フェーズ 5-4)。
     suspend fun postClaudeApproval(
         jobId: String,
         approved: Boolean,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val body = claudeApprovalRequestAdapter.toJson(ClaudeApprovalRequestDto(approved))
-                .toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/approval").post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string()
-                val parsed = if (!respStr.isNullOrBlank()) {
-                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                } else null
-                parsed?.status == "ok"
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "postClaudeApproval 例外: ${e.message}", e)
-            false
-        }
-    }
+    ): Boolean = claudeApi.postClaudeApproval(jobId, approved, baseUrl, token)
 
-    // Claude ジョブの完了確認 (ack) を送信する (フェーズ 5-5)。確認状態は全端末で共有される。
     suspend fun postClaudeJobAck(
         jobId: String,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/ack").post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string()
-                val parsed = if (!respStr.isNullOrBlank()) {
-                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                } else null
-                parsed?.status == "ok"
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "postClaudeJobAck 例外: ${e.message}", e)
-            false
-        }
-    }
+    ): Boolean = claudeApi.postClaudeJobAck(jobId, baseUrl, token)
 
-    // フェーズ 6-10 (§37.4): ジョブの取消 (queued / approval_pending / approved / processing が対象)
     suspend fun postClaudeJobCancel(
         jobId: String,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val body = "{}".toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/cancel").post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string()
-                val parsed = if (!respStr.isNullOrBlank()) {
-                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                } else null
-                parsed?.status == "ok"
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "postClaudeJobCancel 例外: ${e.message}", e)
-            false
-        }
-    }
+    ): Boolean = claudeApi.postClaudeJobCancel(jobId, baseUrl, token)
 
-    // フェーズ 6-5 (是正 Build 8): 加工済みラベルの一括既読化 (商品を開いたときに呼ぶ)。
-    // 応答にはサーバー確定の seenAt と labelSeenRevision が含まれ、呼び出し側で楽観値を確定させる。
-    // 失敗しても本処理は止めない (null を返す)。
     suspend fun postClaudeLabelSeen(
         itemUuids: List<String>,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): ClaudeLabelSeenResponseDto? = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            val targets = itemUuids.map { it.trim() }.filter { it.isNotEmpty() }
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || targets.isEmpty()) return@withContext null
-            val bodyJson = claudeLabelSeenBatchRequestAdapter.toJson(ClaudeLabelSeenBatchRequestDto(targets))
-            val body = bodyJson.toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/labels/seen").post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val respStr = response.body?.string()
-                if (!respStr.isNullOrBlank()) {
-                    try { claudeLabelSeenResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                } else null
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            null
-        }
-    }
+    ): ClaudeLabelSeenResponseDto? = claudeApi.postClaudeLabelSeen(itemUuids, baseUrl, token)
 
-    // Claude ジョブの所属リスト移動 (フェーズ 6-1a の move API / 6-2 の一括承認で未チェック分を待機へ戻すために使用)。
     suspend fun postClaudeJobMove(
         jobId: String,
         queue: String,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            // queue は内部定数 (patrol / manual / waiting) のみを渡す前提で JSON を直接組み立てる
-            val body = "{\"queue\":\"$queue\"}".toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/claude/jobs/$jobId/move").post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string()
-                val parsed = if (!respStr.isNullOrBlank()) {
-                    try { claudeJobResponseAdapter.fromJson(respStr) } catch (e: Exception) { null }
-                } else null
-                parsed?.status == "ok"
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "postClaudeJobMove 例外: ${e.message}", e)
-            false
-        }
-    }
+    ): Boolean = claudeApi.postClaudeJobMove(jobId, queue, baseUrl, token)
 
-    suspend fun fetchAndSyncServerSettings(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/settings").get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string() ?: return@withContext false
-                val serverDto = syncSettingsAdapter.fromJson(respStr) ?: return@withContext false
-                val localSettings = repository.defaultSettings.value
-                when {
-                    serverDto.settingsUpdatedAt > localSettings.settingsUpdatedAt -> {
-                        repository.updateDefaultSettings(
-                            applyServerSettingsDto(serverDto, localSettings),
-                            stampNow = false
-                        )
-                    }
-                    localSettings.settingsUpdatedAt > serverDto.settingsUpdatedAt -> {
-                        pushSettingsToServer(cleanUrl, token)
-                    }
-                }
-                true
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "fetchAndSyncServerSettings 例外: ${e.message}", e)
-            false
-        }
-    }
+    suspend fun fetchAndSyncServerSettings(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Boolean = transport.fetchAndSyncServerSettings(baseUrl, token)
 
-    // フェーズ 6-8 是正 (レビュー 67-2): テンプレート登録直後の設定取り直し専用。
-    // 通常の fetchAndSyncServerSettings はローカルが新しければ pushSettingsToServer で
-    // ローカル設定を押し戻すため、時計の進んだ端末では登録したばかりのテンプレートを
-    // 自分の古い promptTemplates で消してしまう。ここでは push を一切行わず、
-    // サーバーが新しければ丸ごと取り込み、ローカルが新しければ promptTemplates と
-    // settingsUpdatedAt だけをサーバーへ合わせて登録結果を必ず手元へ反映する
-    // (他の設定項目はローカルの未同期分を保持する)。
-    suspend fun fetchServerSettingsAfterTemplateRegistration(baseUrl: String = getSavedServerUrl(), token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val reqBuilder = Request.Builder().url("$cleanUrl/api/settings").get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val respStr = response.body?.string() ?: return@withContext false
-                val serverDto = syncSettingsAdapter.fromJson(respStr) ?: return@withContext false
-                val localSettings = repository.defaultSettings.value
-                if (serverDto.settingsUpdatedAt >= localSettings.settingsUpdatedAt) {
-                    repository.updateDefaultSettings(
-                        applyServerSettingsDto(serverDto, localSettings),
-                        stampNow = false
-                    )
-                } else {
-                    val serverApplied = applyServerSettingsDto(serverDto, localSettings)
-                    repository.updateDefaultSettings(
-                        localSettings.copy(
-                            promptTemplates = serverApplied.promptTemplates,
-                            settingsUpdatedAt = serverDto.settingsUpdatedAt
-                        ),
-                        stampNow = false
-                    )
-                }
-                true
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "fetchServerSettingsAfterTemplateRegistration 例外: ${e.message}", e)
-            false
-        }
-    }
+    suspend fun fetchServerSettingsAfterTemplateRegistration(
+        baseUrl: String = getSavedServerUrl(),
+        token: String = getSavedAuthToken()
+    ): Boolean = transport.fetchServerSettingsAfterTemplateRegistration(baseUrl, token)
 
-    fun getSavedStoreId(): String {
-        return prefs.getString("pc_store_id", "") ?: ""
-    }
+    fun getSavedStoreId(): String = transport.getSavedStoreId()
+    fun saveStoreId(storeId: String) = transport.saveStoreId(storeId)
+    fun getSavedAuthToken(): String = transport.getSavedAuthToken()
+    fun saveAuthToken(token: String) = transport.saveAuthToken(token)
+    fun getSavedServerUrl(): String = transport.getSavedServerUrl()
+    fun saveServerUrl(url: String) = transport.saveServerUrl(url)
 
-    fun saveStoreId(storeId: String) {
-        prefs.edit().putString("pc_store_id", storeId).apply()
-    }
-
-    fun getSavedAuthToken(): String {
-        return prefs.getString("pc_auth_token", "") ?: ""
-    }
-
-    fun saveAuthToken(token: String) {
-        prefs.edit().putString("pc_auth_token", token).apply()
-    }
-
-    fun getSavedServerUrl(): String {
-        return prefs.getString("pc_server_url", "") ?: ""
-    }
-
-    fun saveServerUrl(url: String) {
-        prefs.edit().putString("pc_server_url", url).apply()
-    }
-
-    suspend fun checkServerStatus(baseUrl: String, token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-            val url = "$cleanUrl/api/server/status"
-            val reqBuilder = Request.Builder().url(url).get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                response.isSuccessful
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            false
-        }
-    }
+    suspend fun checkServerStatus(
+        baseUrl: String,
+        token: String = getSavedAuthToken()
+    ): Boolean = transport.checkServerStatus(baseUrl, token)
 
     suspend fun sendHeartbeatWithRevision(
         baseUrl: String,
         token: String = getSavedAuthToken()
-    ): HeartbeatInfo = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext HeartbeatInfo(false)
-            val url = "$cleanUrl/api/server/heartbeat"
-            val reqBuilder = Request.Builder().url(url).get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext HeartbeatInfo(false)
-                val bodyStr = response.body?.string() ?: ""
-                if (bodyStr.isNotBlank()) {
-                    try {
-                        val json = JSONObject(bodyStr)
-                        return@withContext HeartbeatInfo(
-                            isConnected = true,
-                            dataRevision = json.optLong("dataRevision", 0L),
-                            settingsRevision = json.optLong("settingsRevision", 0L),
-                            claudeRevision = json.optLong("claudeRevision", 0L),
-                            labelSeenRevision = json.optLong("labelSeenRevision", 0L)
-                        )
-                    } catch (_: Exception) {
-                    }
-                }
-                HeartbeatInfo(isConnected = true)
-            }
-        } catch (_: Exception) {
-            HeartbeatInfo(false)
-        }
-    }
+    ): HeartbeatInfo = transport.sendHeartbeatWithRevision(baseUrl, token)
 
-    suspend fun sendHeartbeat(baseUrl: String, token: String = getSavedAuthToken()): Boolean {
-        return sendHeartbeatWithRevision(baseUrl, token).isConnected
-    }
+    suspend fun sendHeartbeat(
+        baseUrl: String,
+        token: String = getSavedAuthToken()
+    ): Boolean = transport.sendHeartbeat(baseUrl, token)
 
     suspend fun fetchPermanentlyDeletedUuids(
         baseUrl: String,
         token: String = getSavedAuthToken()
-    ): Set<String> = withContext(Dispatchers.IO) {
-        val result = mutableSetOf<String>()
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext result
-            val url = "$cleanUrl/api/server/status"
-            val reqBuilder = Request.Builder().url(url).get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: ""
-                    if (bodyStr.isNotBlank()) {
-                        val json = JSONObject(bodyStr)
-                        val arr = json.optJSONArray("permanentlyDeletedUuids")
-                        if (arr != null) {
-                            for (i in 0 until arr.length()) {
-                                val u = arr.optString(i, "").trim()
-                                if (u.isNotBlank()) result.add(u)
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (_: Exception) {
-        }
-        result
-    }
+    ): Set<String> = transport.fetchPermanentlyDeletedUuids(baseUrl, token)
 
-    suspend fun fetchServerHashes(baseUrl: String, token: String = getSavedAuthToken()): Set<String> = withContext(Dispatchers.IO) {
-        val hashSet = mutableSetOf<String>()
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext hashSet
-            val url = "$cleanUrl/api/sync/hashes"
-            val reqBuilder = Request.Builder().url(url).get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (response.isSuccessful) {
-                    val bodyStr = response.body?.string() ?: ""
-                    val json = JSONObject(bodyStr)
-                    val array = json.optJSONArray("hashes")
-                    if (array != null) {
-                        for (i in 0 until array.length()) {
-                            hashSet.add(array.getString(i))
-                        }
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            e.printStackTrace()
-        }
-        hashSet
-    }
-
-    /**
-     * プロトコル v4 syncUuid / deletedAt / tombstone / isDirty 保護付き差分双方向同期
-     */
-    suspend fun syncDeltaToPcServer(
+    suspend fun fetchServerHashes(
         baseUrl: String,
+        token: String = getSavedAuthToken()
+    ): Set<String> = transport.fetchServerHashes(baseUrl, token)
+
+    suspend fun syncDeltaToPcServer(
+        baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken(),
         onProgress: (PcSyncProgress) -> Unit = {}
-    ): PcSyncResult = withContext(Dispatchers.IO) {
-        var syncedPhotoCount = 0
-        var freedBytes = 0L
+    ): PcSyncResult = deltaSyncUploader.syncDeltaToPcServer(baseUrl, token, onProgress)
 
-        val cleanUrl = baseUrl.trimEnd('/')
-        if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) {
-            val msg = "PCサーバーURLが正しく設定されていません ($baseUrl)"
-            onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "URL未設定", errorDetail = msg))
-            return@withContext PcSyncResult(
-                isSuccess = false,
-                errorMessage = msg
-            )
-        }
-
-        try {
-            android.util.Log.i("PC_SYNC", "=== プロトコル v4 同期開始 ($cleanUrl) ===")
-            onProgress(
-                PcSyncProgress(
-                    phase = SyncPhase.SYNCING_ITEMS,
-                    progressPercent = 5,
-                    detailMessage = "商品メタデータを準備中..."
-                )
-            )
-            val savedStoreId = getSavedStoreId()
-            val dao = repository.getDao()
-            repository.cleanupGhostBlankMd5Photos()
-            // §83-4: 浄化で壊れ写真行を除去した場合は、同期進捗メッセージで UI へ通知する
-            val (cleanedGhostCount, cleanedUnrecoverableCount) = repository.consumeGhostCleanupSummary()
-            if (cleanedGhostCount > 0 || cleanedUnrecoverableCount > 0) {
-                onProgress(
-                    PcSyncProgress(
-                        phase = SyncPhase.SYNCING_ITEMS,
-                        progressPercent = 6,
-                        detailMessage = "壊れた写真参照を除去しました (完全ゴースト ${cleanedGhostCount}件・復旧不能 ${cleanedUnrecoverableCount}件)"
-                    )
-                )
-            }
-
-            // まとめ子商品・ゴミ箱内商品を含む全商品を取得して状態伝播する
-            val itemsWithPhotos = dao.getAllItemsWithPhotosForSync()
-            val pushedUpdatedAtById = itemsWithPhotos.associate { it.item.id to it.item.updatedAt }
-            val idToUuidMap = itemsWithPhotos.associate { it.item.id to it.item.syncUuid }
-            val statusByIdMap = itemsWithPhotos.associate { it.item.id to it.item.status }
-
-            val dtoList = mutableListOf<SyncItemDto>()
-            val activeFolderNames = mutableListOf<String>()
-            val photoFileMap = mutableMapOf<Int, Pair<File, String>>()
-            val expectedHashesByItemId = mutableMapOf<Int, MutableSet<String>>()
-            val hasUnresolvedLocalPhotoByItemId = mutableMapOf<Int, Boolean>()
-
-            for (itemWithPhotos in itemsWithPhotos) {
-                val item = itemWithPhotos.item
-                val photos = itemWithPhotos.photos
-
-                val safeTitle = item.title.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
-                val itemFolderName = "${item.id}_$safeTitle"
-                if (!activeFolderNames.contains(itemFolderName)) {
-                    activeFolderNames.add(itemFolderName)
-                }
-
-                val photoDtoList = mutableListOf<SyncPhotoDto>()
-                for (photo in photos) {
-                    var md5 = photo.md5Hash.trim().lowercase()
-                    val file = File(photo.filePath)
-                    if (md5.isBlank() && file.exists() && file.isFile && file.length() > 0L) {
-                        val calculated = photoStorageManager.calculateMd5(file).trim().lowercase()
-                        if (calculated.isNotBlank()) {
-                            md5 = calculated
-                            repository.withDbMutationLock {
-                                dao.updatePhotoMd5Hash(photo.id, md5)
-                            }
-                        }
-                    }
-
-                    if (md5.isBlank()) {
-                        Log.w(
-                            "PHOTO_INTEGRITY",
-                            "syncDeltaToPcServer: skipping blank-MD5 photo (itemId=${item.id}, photoId=${photo.id}, path=${photo.filePath})"
-                        )
-                        hasUnresolvedLocalPhotoByItemId[item.id] = true
-                        continue
-                    }
-
-                    expectedHashesByItemId.getOrPut(item.id) { mutableSetOf() }.add(md5)
-                    photoDtoList.add(SyncPhotoDto(id = photo.id, md5Hash = md5))
-
-                    if (file.exists() && file.isFile && file.length() > 0L) {
-                        photoFileMap[photo.id] = Pair(file, md5)
-                    }
-                }
-
-                dtoList.add(
-                    SyncItemDto(
-                        id = item.id,
-                        syncUuid = item.syncUuid,
-                        deletedAt = item.deletedAt,
-                        title = item.title,
-                        description = item.description,
-                        status = item.status,
-                        price = item.price,
-                        soldPrice = item.soldPrice,
-                        profit = item.getCalculatedProfit(repository.defaultSettings.value),
-                        statusLabel = when {
-                            item.deletedAt != null -> "ゴミ箱"
-                            item.status == "MERGED" -> mergedChildStatusLabelOf(
-                                item.mergedParentId?.let { statusByIdMap[it] } ?: "LISTED"
-                            )
-                            else -> statusLabelOf(item.status)
-                        },
-                        photos = photoDtoList,
-                        mergedParentId = item.mergedParentId,
-                        mergedParentSyncUuid = item.mergedParentId?.let { idToUuidMap[it] },
-                        mergedChildCount = item.mergedChildCount,
-                        bundleLevel = item.bundleLevel,
-                        mergedChildTitles = item.mergedChildTitles,
-                        originalTotalBundlePrice = item.originalTotalBundlePrice,
-                        discountAmount = item.discountAmount,
-                        shippingCost = item.shippingCost,
-                        feeRatePercent = item.feeRatePercent,
-                        expenseCost = item.expenseCost,
-                        useCustomSettings = item.useCustomSettings,
-                        createdAt = item.createdAt,
-                        updatedAt = item.updatedAt,
-                        soldAt = item.soldAt
-                    )
-                )
-            }
-
-            // 1. POST /api/sync/items (設定・プリセット・テンプレート・完全削除UUIDも同梱送信)
-            val currentSettings = repository.defaultSettings.value
-            val settingsDto = toSyncSettingsDto(currentSettings)
-            val pendingDeletedUuids = repository.getPendingDeletedUuids()
-            // レビュー 24-7: 送信に含める未Push写真削除の記録 (成功時にこの分だけ消去する)
-            val pendingPhotoDeletions = repository.getAllPendingPhotoDeletions()
-            val syncReq = SyncItemsRequest(
-                protocolVersion = 4,
-                storeId = savedStoreId,
-                items = dtoList,
-                activeFolderNames = activeFolderNames,
-                defaultSettings = settingsDto,
-                permanentlyDeletedUuids = pendingDeletedUuids.toList()
-            )
-
-            val reqJsonStr = syncItemsRequestAdapter.toJson(syncReq)
-            val itemsUrl = "$cleanUrl/api/sync/items"
-            val body = reqJsonStr.toRequestBody("application/json; charset=utf-8".toMediaType())
-            val reqBuilder = Request.Builder().url(itemsUrl).post(body)
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-
-            val respStoreId: String
-            val syncedHashesSet = mutableSetOf<String>()
-            val neededHashesSet = mutableSetOf<String>()
-            val serverDeletedUuids = mutableSetOf<String>()
-
-            onProgress(
-                PcSyncProgress(
-                    phase = SyncPhase.SYNCING_ITEMS,
-                    progressPercent = 10,
-                    detailMessage = "商品データ (${dtoList.size}件) をPCへ送信中..."
-                )
-            )
-
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val errMsg = "サーバーエラー応答 (POST /api/sync/items): HTTP ${response.code}"
-                    onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "メタデータ送信失敗", errorDetail = errMsg))
-                    return@withContext PcSyncResult(
-                        isSuccess = false,
-                        errorMessage = errMsg
-                    )
-                }
-
-                val respStr = response.body?.string() ?: ""
-                val respDto = syncItemsResponseAdapter.fromJson(respStr)
-                    ?: run {
-                        val errMsg = "サーバー応答のパースに失敗しました"
-                        onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "応答パース失敗", errorDetail = errMsg))
-                        return@withContext PcSyncResult(
-                            isSuccess = false,
-                            errorMessage = errMsg
-                        )
-                    }
-
-                respStoreId = respDto.storeId ?: ""
-
-                // 応答 storeId の一致検証
-                if (savedStoreId.isNotBlank() && respStoreId.isNotBlank() && !savedStoreId.equals(respStoreId, ignoreCase = true)) {
-                    val errMsg = "別の保存先です (Store ID不一致)"
-                    onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "Store ID不一致", errorDetail = errMsg))
-                    return@withContext PcSyncResult(
-                        isSuccess = false,
-                        errorMessage = errMsg
-                    )
-                }
-
-                if (savedStoreId.isBlank() && respStoreId.isNotBlank()) {
-                    saveStoreId(respStoreId)
-                }
-
-                syncedHashesSet.addAll(
-                    respDto.syncedHashes.map { it.trim().lowercase() }.filter { it.isNotBlank() }
-                )
-                neededHashesSet.addAll(
-                    respDto.neededHashes.map { it.trim().lowercase() }.filter { it.isNotBlank() }
-                )
-                serverDeletedUuids.addAll(respDto.permanentlyDeletedUuids.map { it.trim() }.filter { it.isNotBlank() })
-            }
-
-            // PCへ正常に伝達済みの完全削除UUIDをローカル待機リストから除去
-            if (pendingDeletedUuids.isNotEmpty()) {
-                repository.removePendingDeletedUuids(pendingDeletedUuids)
-            }
-
-            // レビュー 24-7: 商品データの送信で削除がサーバーへ伝わったため、送信に含めた記録を消去する
-            if (pendingPhotoDeletions.isNotEmpty()) {
-                repository.removePendingPhotoDeletions(pendingPhotoDeletions)
-            }
-
-            // サーバー側から通知された完全削除済みUUIDがあればローカルからも物理削除
-            if (serverDeletedUuids.isNotEmpty()) {
-                for (delUuid in serverDeletedUuids) {
-                    val localTarget = dao.getItemWithPhotosBySyncUuid(delUuid)
-                    if (localTarget != null &&
-                        !localTarget.item.isDirty &&
-                        !repository.isItemEditingActive(localTarget.item.id)
-                    ) {
-                        repository.permanentlyDeleteItem(localTarget, recordTombstoneForSync = false)
-                    }
-                }
-            }
-
-            // 2. neededHashes のうち、元ファイルがあるものを POST /api/sync/photo で個別送信
-            val newlyStoredHashes = mutableSetOf<String>()
-            // §83-2: Step 2 の送信失敗 (HTTP 失敗・stored != true・応答不正) を集計し、
-            // 最終結果へ反映する (旧実装は警告ログのみで成功扱いだった)
-            var failedUploadCount = 0
-            val failedUploadHashes = mutableSetOf<String>()
-            val photosToUpload = photoFileMap.values
-                .distinctBy { it.second.lowercase() }
-                .filter { (file, md5) -> neededHashesSet.contains(md5) && file.exists() }
-            val totalUploadCount = photosToUpload.size
-            val totalUploadBytes = photosToUpload.sumOf { it.first.length() }.coerceAtLeast(1L)
-            var uploadedBytesSoFar = 0L
-
-            photosToUpload.forEachIndexed { idx, (file, md5) ->
-                val photoIndex = idx + 1
-                val fileSize = file.length()
-                val baseBytesBeforeThisFile = uploadedBytesSoFar
-                val basePct = (15 + (baseBytesBeforeThisFile * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
-                onProgress(
-                    PcSyncProgress(
-                        phase = SyncPhase.UPLOADING_PHOTOS,
-                        currentPhotoIndex = photoIndex,
-                        totalPhotoCount = totalUploadCount,
-                        bytesSent = baseBytesBeforeThisFile,
-                        totalBytes = totalUploadBytes,
-                        progressPercent = basePct,
-                        detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
-                    )
-                )
-
-                val photoUrl = "$cleanUrl/api/sync/photo"
-                val photoBody = StreamingFileRequestBody(
-                    file = file,
-                    mediaType = "application/octet-stream".toMediaType(),
-                    onProgressBytes = { sentInFile ->
-                        val currentTotalSent = (baseBytesBeforeThisFile + sentInFile).coerceAtMost(totalUploadBytes)
-                        val livePct = (15 + (currentTotalSent * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
-                        onProgress(
-                            PcSyncProgress(
-                                phase = SyncPhase.UPLOADING_PHOTOS,
-                                currentPhotoIndex = photoIndex,
-                                totalPhotoCount = totalUploadCount,
-                                bytesSent = currentTotalSent,
-                                totalBytes = totalUploadBytes,
-                                progressPercent = livePct,
-                                detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
-                            )
-                        )
-                    }
-                )
-
-                val photoReqBuilder = Request.Builder()
-                    .url(photoUrl)
-                    .addHeader("X-Photo-Hash", md5)
-                    .post(photoBody)
-
-                if (token.isNotBlank()) photoReqBuilder.addHeader("Authorization", "Bearer $token")
-
-                client.newCall(photoReqBuilder.build()).execute().use { photoResp ->
-                    if (photoResp.isSuccessful) {
-                        val photoRespStr = photoResp.body?.string() ?: ""
-                        val photoRespDto = syncPhotoResponseAdapter.fromJson(photoRespStr)
-                        if (photoRespDto != null && photoRespDto.stored && photoRespDto.hash != null) {
-                            newlyStoredHashes.add(photoRespDto.hash.lowercase())
-                        } else {
-                            // §83-2: HTTP 成功でも stored でなければ未完了として集計する
-                            failedUploadCount++
-                            failedUploadHashes.add(md5)
-                            android.util.Log.w("PC_SYNC", "写真保存未確認 (MD5 $md5): stored=${photoRespDto?.stored}")
-                        }
-                    } else {
-                        failedUploadCount++
-                        failedUploadHashes.add(md5)
-                        android.util.Log.w("PC_SYNC", "写真送信失敗 (MD5 $md5): HTTP ${photoResp.code}")
-                    }
-                }
-
-                uploadedBytesSoFar += fileSize
-                val donePct = (15 + (uploadedBytesSoFar * 75 / totalUploadBytes)).toInt().coerceIn(15, 90)
-                onProgress(
-                    PcSyncProgress(
-                        phase = SyncPhase.UPLOADING_PHOTOS,
-                        currentPhotoIndex = photoIndex,
-                        totalPhotoCount = totalUploadCount,
-                        bytesSent = uploadedBytesSoFar,
-                        totalBytes = totalUploadBytes,
-                        progressPercent = donePct,
-                        detailMessage = "写真を送信中 ($photoIndex/$totalUploadCount 枚)"
-                    )
-                )
-            }
-
-            val allConfirmedHashes = syncedHashesSet + newlyStoredHashes
-
-            // §83-2: 未完了の商品 (未解決ローカル写真・未確認ハッシュ) を集計する
-            val incompleteItemIds = mutableSetOf<Int>()
-
-            // 写真アップロード完了を確認できた商品だけ isDirty を解除する
-            for ((itemId, pushedUpdatedAt) in pushedUpdatedAtById) {
-                if (hasUnresolvedLocalPhotoByItemId[itemId] == true) {
-                    Log.w("PHOTO_INTEGRITY", "syncDeltaToPcServer: keeping isDirty=true for itemId=$itemId (unresolved blank-MD5 photo)")
-                    incompleteItemIds.add(itemId)
-                    continue
-                }
-                val expectedHashes = expectedHashesByItemId[itemId].orEmpty()
-                if (expectedHashes.all { allConfirmedHashes.contains(it) }) {
-                    repository.withDbMutationLock {
-                        dao.markItemSyncedIfUnchanged(itemId, pushedUpdatedAt)
-                    }
-                } else {
-                    Log.w("PHOTO_INTEGRITY", "syncDeltaToPcServer: keeping isDirty=true for itemId=$itemId (unconfirmed photos remain)")
-                    incompleteItemIds.add(itemId)
-                }
-            }
-
-            // 3. 高画質削除判定 (条件 storeId一致 & サーバー保存確認済み & サムネイル存在 & 編集中/isDirtyでない)
-            val currentStoreId = getSavedStoreId()
-            val isStoreIdValid = currentStoreId.isNotBlank() && currentStoreId.equals(respStoreId, ignoreCase = true)
-
-            var missingOriginalCount = 0
-            val deletedOrigPaths = mutableSetOf<String>()
-
-            for (itemWithPhotos in itemsWithPhotos) {
-                val itemId = itemWithPhotos.item.id
-                if (itemWithPhotos.item.deletedAt != null) continue
-                val itemEditingAtStart = repository.isItemEditingActive(itemId)
-                val latestItemAtStart = repository.withDbMutationLock { dao.getItemWithPhotosById(itemId)?.item }
-                val itemProtectedAtStart = itemEditingAtStart ||
-                    latestItemAtStart == null ||
-                    latestItemAtStart.deletedAt != null ||
-                    latestItemAtStart.isDirty
-
-                for (photo in itemWithPhotos.photos) {
-                    var md5 = photo.md5Hash.trim().lowercase()
-                    if (md5.isBlank()) {
-                        val f = File(photo.filePath)
-                        if (f.exists() && f.isFile && f.length() > 0L) {
-                            md5 = photoStorageManager.calculateMd5(f).trim().lowercase()
-                        }
-                    }
-                    if (md5.isBlank()) continue
-
-                    val isConfirmedOnServer = allConfirmedHashes.contains(md5)
-                    if (isConfirmedOnServer) {
-                        repository.withDbMutationLock {
-                            dao.updatePhotoPcSynced(photo.id, true)
-                        }
-                    }
-
-                    if (photo.isOriginalDeleted && !isConfirmedOnServer) {
-                        missingOriginalCount++
-                    }
-
-                    if (!itemProtectedAtStart && isStoreIdValid && isConfirmedOnServer && !photo.isOriginalDeleted) {
-                        val thumbPath = photo.thumbnailPath
-                        val hasThumb = !thumbPath.isNullOrBlank() &&
-                            !thumbPath.equals(photo.filePath, ignoreCase = true) &&
-                            File(thumbPath).let { it.exists() && it.isFile && it.length() > 0L }
-                        if (hasThumb && thumbPath != null) {
-                            val file = File(photo.filePath)
-                            repository.withDbMutationLock {
-                                if (repository.isItemEditingActive(itemId) ||
-                                    repository.isFilePathProtectedByEditingOrDirty(photo.filePath)
-                                ) {
-                                    return@withDbMutationLock
-                                }
-                                val freshItem = dao.getItemWithPhotosById(itemId)?.item
-                                if (freshItem == null || freshItem.deletedAt != null || freshItem.isDirty) {
-                                    return@withDbMutationLock
-                                }
-                                if (deletedOrigPaths.contains(photo.filePath)) {
-                                    dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
-                                } else if (file.exists()) {
-                                    val fileSize = file.length()
-                                    if (file.delete()) {
-                                        deletedOrigPaths.add(photo.filePath)
-                                        freedBytes += fileSize
-                                        syncedPhotoCount++
-                                        dao.markOriginalDeletedByFilePath(photo.filePath, thumbPath)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // §83-2: Step 2 の失敗・未確認が残る場合は成功と報告しない
-            // (SyncCoordinator が SyncPhase.ERROR へ遷移し、最終同期時刻を更新しない)
-            if (failedUploadCount > 0 || incompleteItemIds.isNotEmpty()) {
-                val reason = "写真送信が未完了です (送信失敗 ${failedUploadCount}件・未確認 ${incompleteItemIds.size}商品)。再同期してください"
-                onProgress(
-                    PcSyncProgress(
-                        phase = SyncPhase.ERROR,
-                        currentPhotoIndex = totalUploadCount,
-                        totalPhotoCount = totalUploadCount,
-                        bytesSent = uploadedBytesSoFar,
-                        totalBytes = if (totalUploadCount > 0) totalUploadBytes else 0L,
-                        progressPercent = 100,
-                        detailMessage = "送信未完了 (${itemsWithPhotos.size}件)",
-                        errorDetail = reason
-                    )
-                )
-                return@withContext PcSyncResult(
-                    isSuccess = false,
-                    errorMessage = reason,
-                    syncedItemsCount = itemsWithPhotos.size,
-                    syncedPhotosCount = syncedPhotoCount,
-                    freedMb = (freedBytes / (1024 * 1024)).toInt(),
-                    missingOriginalPhotosCount = missingOriginalCount,
-                    storeId = respStoreId
-                )
-            }
-
-            onProgress(
-                PcSyncProgress(
-                    phase = SyncPhase.SUCCESS,
-                    currentPhotoIndex = totalUploadCount,
-                    totalPhotoCount = totalUploadCount,
-                    bytesSent = uploadedBytesSoFar,
-                    totalBytes = if (totalUploadCount > 0) totalUploadBytes else 0L,
-                    progressPercent = 100,
-                    detailMessage = "送信完了 (${itemsWithPhotos.size}件)"
-                )
-            )
-            return@withContext PcSyncResult(
-                isSuccess = true,
-                syncedItemsCount = itemsWithPhotos.size,
-                syncedPhotosCount = syncedPhotoCount,
-                freedMb = (freedBytes / (1024 * 1024)).toInt(),
-                missingOriginalPhotosCount = missingOriginalCount,
-                storeId = respStoreId
-            )
-        } catch (e: CancellationException) {
-            // §83-1: キャンセルを通信エラー結果へ変換せず伝播させる
-            throw e
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "プロトコル v4 同期例外: ${e.message}", e)
-            val errMsg = e.localizedMessage ?: e.message ?: "通信エラーが発生しました"
-            onProgress(PcSyncProgress(phase = SyncPhase.ERROR, detailMessage = "同期通信エラー", errorDetail = errMsg))
-            return@withContext PcSyncResult(
-                isSuccess = false,
-                errorMessage = errMsg
-            )
-        }
-    }
-
-    suspend fun fetchServerItems(baseUrl: String, token: String = getSavedAuthToken()): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val cleanUrl = baseUrl.trimEnd('/')
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext false
-
-            val permanentlyDeletedUuids = fetchPermanentlyDeletedUuids(cleanUrl, token)
-
-            val url = "$cleanUrl/api/items"
-            val reqBuilder = Request.Builder()
-                .url(url)
-                .addHeader("X-Client-Type", "phone")
-                .get()
-            if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) return@withContext false
-                val bodyStr = response.body?.string() ?: return@withContext false
-                val jsonArray = org.json.JSONArray(bodyStr)
-                mergeServerItemsFromJson(
-                    jsonArray = jsonArray,
-                    permanentlyDeletedUuids = permanentlyDeletedUuids,
-                    baseUrl = cleanUrl,
-                    token = token,
-                    repairThumbnails = true
-                )
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "fetchServerItems 例外: ${e.message}", e)
-            false
-        }
-    }
-
-    /**
-     * レビュー 24-7: isDirty 保護で商品マージをスキップする際の、写真だけの加算マージ。
-     * サーバー側の写真のうち、ローカルに無く、未Push削除の記録にも無いものだけを追加する。
-     * ローカル写真の削除・上書き、商品項目の変更は一切行わない。
-     * 実ファイルの解決は通常マージと同じ規則 (同一 MD5 の既存写真から流用) に従う。
-     */
-    private suspend fun mergeServerPhotosAdditively(
-        obj: JSONObject,
-        itemId: Int,
-        itemSyncUuid: String,
-        allExistingPhotos: List<PhotoEntity>
-    ): Boolean {
-        val photosArray = obj.optJSONArray("photos") ?: return false
-        if (photosArray.length() == 0) return false
-        val dao = repository.getDao()
-        val currentPhotos = dao.getPhotosByItemId(itemId)
-        val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }.toSet()
-        val pendingDeletions = repository.getPendingPhotoDeletions(itemSyncUuid)
-        var nextOrder = (currentPhotos.maxOfOrNull { it.displayOrder } ?: -1) + 1
-        val additions = mutableListOf<PhotoEntity>()
-        for (pIdx in 0 until photosArray.length()) {
-            val pObj = photosArray.getJSONObject(pIdx)
-            val md5 = pObj.optString("md5Hash", "").trim()
-            if (md5.isBlank()) continue
-            val md5Lower = md5.lowercase()
-            if (localHashes.contains(md5Lower)) continue
-            if (pendingDeletions.contains(md5Lower)) continue
-
-            var localFilePath = ""
-            var localThumbPath: String? = null
-            var isOrigMissing = false
-            val matched = allExistingPhotos.firstOrNull {
-                it.md5Hash.equals(md5, ignoreCase = true) &&
-                    ((it.filePath.isNotBlank() && File(it.filePath).exists()) ||
-                        (!it.thumbnailPath.isNullOrBlank() && File(it.thumbnailPath).exists()))
-            }
-            if (matched != null) {
-                val origFile = if (matched.filePath.isNotBlank()) File(matched.filePath) else null
-                val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) File(matched.thumbnailPath) else null
-                val origIsReal = origFile != null && origFile.exists() &&
-                    !matched.filePath.equals(matched.thumbnailPath, ignoreCase = true)
-                if (origIsReal) {
-                    localFilePath = matched.filePath
-                    localThumbPath = matched.thumbnailPath
-                    isOrigMissing = false
-                } else if (thumbFile != null && thumbFile.exists()) {
-                    localFilePath = matched.thumbnailPath ?: ""
-                    localThumbPath = matched.thumbnailPath
-                    isOrigMissing = true
-                } else {
-                    localFilePath = matched.filePath
-                    localThumbPath = matched.thumbnailPath
-                    isOrigMissing = matched.isOriginalDeleted
-                }
-            }
-            val hasRealOriginal = localFilePath.isNotBlank() &&
-                !localFilePath.equals(localThumbPath, ignoreCase = true) &&
-                File(localFilePath).exists()
-            additions.add(
-                PhotoEntity(
-                    itemId = itemId,
-                    filePath = localFilePath,
-                    thumbnailPath = localThumbPath,
-                    isOriginalDeleted = isOrigMissing || (!hasRealOriginal && !localThumbPath.isNullOrBlank()),
-                    isPcSynced = true,
-                    md5Hash = md5,
-                    syncStatus = "SYNCED",
-                    displayOrder = nextOrder++
-                )
-            )
-        }
-        if (additions.isNotEmpty()) {
-            dao.insertPhotos(additions)
-            return true
-        }
-        return false
-    }
-
-    /**
-     * サーバーJSON配列を syncUuid 基準・isDirty/updatedAt 保護・ID衝突回避でローカルRoomへマージする
-     */
     internal suspend fun mergeServerItemsFromJson(
         jsonArray: org.json.JSONArray,
         permanentlyDeletedUuids: Set<String> = emptySet(),
         baseUrl: String = "",
         token: String = "",
         repairThumbnails: Boolean = true
-    ): Boolean = withContext(Dispatchers.IO) {
-        val dao = repository.getDao()
-        val pendingDeletedUuids = repository.getPendingDeletedUuids()
-        val allExistingPhotos = dao.getAllItemsWithPhotosForSync().flatMap { it.photos }
+    ): Boolean = serverItemMergeEngine.mergeServerItemsFromJson(
+        jsonArray, permanentlyDeletedUuids, baseUrl, token, repairThumbnails
+    )
 
-        // 1. サーバー側で完全削除されたUUIDをローカルからも物理削除（未送信ローカル変更・編集中でない場合）
-        if (permanentlyDeletedUuids.isNotEmpty()) {
-            for (delUuid in permanentlyDeletedUuids) {
-                val cleanUuid = delUuid.trim()
-                if (cleanUuid.isBlank()) continue
-                val existingByUuid = dao.getItemWithPhotosBySyncUuid(cleanUuid)
-                if (existingByUuid != null &&
-                    !existingByUuid.item.isDirty &&
-                    !repository.isItemEditingActive(existingByUuid.item.id)
-                ) {
-                    repository.permanentlyDeleteItem(existingByUuid, recordTombstoneForSync = false)
-                }
-            }
-        }
+    suspend fun fetchServerItems(
+        baseUrl: String,
+        token: String = getSavedAuthToken()
+    ): Boolean = serverItemMergeEngine.fetchServerItems(baseUrl, token)
 
-        // 2. JSONオブジェクトを抽出＆サーバーID -> syncUuid マップ構築
-        val rawObjects = mutableListOf<JSONObject>()
-        val serverIdToUuid = mutableMapOf<Int, String>()
-        for (i in 0 until jsonArray.length()) {
-            val obj = jsonArray.optJSONObject(i) ?: continue
-            rawObjects.add(obj)
-            val sId = obj.optInt("id", 0)
-            val sUuid = obj.optString("syncUuid", "").trim()
-            if (sId > 0 && sUuid.isNotBlank()) {
-                serverIdToUuid[sId] = sUuid
-            }
-        }
-
-        // 3. 親商品を先に処理して mergedParentId のローカルID引き当てを保証
-        val sortedObjects = rawObjects.sortedBy { obj ->
-            val hasParent = obj.has("mergedParentId") && !obj.isNull("mergedParentId") && obj.optInt("mergedParentId", 0) > 0
-            if (hasParent) 1 else 0
-        }
-
-        for (obj in sortedObjects) {
-            val serverId = obj.optInt("id", 0)
-            val serverSyncUuid = obj.optString("syncUuid", "").trim()
-            if (serverId <= 0 && serverSyncUuid.isBlank()) continue
-
-            if (serverSyncUuid.isNotBlank() &&
-                (permanentlyDeletedUuids.contains(serverSyncUuid) || pendingDeletedUuids.contains(serverSyncUuid))
-            ) {
-                continue
-            }
-
-            var itemIdToRepairThumbnails: Int? = null
-            var savedTargetItemIdForRepair: Int? = null
-            repository.withDbMutationTransaction {
-                val byUuid = if (serverSyncUuid.isNotBlank()) dao.getItemWithPhotosBySyncUuid(serverSyncUuid) else null
-                val byId = if (serverId > 0) dao.getItemWithPhotosById(serverId) else null
-                val isIdCollision = (byUuid == null && byId != null && serverSyncUuid.isNotBlank() &&
-                    byId.item.syncUuid.isNotBlank() && !byId.item.syncUuid.equals(serverSyncUuid, ignoreCase = true))
-
-                val existing = byUuid ?: if (!isIdCollision) byId else null
-
-                val serverUpdatedAt = if (obj.has("updatedAt") && !obj.isNull("updatedAt")) obj.optLong("updatedAt", 0L) else 0L
-
-                // §83-7: 編集中アイテムは Pull 反映自体を保留する (saveItem の
-                // トランザクション外画像 I/O 中に写真・フィールドが置換されるのを防ぐ)。
-                // 次回同期で改めて反映される。
-                if (existing != null && repository.isItemEditingActive(existing.item.id)) {
-                    return@withDbMutationTransaction
-                }
-
-                // isDirty 保護：ローカルに未送信の変更があり、ローカル updatedAt がサーバーより新しい／同等なら上書きしない
-                if (existing != null && existing.item.isDirty &&
-                    (serverUpdatedAt <= 0L || existing.item.updatedAt >= serverUpdatedAt)
-                ) {
-                    val addedPhotos = mergeServerPhotosAdditively(obj, existing.item.id, existing.item.syncUuid, allExistingPhotos)
-                    if (addedPhotos) {
-                        itemIdToRepairThumbnails = existing.item.id
-                    }
-                    return@withDbMutationTransaction
-                }
-
-                val isLegacyDeleted = obj.optBoolean("isDeleted", false)
-                val rawDeletedAt = if (obj.has("deletedAt") && !obj.isNull("deletedAt")) obj.optLong("deletedAt", 0L).takeIf { it > 0L } else null
-                val serverDeletedAt = when {
-                    rawDeletedAt != null -> rawDeletedAt
-                    isLegacyDeleted -> existing?.item?.deletedAt ?: serverUpdatedAt.takeIf { it > 0L } ?: System.currentTimeMillis()
-                    else -> null
-                }
-
-                val title = obj.optString("title", "商品")
-                val description = obj.optString("description", "")
-                val status = obj.optString("status", "LISTED")
-                val price = obj.optInt("price", 0)
-                val soldPrice = obj.optInt("soldPrice", 0)
-
-                val rawMergedParentId = if (obj.has("mergedParentId") && !obj.isNull("mergedParentId")) {
-                    obj.optInt("mergedParentId", 0).takeIf { it > 0 }
-                } else {
-                    null
-                }
-                val rawMergedParentUuid = obj.optString("mergedParentSyncUuid", "").trim()
-                    .ifBlank { rawMergedParentId?.let { serverIdToUuid[it] } ?: "" }
-                val resolvedMergedParentId = when {
-                    rawMergedParentUuid.isNotBlank() ->
-                        dao.getItemWithPhotosBySyncUuid(rawMergedParentUuid)?.item?.id ?: rawMergedParentId
-                    else -> rawMergedParentId
-                }
-
-                val mergedChildCount = obj.optInt("mergedChildCount", 0)
-                val mergedChildTitles = obj.optString("mergedChildTitles", "")
-                val originalTotalBundlePrice = obj.optInt("originalTotalBundlePrice", 0)
-                val discountAmount = obj.optInt("discountAmount", 0)
-                val bundleLevel = obj.optInt("bundleLevel", 0)
-
-                val serverCreatedAt = if (obj.has("createdAt") && !obj.isNull("createdAt")) obj.optLong("createdAt", 0L).takeIf { it > 0L } else null
-                val serverSoldAt = if (obj.has("soldAt") && !obj.isNull("soldAt")) obj.optLong("soldAt", 0L).takeIf { it > 0L } else null
-
-                val resolvedUuid = serverSyncUuid.ifBlank {
-                    existing?.item?.syncUuid?.takeIf { it.isNotBlank() } ?: java.util.UUID.randomUUID().toString()
-                }
-
-                val targetItemId: Int
-                if (existing != null) {
-                    targetItemId = existing.item.id
-                    val resolvedCreatedAt = when {
-                        serverCreatedAt != null && existing.item.createdAt > 0L -> minOf(serverCreatedAt, existing.item.createdAt)
-                        serverCreatedAt != null -> serverCreatedAt
-                        else -> existing.item.createdAt
-                    }
-                    val resolvedUpdatedAt = if (serverUpdatedAt > 0L) serverUpdatedAt else existing.item.updatedAt
-                    val resolvedSoldAt = if (isSoldFamilyStatus(status)) {
-                        serverSoldAt ?: existing.item.soldAt
-                    } else {
-                        null
-                    }
-                    val updated = existing.item.copy(
-                        title = title,
-                        description = description,
-                        status = status,
-                        price = price,
-                        soldPrice = soldPrice,
-                        mergedParentId = resolvedMergedParentId,
-                        mergedChildCount = mergedChildCount,
-                        mergedChildTitles = if (mergedChildTitles.isNotBlank()) mergedChildTitles else existing.item.mergedChildTitles,
-                        originalTotalBundlePrice = if (originalTotalBundlePrice > 0) originalTotalBundlePrice else existing.item.originalTotalBundlePrice,
-                        discountAmount = if (discountAmount > 0) discountAmount else existing.item.discountAmount,
-                        bundleLevel = if (bundleLevel > 0) bundleLevel else existing.item.bundleLevel,
-                        shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", existing.item.shippingCost) else existing.item.shippingCost,
-                        feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", existing.item.feeRatePercent) else existing.item.feeRatePercent,
-                        expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", existing.item.expenseCost) else existing.item.expenseCost,
-                        useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", existing.item.useCustomSettings) else existing.item.useCustomSettings,
-                        isShared = true,
-                        createdAt = resolvedCreatedAt,
-                        updatedAt = resolvedUpdatedAt,
-                        soldAt = resolvedSoldAt,
-                        syncUuid = resolvedUuid,
-                        deletedAt = serverDeletedAt,
-                        isDirty = false
-                    )
-                    dao.updateItem(updated)
-                } else {
-                    val now = System.currentTimeMillis()
-                    val resolvedCreatedAt = serverCreatedAt ?: now
-                    val resolvedUpdatedAt = if (serverUpdatedAt > 0L) serverUpdatedAt else resolvedCreatedAt
-                    val resolvedSoldAt = if (isSoldFamilyStatus(status)) serverSoldAt else null
-                    // ID衝突時は id = 0 で自動採番インサートして別レコードとして保持
-                    val insertId = if (!isIdCollision && byId == null && serverId > 0) serverId else 0
-                    val newItem = com.example.myapplication.data.local.ItemEntity(
-                        id = insertId,
-                        title = title,
-                        description = description,
-                        status = status,
-                        price = price,
-                        soldPrice = soldPrice,
-                        shippingCost = if (obj.has("shippingCost") && !obj.isNull("shippingCost")) obj.optInt("shippingCost", 210) else 210,
-                        feeRatePercent = if (obj.has("feeRatePercent") && !obj.isNull("feeRatePercent")) obj.optInt("feeRatePercent", 5) else 5,
-                        expenseCost = if (obj.has("expenseCost") && !obj.isNull("expenseCost")) obj.optInt("expenseCost", 55) else 55,
-                        useCustomSettings = if (obj.has("useCustomSettings") && !obj.isNull("useCustomSettings")) obj.optBoolean("useCustomSettings", false) else false,
-                        mergedParentId = resolvedMergedParentId,
-                        mergedChildCount = mergedChildCount,
-                        mergedChildTitles = mergedChildTitles,
-                        originalTotalBundlePrice = originalTotalBundlePrice,
-                        discountAmount = discountAmount,
-                        bundleLevel = bundleLevel,
-                        isShared = true,
-                        createdAt = resolvedCreatedAt,
-                        updatedAt = resolvedUpdatedAt,
-                        soldAt = resolvedSoldAt,
-                        syncUuid = resolvedUuid,
-                        deletedAt = serverDeletedAt,
-                        isDirty = false
-                    )
-                    targetItemId = dao.insertItem(newItem).toInt()
-                }
-
-                // 写真情報の同期（空MD5エントリは除外して取り込まない）
-                val photosArray = obj.optJSONArray("photos")
-                val currentPhotos = dao.getPhotosByItemId(targetItemId)
-                val hasUnpushedLocalPhoto = currentPhotos.any {
-                    !it.isPcSynced && !it.isOriginalDeleted && it.filePath.isNotBlank() && File(it.filePath).exists()
-                }
-                val serverHashes = mutableListOf<String>()
-                if (photosArray != null) {
-                    for (pIdx in 0 until photosArray.length()) {
-                        val h = photosArray.getJSONObject(pIdx).optString("md5Hash", "").trim().lowercase()
-                        if (h.isNotBlank()) serverHashes.add(h)
-                    }
-                }
-                val localHashes = currentPhotos.map { it.md5Hash.trim().lowercase() }
-                val hashListDiffers = serverHashes != localHashes
-                val hasInvalidDisplay = currentPhotos.any { it.displayFile == null }
-
-                if (photosArray != null && photosArray.length() == 0) {
-                    if (currentPhotos.isNotEmpty() && !hasUnpushedLocalPhoto) {
-                        dao.deletePhotosByItemId(targetItemId)
-                    }
-                } else if (photosArray != null && photosArray.length() > 0) {
-                    val shouldUpdatePhotos = (existing == null) ||
-                        (!hasUnpushedLocalPhoto && (hashListDiffers || hasInvalidDisplay))
-
-                    if (shouldUpdatePhotos) {
-                        val newPhotoEntities = mutableListOf<PhotoEntity>()
-                        for (pIdx in 0 until photosArray.length()) {
-                            val pObj = photosArray.getJSONObject(pIdx)
-                            val md5 = pObj.optString("md5Hash", "").trim()
-                            if (md5.isBlank()) {
-                                Log.w("PHOTO_INTEGRITY", "mergeServerItemsFromJson: skipped blank-MD5 server photo entry (itemId=$targetItemId)")
-                                continue
-                            }
-                            val childId = pObj.optInt("childItemId", 0)
-                            var localFilePath = ""
-                            var localThumbPath: String? = null
-                            var isOrigMissing = false
-
-                            val matched = (currentPhotos + allExistingPhotos).firstOrNull {
-                                it.md5Hash.equals(md5, ignoreCase = true) &&
-                                    ((it.filePath.isNotBlank() && File(it.filePath).exists()) ||
-                                        (!it.thumbnailPath.isNullOrBlank() && File(it.thumbnailPath).exists()))
-                            }
-                            if (matched != null) {
-                                val origFile = if (matched.filePath.isNotBlank()) File(matched.filePath) else null
-                                val thumbFile = if (!matched.thumbnailPath.isNullOrBlank()) File(matched.thumbnailPath) else null
-                                val origIsReal = origFile != null && origFile.exists() &&
-                                    !matched.filePath.equals(matched.thumbnailPath, ignoreCase = true)
-                                if (origIsReal) {
-                                    localFilePath = matched.filePath
-                                    localThumbPath = matched.thumbnailPath
-                                    isOrigMissing = false
-                                } else if (thumbFile != null && thumbFile.exists()) {
-                                    localFilePath = matched.thumbnailPath ?: ""
-                                    localThumbPath = matched.thumbnailPath
-                                    isOrigMissing = true
-                                } else {
-                                    localFilePath = matched.filePath
-                                    localThumbPath = matched.thumbnailPath
-                                    isOrigMissing = matched.isOriginalDeleted
-                                }
-                            }
-
-                            if (localFilePath.isBlank() && childId > 0) {
-                                val resolvedChildId = serverIdToUuid[childId]?.let { childUuid ->
-                                    dao.getItemWithPhotosBySyncUuid(childUuid)?.item?.id
-                                } ?: childId
-                                val childPhotos = dao.getPhotosByItemId(resolvedChildId)
-                                val matchedChildPhoto = childPhotos.firstOrNull { it.md5Hash.equals(md5, ignoreCase = true) }
-                                    ?: childPhotos.getOrNull(pIdx)
-                                    ?: childPhotos.firstOrNull { cp ->
-                                        (cp.filePath.isNotBlank() && File(cp.filePath).exists()) ||
-                                            (!cp.thumbnailPath.isNullOrBlank() && File(cp.thumbnailPath).exists())
-                                    }
-
-                                if (matchedChildPhoto != null) {
-                                    val cOrig = if (matchedChildPhoto.filePath.isNotBlank()) File(matchedChildPhoto.filePath) else null
-                                    val cThumb = if (!matchedChildPhoto.thumbnailPath.isNullOrBlank()) File(matchedChildPhoto.thumbnailPath) else null
-                                    val cOrigIsReal = cOrig != null && cOrig.exists() &&
-                                        !matchedChildPhoto.filePath.equals(matchedChildPhoto.thumbnailPath, ignoreCase = true)
-                                    if (cOrigIsReal) {
-                                        localFilePath = matchedChildPhoto.filePath
-                                        localThumbPath = matchedChildPhoto.thumbnailPath
-                                        isOrigMissing = false
-                                    } else if (cThumb != null && cThumb.exists()) {
-                                        localFilePath = matchedChildPhoto.thumbnailPath ?: ""
-                                        localThumbPath = matchedChildPhoto.thumbnailPath
-                                        isOrigMissing = true
-                                    } else {
-                                        localFilePath = matchedChildPhoto.filePath
-                                        localThumbPath = matchedChildPhoto.thumbnailPath
-                                        isOrigMissing = matchedChildPhoto.isOriginalDeleted
-                                    }
-                                }
-                            }
-
-                            val hasRealOriginal = localFilePath.isNotBlank() &&
-                                !localFilePath.equals(localThumbPath, ignoreCase = true) &&
-                                File(localFilePath).exists()
-
-                            newPhotoEntities.add(
-                                PhotoEntity(
-                                    itemId = targetItemId,
-                                    filePath = localFilePath,
-                                    thumbnailPath = localThumbPath,
-                                    isOriginalDeleted = isOrigMissing || (!hasRealOriginal && !localThumbPath.isNullOrBlank()),
-                                    isPcSynced = true,
-                                    md5Hash = md5,
-                                    syncStatus = "SYNCED",
-                                    displayOrder = newPhotoEntities.size
-                                )
-                            )
-                        }
-
-                        dao.deletePhotosByItemId(targetItemId)
-                        if (newPhotoEntities.isNotEmpty()) {
-                            dao.insertPhotos(newPhotoEntities)
-                        }
-                    }
-                }
-                savedTargetItemIdForRepair = targetItemId
-            }
-
-            if (itemIdToRepairThumbnails == null && savedTargetItemIdForRepair != null) {
-                val syncedPhotos = dao.getPhotosByItemId(savedTargetItemIdForRepair!!)
-                if (syncedPhotos.any { isPhotoThumbnailDamagedOrMissing(it) }) {
-                    itemIdToRepairThumbnails = savedTargetItemIdForRepair
-                }
-            }
-
-            if (itemIdToRepairThumbnails != null && repairThumbnails && baseUrl.isNotBlank()) {
-                try {
-                    repairMissingOrCorruptThumbnailsForItem(itemIdToRepairThumbnails!!, baseUrl, token)
-                } catch (e: Exception) {
-                    if (e is CancellationException) throw e
-                    Log.e("PcServerClient", "Thumbnail repair failed for item $itemIdToRepairThumbnails", e)
-                }
-            }
-        }
-        true
-    }
-
-    /**
-     * PC サーバーから MD5 ハッシュ指定で原本写真を 16KB ストリーミングでファイルへ保存（巨大 ByteArray 確保を回避）
-     */
     suspend fun downloadPhotoToFileByHash(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken(),
         md5Hash: String,
         targetFile: File,
         verifyMd5: Boolean = true
-    ): Boolean = withContext(Dispatchers.IO) {
-        val tempFile = File(targetFile.parentFile ?: context.cacheDir, "${targetFile.name}.dl_tmp")
-        try {
-            val cleanUrl = baseUrl.trim().trimEnd('/')
-            val cleanHash = md5Hash.trim().lowercase()
-            if (cleanUrl.isBlank() || !cleanUrl.startsWith("http") || cleanHash.isBlank()) {
-                return@withContext false
-            }
-            targetFile.parentFile?.mkdirs()
-            val url = "$cleanUrl/api/photos/$cleanHash"
-            val reqBuilder = Request.Builder()
-                .url(url)
-                .addHeader("X-Client-Type", "phone")
-                .get()
-            if (token.isNotBlank()) {
-                reqBuilder.addHeader("Authorization", "Bearer $token")
-            }
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    android.util.Log.w("PC_SYNC", "写真取得失敗 ($cleanHash): HTTP ${response.code}")
-                    return@withContext false
-                }
-                val bodyStream = response.body?.byteStream() ?: return@withContext false
-                val digest = if (verifyMd5) MessageDigest.getInstance("MD5") else null
-                var totalBytes = 0L
-                bodyStream.use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(16 * 1024)
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            output.write(buffer, 0, bytesRead)
-                            digest?.update(buffer, 0, bytesRead)
-                            totalBytes += bytesRead
-                        }
-                    }
-                }
-                if (totalBytes <= 0L) {
-                    tempFile.delete()
-                    return@withContext false
-                }
-                if (verifyMd5 && digest != null) {
-                    val actualMd5 = digest.digest().joinToString("") { "%02x".format(it) }.lowercase()
-                    if (actualMd5 != cleanHash) {
-                        android.util.Log.w("PC_SYNC", "写真MD5不一致のため破棄: expected=$cleanHash actual=$actualMd5")
-                        tempFile.delete()
-                        return@withContext false
-                    }
-                }
-                if (targetFile.exists()) targetFile.delete()
-                if (!tempFile.renameTo(targetFile)) {
-                    FileInputStream(tempFile).use { inp ->
-                        FileOutputStream(targetFile).use { out -> inp.copyTo(out) }
-                    }
-                    tempFile.delete()
-                }
-                targetFile.exists() && targetFile.length() > 0L
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "downloadPhotoToFileByHash 例外: ${e.message}", e)
-            tempFile.delete()
-            false
-        }
-    }
+    ): Boolean = serverItemMergeEngine.downloadPhotoToFileByHash(baseUrl, token, md5Hash, targetFile, verifyMd5)
 
-    /**
-     * PC サーバーから MD5 ハッシュ指定で原本写真バイナリを認証付き取得（GET /api/photos/{md5Hash}）
-     */
     suspend fun downloadPhotoByHash(
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken(),
         md5Hash: String,
         verifyMd5: Boolean = true
-    ): ByteArray? = withContext(Dispatchers.IO) {
-        val tempFile = File.createTempFile("dl_mem_", ".jpg", context.cacheDir)
-        try {
-            val ok = downloadPhotoToFileByHash(baseUrl, token, md5Hash, tempFile, verifyMd5)
-            if (ok && tempFile.exists()) tempFile.readBytes() else null
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "downloadPhotoByHash 例外: ${e.message}", e)
-            null
-        } finally {
-            tempFile.delete()
-        }
-    }
+    ): ByteArray? = serverItemMergeEngine.downloadPhotoByHash(baseUrl, token, md5Hash, verifyMd5)
 
-    private fun isPhotoThumbnailDamagedOrMissing(photo: PhotoEntity): Boolean {
-        val display = photo.displayFile ?: return photo.md5Hash.isNotBlank()
-        if (display.length() <= 0L) return photo.md5Hash.isNotBlank()
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(display.absolutePath, opts)
-        if (opts.outWidth <= 0 || opts.outHeight <= 0) return photo.md5Hash.isNotBlank()
-
-        // 原本ファイルが現存していてサムネイルと別ファイルである場合のみ原本MD5との整合性もチェック
-        if (!photo.isOriginalDeleted && photo.md5Hash.isNotBlank() && photo.filePath.isNotBlank()) {
-            val orig = File(photo.filePath)
-            if (orig.exists() && !orig.absolutePath.equals(photo.thumbnailPath, ignoreCase = true)) {
-                val origMd5 = photoStorageManager.calculateMd5(orig)
-                if (origMd5.isNotBlank() && !origMd5.equals(photo.md5Hash, ignoreCase = true)) {
-                    return true
-                }
-            }
-        }
-        return false
-    }
-
-    /**
-     * サムネイル欠損または破損ファイルを検知した際、PCサーバーの /api/photos/{md5Hash} から自己修復する
-     */
     suspend fun repairMissingOrCorruptThumbnailsForItem(
         itemId: Int,
         baseUrl: String = getSavedServerUrl(),
         token: String = getSavedAuthToken()
-    ): Int = withContext(Dispatchers.IO) {
-        val cleanUrl = baseUrl.trim().trimEnd('/')
-        if (cleanUrl.isBlank() || !cleanUrl.startsWith("http")) return@withContext 0
+    ): Int = serverItemMergeEngine.repairMissingOrCorruptThumbnailsForItem(itemId, baseUrl, token)
 
-        val dao = repository.getDao()
-        val photos = dao.getPhotosByItemId(itemId)
-        val settings = repository.defaultSettings.value
-        var repairedCount = 0
-
-        for (photo in photos) {
-            if (photo.md5Hash.isBlank() || !isPhotoThumbnailDamagedOrMissing(photo)) continue
-            val tempOrig = File(context.cacheDir, "repair_${photo.md5Hash.take(16)}.jpg")
-            try {
-                val downloaded = downloadPhotoToFileByHash(cleanUrl, token, photo.md5Hash, tempOrig, verifyMd5 = true)
-                if (!downloaded) continue
-                val newThumbPath = photoStorageManager.createThumbnail(
-                    sourceFile = tempOrig,
-                    maxDim = settings.thumbnailMaxDimension,
-                    quality = settings.thumbnailQuality
-                ) ?: continue
-
-                val origExists = photo.filePath.isNotBlank() && File(photo.filePath).exists() &&
-                    !photo.filePath.equals(photo.thumbnailPath, ignoreCase = true)
-                val newFilePath = if (origExists) photo.filePath else newThumbPath
-                repository.withDbMutationLock {
-                    dao.updatePhotoRepairedThumbnail(
-                        photoId = photo.id,
-                        thumbPath = newThumbPath,
-                        isOriginalDeleted = !origExists,
-                        newFilePath = newFilePath
-                    )
-                }
-                repairedCount++
-            } finally {
-                if (tempOrig.exists()) tempOrig.delete()
-            }
-        }
-        repairedCount
-    }
-
-    /**
-     * PC サーバーへまとめ買い解除（POST /api/items/{parentId}/unmerge）を通知
-     */
-    suspend fun unmergeOnPcServer(parentId: Int): Boolean = withContext(Dispatchers.IO) {
-        val cleanUrl = getSavedServerUrl().trim().removeSuffix("/")
-        if (cleanUrl.isBlank()) return@withContext false
-        val token = getSavedAuthToken()
-        val url = "$cleanUrl/api/items/$parentId/unmerge"
-        val reqBuilder = Request.Builder().url(url).post(ByteArray(0).toRequestBody(null))
-        if (token.isNotBlank()) reqBuilder.addHeader("Authorization", "Bearer $token")
-        try {
-            client.newCall(reqBuilder.build()).execute().use { response ->
-                response.isSuccessful
-            }
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            android.util.Log.e("PC_SYNC", "unmergeOnPcServer 例外: ${e.message}", e)
-            false
-        }
-    }
+    suspend fun unmergeOnPcServer(parentId: Int): Boolean = transport.unmergeOnPcServer(parentId)
 }
-

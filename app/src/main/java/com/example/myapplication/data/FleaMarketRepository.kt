@@ -52,8 +52,6 @@ class FleaMarketRepository(private val context: Context) {
 
     val defaultSettings: StateFlow<DefaultSettings> = defaultSettingsManager.settings
 
-    private val syncTombstonePrefs =
-        context.getSharedPreferences("flea_market_sync_tombstones", Context.MODE_PRIVATE)
 
     fun setItemEditingActive(itemId: Int, active: Boolean) {
         if (itemId <= 0) return
@@ -90,199 +88,40 @@ class FleaMarketRepository(private val context: Context) {
         return false
     }
 
-    // レビュー §83-4: 直近のゴースト浄化の内訳 (同期進捗メッセージでの UI 通知用)。
-    // PcServerClient.syncDeltaToPcServer が消費して表示し、表示後にクリアする。
-    @Volatile var lastGhostCleanupGhostCount: Int = 0
-        private set
-    @Volatile var lastGhostCleanupUnrecoverableCount: Int = 0
-        private set
 
-    /** 浄化内訳を 1 回だけ取り出す (取り出すと 0 に戻る)。 */
-    fun consumeGhostCleanupSummary(): Pair<Int, Int> {
-        val ghost = lastGhostCleanupGhostCount
-        val unrecoverable = lastGhostCleanupUnrecoverableCount
-        lastGhostCleanupGhostCount = 0
-        lastGhostCleanupUnrecoverableCount = 0
-        return ghost to unrecoverable
-    }
+    private val tombstoneStore = SyncTombstoneStore(
+        context = context,
+        dao = dao,
+        photoStorageManager = photoStorageManager,
+        runInDbTransaction = { block -> withDbMutationTransaction(block) },
+        isItemEditingActive = ::isItemEditingActive
+    )
 
-    /**
-     * ローカル DB に残存する空 MD5 の壊れ写真行を安全に除去する。
-     * - 完全ゴースト: 実ファイルもサムネイルも存在しない行。
-     * - 復旧不能行 (§83-4): 原本ファイルが消失し MD5 も未確定のまま、サムネイルだけが残った行。
-     *   原本が無い以上ハッシュを確定できず、未同期カウントに残り続けると自動同期が
-     *   無限に再起動するため、隔離せず浄化し、件数は UI 通知用に記録する。
-     * 実体ファイル (原本) が存在する写真には絶対に触れない。編集中アイテムも保護する。
-     */
-    suspend fun cleanupGhostBlankMd5Photos(): Int = withContext(Dispatchers.IO) {
-        val orphanThumbPaths = mutableListOf<String>()
-        val removedTotal = withDbMutationTransaction {
-            val candidates = dao.getBlankMd5Photos()
-            if (candidates.isEmpty()) return@withDbMutationTransaction 0
+    private val trashAndMergeRepository = TrashAndMergeRepository(
+        dao = dao,
+        photoStorageManager = photoStorageManager,
+        txRunner = object : TrashAndMergeRepository.DbTxRunner {
+            override suspend fun <T> run(block: suspend () -> T): T = withDbMutationTransaction(block)
+        },
+        addPendingDeletedUuid = { uuid -> addPendingDeletedUuid(uuid) }
+    )
 
-            val ghostIds = mutableListOf<Int>()
-            val unrecoverableIds = mutableListOf<Int>()
-            val affectedItemIds = mutableSetOf<Int>()
-            for (photo in candidates) {
-                if (photo.md5Hash.isNotBlank()) continue
-                if (isItemEditingActive(photo.itemId)) continue
-                val origExists = photo.filePath.isNotBlank() &&
-                    File(photo.filePath).let { it.exists() && it.isFile && it.length() > 0L }
-                val thumbExists = !photo.thumbnailPath.isNullOrBlank() &&
-                    File(photo.thumbnailPath).let { it.exists() && it.isFile && it.length() > 0L }
-                if (!origExists && !thumbExists) {
-                    ghostIds.add(photo.id)
-                    affectedItemIds.add(photo.itemId)
-                } else if (!origExists && thumbExists) {
-                    // §83-4: 原本消失・MD5 未確定・サムネイルのみ生存 = 復旧不能行として浄化する
-                    unrecoverableIds.add(photo.id)
-                    affectedItemIds.add(photo.itemId)
-                    val thumbPath = photo.thumbnailPath
-                    if (!thumbPath.isNullOrBlank() &&
-                        dao.getPhotosReferencingPath(thumbPath).none { it.id != photo.id }
-                    ) {
-                        orphanThumbPaths.add(thumbPath)
-                    }
-                }
-            }
-            val allIds = ghostIds + unrecoverableIds
-            if (allIds.isEmpty()) return@withDbMutationTransaction 0
+    val lastGhostCleanupGhostCount: Int
+        get() = tombstoneStore.lastGhostCleanupGhostCount
+    val lastGhostCleanupUnrecoverableCount: Int
+        get() = tombstoneStore.lastGhostCleanupUnrecoverableCount
 
-            dao.deletePhotosByIds(allIds)
-            val now = System.currentTimeMillis()
-            for (affectedItemId in affectedItemIds) {
-                val remaining = dao.getPhotosByItemId(affectedItemId)
-                if (remaining.isNotEmpty()) {
-                    val reindexed = remaining.mapIndexed { idx, p ->
-                        p.copy(displayOrder = idx, updatedAt = now)
-                    }
-                    dao.updatePhotos(reindexed)
-                }
-            }
-            if (ghostIds.isNotEmpty()) {
-                Log.w("PHOTO_INTEGRITY", "Cleaned up ${ghostIds.size} orphan blank-MD5 ghost photo(s) across ${affectedItemIds.size} item(s)")
-            }
-            if (unrecoverableIds.isNotEmpty()) {
-                Log.w("PHOTO_INTEGRITY", "Cleaned up ${unrecoverableIds.size} unrecoverable blank-MD5 photo row(s) (original missing, thumbnail only)")
-                lastGhostCleanupUnrecoverableCount += unrecoverableIds.size
-            }
-            if (ghostIds.isNotEmpty()) {
-                lastGhostCleanupGhostCount += ghostIds.size
-            }
-            allIds.size
-        }
-        // 他の写真行から参照されていないサムネイル実ファイルは、行の除去に合わせて破棄する
-        for (thumbPath in orphanThumbPaths) {
-            try {
-                File(thumbPath).delete()
-            } catch (_: Exception) {
-            }
-        }
-        removedTotal
-    }
-
-    /**
-     * §83-4: 未同期写真数の判定前にゴースト浄化を行い、壊れ行で常時 > 0 にならないようにする。
-     * 自動同期・再接続ハンドシェイクの判定はこちらを使う。
-     */
-    suspend fun getUnsyncedPhotosCountAfterGhostCleanup(): Int {
-        cleanupGhostBlankMd5Photos()
-        return dao.getUnsyncedPhotosCount()
-    }
-
-    fun addPendingDeletedUuid(uuid: String) {
-        val clean = uuid.trim()
-        if (clean.isBlank()) return
-        synchronized(syncTombstonePrefs) {
-            val current = (syncTombstonePrefs.getStringSet("pending_deleted_uuids", emptySet()) ?: emptySet()).toMutableSet()
-            current.add(clean)
-            syncTombstonePrefs.edit().putStringSet("pending_deleted_uuids", current).apply()
-        }
-    }
-
-    fun getPendingDeletedUuids(): Set<String> {
-        synchronized(syncTombstonePrefs) {
-            return (syncTombstonePrefs.getStringSet("pending_deleted_uuids", emptySet()) ?: emptySet()).toSet()
-        }
-    }
-
-    fun removePendingDeletedUuids(uuids: Collection<String>) {
-        if (uuids.isEmpty()) return
-        synchronized(syncTombstonePrefs) {
-            val current = (syncTombstonePrefs.getStringSet("pending_deleted_uuids", emptySet()) ?: emptySet()).toMutableSet()
-            current.removeAll(uuids.map { it.trim() }.toSet())
-            syncTombstonePrefs.edit().putStringSet("pending_deleted_uuids", current).apply()
-        }
-    }
-
-    // レビュー 24-7: 未Pushの写真削除の記録。商品キーはローカル数値IDではなく syncUuid を使う。
-    // isDirty 中の加算マージ (PcServerClient) で、削除したはずの写真がサーバーから
-    // 復活しないよう、送信が成功するまで (syncUuid, md5Hash) を保持して除外に使う。
-    fun recordPendingPhotoDeletion(syncUuid: String, md5Hash: String) {
-        val uuid = syncUuid.trim()
-        val md5 = md5Hash.trim().lowercase()
-        if (uuid.isBlank() || md5.isBlank()) return
-        synchronized(syncTombstonePrefs) {
-            val key = "pending_deleted_photo_hashes_$uuid"
-            val current = (syncTombstonePrefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
-            current.add(md5)
-            syncTombstonePrefs.edit().putStringSet(key, current).apply()
-        }
-    }
-
-    fun getPendingPhotoDeletions(syncUuid: String): Set<String> {
-        val uuid = syncUuid.trim()
-        if (uuid.isBlank()) return emptySet()
-        synchronized(syncTombstonePrefs) {
-            return (syncTombstonePrefs.getStringSet("pending_deleted_photo_hashes_$uuid", emptySet()) ?: emptySet()).toSet()
-        }
-    }
-
-    fun getAllPendingPhotoDeletions(): Map<String, Set<String>> {
-        synchronized(syncTombstonePrefs) {
-            val result = mutableMapOf<String, Set<String>>()
-            for ((key, value) in syncTombstonePrefs.all) {
-                if (key.startsWith("pending_deleted_photo_hashes_") && value is Set<*>) {
-                    @Suppress("UNCHECKED_CAST")
-                    result[key.removePrefix("pending_deleted_photo_hashes_")] = (value as Set<String>).toSet()
-                }
-            }
-            return result
-        }
-    }
-
-    // 送信に含めた記録だけを消去する (送信中に新たに記録された分は残す)
-    fun removePendingPhotoDeletions(recorded: Map<String, Set<String>>) {
-        if (recorded.isEmpty()) return
-        synchronized(syncTombstonePrefs) {
-            val editor = syncTombstonePrefs.edit()
-            for ((uuid, hashes) in recorded) {
-                val key = "pending_deleted_photo_hashes_$uuid"
-                val current = (syncTombstonePrefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
-                current.removeAll(hashes)
-                if (current.isEmpty()) editor.remove(key) else editor.putStringSet(key, current)
-            }
-            editor.apply()
-        }
-    }
-
-    // 削除した写真と同一 MD5 の写真をその場で再追加した場合は、その記録を解除する
-    fun releasePendingPhotoDeletion(syncUuid: String, md5Hash: String) {
-        val uuid = syncUuid.trim()
-        val md5 = md5Hash.trim().lowercase()
-        if (uuid.isBlank() || md5.isBlank()) return
-        synchronized(syncTombstonePrefs) {
-            val key = "pending_deleted_photo_hashes_$uuid"
-            val current = (syncTombstonePrefs.getStringSet(key, emptySet()) ?: emptySet()).toMutableSet()
-            if (current.remove(md5)) {
-                if (current.isEmpty()) {
-                    syncTombstonePrefs.edit().remove(key).apply()
-                } else {
-                    syncTombstonePrefs.edit().putStringSet(key, current).apply()
-                }
-            }
-        }
-    }
+    fun consumeGhostCleanupSummary(): Pair<Int, Int> = tombstoneStore.consumeGhostCleanupSummary()
+    suspend fun cleanupGhostBlankMd5Photos(): Int = tombstoneStore.cleanupGhostBlankMd5Photos()
+    suspend fun getUnsyncedPhotosCountAfterGhostCleanup(): Int = tombstoneStore.getUnsyncedPhotosCountAfterGhostCleanup()
+    fun addPendingDeletedUuid(uuid: String) = tombstoneStore.addPendingDeletedUuid(uuid)
+    fun getPendingDeletedUuids(): Set<String> = tombstoneStore.getPendingDeletedUuids()
+    fun removePendingDeletedUuids(uuids: Collection<String>) = tombstoneStore.removePendingDeletedUuids(uuids)
+    fun recordPendingPhotoDeletion(syncUuid: String, md5Hash: String) = tombstoneStore.recordPendingPhotoDeletion(syncUuid, md5Hash)
+    fun getPendingPhotoDeletions(syncUuid: String): Set<String> = tombstoneStore.getPendingPhotoDeletions(syncUuid)
+    fun getAllPendingPhotoDeletions(): Map<String, Set<String>> = tombstoneStore.getAllPendingPhotoDeletions()
+    fun removePendingPhotoDeletions(recorded: Map<String, Set<String>>) = tombstoneStore.removePendingPhotoDeletions(recorded)
+    fun releasePendingPhotoDeletion(syncUuid: String, md5Hash: String) = tombstoneStore.releasePendingPhotoDeletion(syncUuid, md5Hash)
 
     fun updateDefaultSettings(newSettings: DefaultSettings, stampNow: Boolean = true) {
         defaultSettingsManager.updateSettings(newSettings, stampNow)
@@ -734,10 +573,7 @@ class FleaMarketRepository(private val context: Context) {
         }
     }
 
-    /**
-     * 複数商品を「まとめ買い」出品として統合
-     * 出品中（LISTED）のまままとめ買い商品を作成し、子商品の関係を保持
-     */
+
     suspend fun mergeItems(
         mergedTitle: String,
         mergedDescription: String,
@@ -747,118 +583,16 @@ class FleaMarketRepository(private val context: Context) {
         newExpenseCost: Int,
         childItemIds: List<Int>,
         asStatus: String = "LISTED"
-    ): Long = withDbMutationTransaction {
-        val distinctIds = childItemIds.distinct()
-        require(distinctIds.size >= 2) { "まとめ買いには2点以上の異なる商品が必要です" }
-        require(asStatus in setOf("DRAFT", "DRAFT_DONE", "LISTED", "SHIPPING", "SOLD")) { "無効なステータスです: $asStatus" }
-        val childItems = dao.getItemsWithPhotosByIds(distinctIds)
-        require(childItems.size == distinctIds.size) { "対象の商品の一部が見つかりません" }
-        for (c in childItems) {
-            require(c.item.deletedAt == null) { "ゴミ箱内の商品はまとめられません: ${c.item.title}" }
-            require(c.item.mergedParentId == null && c.item.status != "MERGED") { "既にまとめ済みの商品は選択できません: ${c.item.title}" }
-            require(!isSoldFamilyStatus(c.item.status)) { "売却済み・発送待ちの商品はまとめられません: ${c.item.title}" }
-        }
-        val childTitles = childItems.joinToString(", ") { "【${it.item.title}】¥${it.item.price}" }
-        val originalTotal = childItems.sumOf { it.item.price }
-        val discount = (originalTotal - totalSoldPrice).coerceAtLeast(0)
-        val maxChildLevel = childItems.maxOfOrNull { it.item.bundleLevel } ?: 0
-        val totalChildCount = childItems.sumOf { if (it.item.mergedChildCount > 0) it.item.mergedChildCount else 1 }
+    ): Long = trashAndMergeRepository.mergeItems(
+        mergedTitle, mergedDescription, totalSoldPrice, newShippingCost,
+        newFeeRatePercent, newExpenseCost, childItemIds, asStatus
+    )
 
-        val now = System.currentTimeMillis()
-
-        // 1. 新しいまとめ商品の作成 (デフォルトで LISTED 出品中)
-        val parentItem = ItemEntity(
-            title = mergedTitle,
-            description = mergedDescription,
-            status = asStatus,
-            price = totalSoldPrice,
-            soldPrice = if (isSoldFamilyStatus(asStatus)) totalSoldPrice else 0,
-            shippingCost = newShippingCost,
-            feeRatePercent = newFeeRatePercent,
-            expenseCost = newExpenseCost,
-            useCustomSettings = true,
-            mergedChildCount = totalChildCount,
-            mergedChildTitles = childTitles,
-            originalTotalBundlePrice = originalTotal,
-            discountAmount = discount,
-            bundleLevel = maxChildLevel + 1,
-            createdAt = now,
-            updatedAt = now,
-            soldAt = if (isSoldFamilyStatus(asStatus)) now else null,
-            syncUuid = java.util.UUID.randomUUID().toString(),
-            deletedAt = null,
-            isDirty = true
-        )
-        val parentId = dao.insertItem(parentItem).toInt()
-
-        // 2. 元の個別商品のステータスを「MERGED」に更新（通常一覧から除外、履歴保持）
-        dao.markItemsMerged(distinctIds, parentId, now)
-
-        // 3. 元の各商品の写真をすべて親商品に引き継ぎ（MD5ハッシュも継承）
-        val parentPhotos = mutableListOf<PhotoEntity>()
-        var order = 0
-        for (child in childItems) {
-            for (p in child.photos) {
-                parentPhotos.add(
-                    p.copy(
-                        id = 0,
-                        itemId = parentId,
-                        displayOrder = order++,
-                        md5Hash = p.md5Hash
-                    )
-                )
-            }
-        }
-        dao.insertPhotos(parentPhotos)
-
-        parentId.toLong()
-    }
-
-    /**
-     * まとめ買い出品を解除（バラす）
-     * 子商品のステータスを LISTED に戻し、mergedParentId を解除。
-     * 親商品とその写真レコードを削除し、親 syncUuid を完全削除記録へ追加する。
-     */
-    suspend fun unmergeItem(parentId: Int) {
-        val deletedUuid = withDbMutationTransaction {
-            val parent = dao.getItemWithPhotosById(parentId) ?: return@withDbMutationTransaction ""
-            val now = System.currentTimeMillis()
-            dao.restoreMergedChildren(parentId, now)
-            dao.deletePhotosByItemId(parentId)
-            dao.deleteItem(parent.item)
-            parent.item.syncUuid
-        }
-        if (deletedUuid.isNotBlank()) {
-            addPendingDeletedUuid(deletedUuid)
-        }
-    }
-
-    /**
-     * まとめ商品の内包する子商品一覧を取得
-     */
-    suspend fun getMergedChildItemsWithPhotos(parentId: Int): List<ItemWithPhotos> {
-        return dao.getMergedChildItemsWithPhotos(parentId)
-    }
-
-    /**
-     * 論理削除（ゴミ箱へ移動）：写真ファイルは保持し、30日間復元可能にする
-     */
-    suspend fun moveToTrash(itemWithPhotos: ItemWithPhotos) {
-        withDbMutationTransaction {
-            val now = System.currentTimeMillis()
-            dao.softDeleteItem(itemWithPhotos.item.id, now, now)
-            if (itemWithPhotos.item.mergedChildCount > 0) {
-                dao.softDeleteChildrenByParent(itemWithPhotos.item.id, now, now)
-            }
-        }
-    }
-
-    /**
-     * 既存呼び出し互換のための削除エントリ（論理削除を実行）
-     */
-    suspend fun deleteItem(itemWithPhotos: ItemWithPhotos) {
-        moveToTrash(itemWithPhotos)
-    }
+    suspend fun unmergeItem(parentId: Int) = trashAndMergeRepository.unmergeItem(parentId)
+    suspend fun getMergedChildItemsWithPhotos(parentId: Int): List<ItemWithPhotos> =
+        trashAndMergeRepository.getMergedChildItemsWithPhotos(parentId)
+    suspend fun moveToTrash(itemWithPhotos: ItemWithPhotos) = trashAndMergeRepository.moveToTrash(itemWithPhotos)
+    suspend fun deleteItem(itemWithPhotos: ItemWithPhotos) = trashAndMergeRepository.deleteItem(itemWithPhotos)
 
     /**
      * 写真を1枚単位で削除（残存PhotoEntityのID再採番を行わず、対象のみ削除＋未参照ファイル整理＋isDirty更新）
@@ -945,180 +679,18 @@ class FleaMarketRepository(private val context: Context) {
         return count
     }
 
-    /**
-     * ゴミ箱から元の出品状態へ復元
-     */
-    suspend fun restoreFromTrash(itemId: Int) {
-        withDbMutationTransaction {
-            val now = System.currentTimeMillis()
-            dao.restoreFromTrash(itemId, now)
-            dao.restoreChildrenByParent(itemId, now)
-        }
-    }
 
-    suspend fun moveItemsToTrash(itemIds: List<Int>): Int {
-        var count = 0
-        for (id in itemIds.distinct()) {
-            val itemWithPhotos = dao.getItemWithPhotosById(id) ?: continue
-            moveToTrash(itemWithPhotos)
-            count++
-        }
-        return count
-    }
-
-    suspend fun restoreItemsFromTrash(itemIds: List<Int>): Int {
-        var count = 0
-        for (id in itemIds.distinct()) {
-            restoreFromTrash(id)
-            count++
-        }
-        return count
-    }
-
-    suspend fun permanentlyDeleteItemsFromTrash(itemIds: List<Int>): Int {
-        var count = 0
-        for (id in itemIds.distinct()) {
-            val itemWithPhotos = dao.getItemWithPhotosById(id) ?: continue
-            permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
-            count++
-        }
-        return count
-    }
-
-    suspend fun batchUpdateItems(itemIds: List<Int>, spec: BatchEditSpec): Int {
-        return withDbMutationTransaction {
-            val now = System.currentTimeMillis()
-            var updatedCount = 0
-            for (id in itemIds.distinct()) {
-                val existing = dao.getItemWithPhotosById(id)?.item ?: continue
-                if (existing.deletedAt != null || existing.status == "MERGED") continue
-
-                val nextPrice = when (spec.priceMode) {
-                    BatchPriceMode.NONE -> existing.price
-                    BatchPriceMode.FIXED -> spec.priceValue.coerceAtLeast(0)
-                    BatchPriceMode.DELTA_YEN -> (existing.price + spec.priceValue).coerceAtLeast(0)
-                    BatchPriceMode.DELTA_PERCENT -> (existing.price + (existing.price * spec.priceValue) / 100).coerceAtLeast(0)
-                }
-
-                val nextStatus = spec.newStatus ?: existing.status
-                val nextSoldAt = if (isSoldFamilyStatus(nextStatus)) (existing.soldAt ?: now) else null
-                val nextSoldPrice = when {
-                    !isSoldFamilyStatus(nextStatus) -> 0
-                    spec.priceMode != BatchPriceMode.NONE -> nextPrice
-                    existing.soldPrice > 0 -> existing.soldPrice
-                    else -> nextPrice
-                }
-
-                val updated = existing.copy(
-                    status = nextStatus,
-                    price = nextPrice,
-                    soldPrice = nextSoldPrice,
-                    soldAt = nextSoldAt,
-                    useCustomSettings = if (spec.applyCostPreset) spec.useCustomSettings else existing.useCustomSettings,
-                    feeRatePercent = if (spec.applyCostPreset) spec.feeRatePercent.coerceAtLeast(0) else existing.feeRatePercent,
-                    shippingCost = if (spec.applyCostPreset) spec.shippingCost.coerceAtLeast(0) else existing.shippingCost,
-                    expenseCost = if (spec.applyCostPreset) spec.expenseCost.coerceAtLeast(0) else existing.expenseCost,
-                    updatedAt = now,
-                    isDirty = true
-                )
-                dao.updateItem(updated)
-                updatedCount++
-            }
-            updatedCount
-        }
-    }
-
-    /**
-     * 完全削除：他アイテムから参照されていない写真ファイルとDBレコードを物理削除する
-     */
-    suspend fun permanentlyDeleteItem(
-        itemWithPhotos: ItemWithPhotos,
-        recordTombstoneForSync: Boolean = true
-    ) {
-        val item = itemWithPhotos.item
-        if (item.mergedChildCount > 0) {
-            val children = dao.getMergedChildItemsWithPhotos(item.id)
-            for (child in children) {
-                deleteSingleItemPhysically(child, recordTombstoneForSync)
-            }
-        }
-        deleteSingleItemPhysically(itemWithPhotos, recordTombstoneForSync)
-    }
-
-    private suspend fun deleteSingleItemPhysically(
-        itemWithPhotos: ItemWithPhotos,
-        recordTombstoneForSync: Boolean
-    ) {
-        val item = itemWithPhotos.item
-        val unreferencedPhotos = withDbMutationTransaction {
-            val fresh = dao.getItemWithPhotosById(item.id)
-            val targetItem = fresh?.item ?: item
-            val targetPhotos = fresh?.photos ?: itemWithPhotos.photos
-            val otherPhotos = dao.getPhotosExcludingItem(targetItem.id)
-            val referencedPaths = HashSet<String>()
-            for (p in otherPhotos) {
-                if (p.filePath.isNotBlank()) referencedPaths.add(p.filePath)
-                if (!p.thumbnailPath.isNullOrBlank()) referencedPaths.add(p.thumbnailPath)
-            }
-
-            val toDelete = targetPhotos.mapNotNull { p ->
-                val origOk = p.filePath.isNotBlank() && !referencedPaths.contains(p.filePath)
-                val thumbOk = !p.thumbnailPath.isNullOrBlank() && !referencedPaths.contains(p.thumbnailPath)
-                if (!origOk && !thumbOk) {
-                    null
-                } else {
-                    p.copy(
-                        filePath = if (origOk) p.filePath else "",
-                        thumbnailPath = if (thumbOk) p.thumbnailPath else null
-                    )
-                }
-            }
-            dao.deletePhotosByItemId(targetItem.id)
-            dao.deleteItem(targetItem)
-            toDelete
-        }
-        if (unreferencedPhotos.isNotEmpty()) {
-            photoStorageManager.deletePhotoFiles(unreferencedPhotos)
-        }
-        if (recordTombstoneForSync && item.syncUuid.isNotBlank()) {
-            addPendingDeletedUuid(item.syncUuid)
-        }
-    }
-
-    /**
-     * ゴミ箱を空にする（現在ゴミ箱にある全商品を完全削除）
-     */
-    suspend fun emptyTrash(): Int {
-        val trashed = dao.getTrashedItemsWithPhotosDirect()
-        for (item in trashed) {
-            permanentlyDeleteItem(item, recordTombstoneForSync = true)
-        }
-        return trashed.size
-    }
-
-    /**
-     * ゴミ箱投入から保持日数を超えた商品を自動完全削除
-     */
-    suspend fun purgeExpiredTrash(retentionDays: Int = 30): Int {
-        val cutoffMs = System.currentTimeMillis() - (retentionDays * 24L * 60L * 60L * 1000L)
-        val expired = dao.getExpiredTrashedItemsDirect(cutoffMs)
-        if (expired.isEmpty()) return 0
-
-        var purgedCount = 0
-        for (itemWithPhotos in expired.filter { it.item.mergedParentId == null }) {
-            if (dao.getItemWithPhotosById(itemWithPhotos.item.id) != null) {
-                permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
-                purgedCount++
-            }
-        }
-        for (itemWithPhotos in expired.filter { it.item.mergedParentId != null }) {
-            if (dao.getItemWithPhotosById(itemWithPhotos.item.id) != null) {
-                permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync = true)
-                purgedCount++
-            }
-        }
-        return purgedCount
-    }
+    suspend fun restoreFromTrash(itemId: Int) = trashAndMergeRepository.restoreFromTrash(itemId)
+    suspend fun moveItemsToTrash(itemIds: List<Int>): Int = trashAndMergeRepository.moveItemsToTrash(itemIds)
+    suspend fun restoreItemsFromTrash(itemIds: List<Int>): Int = trashAndMergeRepository.restoreItemsFromTrash(itemIds)
+    suspend fun permanentlyDeleteItemsFromTrash(itemIds: List<Int>): Int =
+        trashAndMergeRepository.permanentlyDeleteItemsFromTrash(itemIds)
+    suspend fun batchUpdateItems(itemIds: List<Int>, spec: BatchEditSpec): Int =
+        trashAndMergeRepository.batchUpdateItems(itemIds, spec)
+    suspend fun permanentlyDeleteItem(itemWithPhotos: ItemWithPhotos, recordTombstoneForSync: Boolean = true) =
+        trashAndMergeRepository.permanentlyDeleteItem(itemWithPhotos, recordTombstoneForSync)
+    suspend fun emptyTrash(): Int = trashAndMergeRepository.emptyTrash()
+    suspend fun purgeExpiredTrash(retentionDays: Int = 30): Int = trashAndMergeRepository.purgeExpiredTrash(retentionDays)
 
     fun getPhotoStorageManager(): PhotoStorageManager = photoStorageManager
     fun getDao(): ItemDao = dao

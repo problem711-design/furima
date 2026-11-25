@@ -282,3 +282,16 @@
 - **2026-11-21**: フェーズ 6-15 を v1.5 Build 20 (1520) として実装（報告 §95）。§94.2 の条件 3 点（コンストラクタ既定 true・視覚整合・§46 改訂文 §50.5）と §94.1 メモ（参考画像取得の失敗区別）を反映。CI 検証・レビュー待ち
 - **2026-11-21**: Build 20 初回 CI の単体テスト失敗は Robolectric のアーティファクト取得失敗（環境起因）と特定し §95.4 に記録。再実行で確認する
 - **2026-11-21**: Build 20 の CI 再実行が全ジョブ成功。§95.5 に記録
+
+- **2026-11-25**: **Phase D 完了 (`AUDIT-018`, `AUDIT-019`, `AUDIT-020` ＋ 第 5 章 モノリス解体)**
+  - **Step D1（PC側モノリス分割・リポ整理・C# テスト）**:
+    - 巨大バイナリ／配布物の Git 追跡を解除し、`.gitignore` へ追記。未使用 Vite テンプレート (`index.html`, `package.json`, `vite.config.ts`, `tsconfig.json`, `src/`) およびデッドコード (`DefaultSettingsDialog.kt`, `SummaryHeaderCard.kt`) を削除、過去ログ・計画書を `docs/archive/` へ整理 (`AUDIT-018`)。
+    - `TunnelQrForm.cs` の `StringFormat` を `using` で解放、`FurimaSyncNative.cs` を `Task.Delay` ベースの非同期ループ・Bearer トークン認証・拡張子自動判定・アトミック書込へ改修 (`AUDIT-019`)。
+    - `tools/DashboardHtml.cs` を埋め込みリソース `tools/web/dashboard.html` 読み込みへ簡素化し、`tools/FurimaServerNative.cs` を 9 本の `partial class` (`Core`, `Auth`, `Persistence`, `Sync`, `Items`, `Photos`, `MuseRef`, `Claude`, `ClaudeDelivery`) へ分割。
+    - `tools/tests/FurimaServerTests.cs` を追加し、`build-exe.bat` および GitHub Actions CI (`build-check.yml`) へ組込み (`AUDIT-020`)。JS 回帰テスト 20 件も `tools/web/dashboard.html` 対応で全通過。
+  - **Step D2（Android側データ層・ViewModel・UI 分割 ＋ 単体 / Robolectric UI テスト）**:
+    - `FleaMarketRepository.kt` から `SyncTombstoneStore.kt` / `TrashAndMergeRepository.kt` を分離。
+    - `PcServerClient.kt` を `PcServerTransport.kt` / `PcClaudeApiClient.kt` / `PcDeltaSyncUploader.kt` / `ServerItemMergeEngine.kt` へ分割（既存公開 API・テスト互換を維持）。
+    - `FleaMarketViewModel.kt` (1,746 → 547 行) から `ItemFilterSorter.kt` / `MaintenanceExportHelper.kt` / `ClaudeWorkflowController.kt` / `PcSyncController.kt` を抽出。
+    - UI 部品として `ItemEditHelpers.kt`・`Camera2ProControls.kt`・`CompactItemCard.kt`・`ItemListHeaderComponents.kt`・`SettingsStorageHelpers.kt` を分離。
+    - `ItemFilterSorterTest.kt`（検索クエリ・`PROFIT_DESC` 再計算・売上集計）と `ItemListAndMergeUiTest.kt`（`CompactItemCard` の `MERGED` 非選択、`MergeItemsDialog` の候補削除再計算と手動編集後再生成ボタン）を追加 (`AUDIT-020`)。
