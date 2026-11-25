@@ -139,6 +139,55 @@ public static class FurimaServerTests
                 AssertEquals("100.64.1.50", SyncStore.GetTrustedMuseIp(), "trustedMuseIp lost on reload");
                 AssertTrue(SyncStore.GetLastClaudePatrolContactAt() == ts, "lastClaudePatrolContactAt lost on reload");
             });
+
+            RunTest("ClaudeJobStore.WakeOnStartupIfExecutable bumps revision only when approved/processing jobs exist", () =>
+            {
+                string syncDir = Path.Combine(tempRoot, "wake_startup_test");
+                Directory.CreateDirectory(syncDir);
+                SyncStore.SetSyncDirForTest(syncDir);
+                ClaudeJobStore.ResetCacheForTest();
+
+                var waitingJob = new ClaudeJob
+                {
+                    itemId = 1,
+                    itemUuid = "uuid-wait",
+                    itemTitle = "wait item",
+                    queue = "waiting",
+                    templateId = "t1",
+                    templateName = "tmpl",
+                    photos = new List<ClaudeJobPhoto> { new ClaudeJobPhoto { md5 = "0123456789abcdef0123456789abcdef", fileName = "a.jpg" } }
+                };
+                ClaudeJobStore.CreateJob(waitingJob);
+                long revBefore = ClaudeJobStore.GetRevision();
+                AssertTrue(!ClaudeJobStore.WakeOnStartupIfExecutable(), "Waiting job alone should not trigger startup wake");
+                AssertTrue(ClaudeJobStore.GetRevision() == revBefore, "Revision should not change when no executable jobs");
+
+                var patrolJob = new ClaudeJob
+                {
+                    itemId = 2,
+                    itemUuid = "uuid-app",
+                    itemTitle = "approved item",
+                    queue = "patrol",
+                    templateId = "t1",
+                    templateName = "tmpl",
+                    photos = new List<ClaudeJobPhoto> { new ClaudeJobPhoto { md5 = "abcdef0123456789abcdef0123456789", fileName = "b.jpg" } }
+                };
+                var createdPatrol = ClaudeJobStore.CreateJob(patrolJob);
+                ClaudeJobStore.MutateJob(createdPatrol.jobId, j =>
+                {
+                    j.status = "approved";
+                    j.jobToken = "tok-keep";
+                    return true;
+                });
+                long revAfterApprove = ClaudeJobStore.GetRevision();
+                ClaudeJobStore.ResetCacheForTest();
+
+                AssertTrue(ClaudeJobStore.WakeOnStartupIfExecutable(), "Approved job should trigger startup wake");
+                AssertTrue(ClaudeJobStore.GetRevision() == revAfterApprove + 1, "Revision should increment by 1 on startup wake");
+                var reloaded = ClaudeJobStore.GetJob(createdPatrol.jobId);
+                AssertEquals("approved", reloaded.status, "Startup wake must not mutate job status");
+                AssertEquals("tok-keep", reloaded.jobToken, "Startup wake must not mutate jobToken");
+            });
         }
         finally
         {

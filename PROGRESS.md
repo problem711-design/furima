@@ -98,6 +98,7 @@
   - **P4 / P5**: `GET /api/claude/revision` への `executableCount` / `serverBootId` 同梱案を §6 選択肢に追加。権限変更を伴う待ち受け方式変更は行わず、現行 `HttpListener` のまま待ち受けモード可視化＋クイック再起動時の 8080 確保リトライを定義。
 - **最終決定（2026-11-25・着工）**: ユーザー判断により、**P3 は「案B（自動待機落ちの完全廃止）＋ `processing` 完全延長なし＆ `done_with_errors` 停止」** に確定。P4 サーバー補助・P5 待ち受け可視化＆8080リトライ・信頼済み IP 未設定警告をすべて同梱し、各フェーズ完了ごとにコミット＆プッシュのうえ、本バッチ完了をもって **`v1.6 (Build 1)`**（`versionCode = 1601`）へ全箇所更新する。
 - **Phase P1 完了**: `FurimaServerNative.Auth.cs`（`IsTrustedClaudeIp` 共通化）・`SyncStore.cs`（`lastClaudePatrolContactAt` 永続化）・`FurimaServerNative.Core.cs`（監視コンタクト `lastClaudeWatchContactAt` / 実巡回 `lastClaudePatrolContactAt` / `trustedMuseIpConfigured` の status 応答）・`dashboard.html`（最終監視・最終巡回の相対表示と許可アドレス未設定警告）・`FurimaServerTests.cs`（IP 判定・永続化テスト）を実装。
+- **Phase P2 完了**: `ClaudeJobStore.cs`（`WakeOnStartupIfExecutable`）・`FurimaServerNative.Core.cs`（起動時自動ウェイク実行＋ `POST /api/claude/wake` ルート）・`FurimaServerNative.Claude.cs`（`HandleWakeClaudePatrol`: PC ローカル＋Bearer 必須）・`dashboard.html`（「巡回を起こし直す」ボタン）・`FurimaServerTests.cs`（起動時ウェイク単体テスト）を実装。
 
 ### [2026-11-20] 写真同期整合性バグ修正 ＆ 画面オフ耐性強化 (バージョン 1.4 Build 17)
 - `PLAN_PHOTO_SYNC_INTEGRITY_FIX.md` の 5 本柱を最優先バッチとして実装完了した（詳細報告は `REVIEW_CLAUDE_SEND_PHASE6.md` §82）。

@@ -643,6 +643,55 @@ public static class ClaudeJobStore
         }
     }
 
+    internal static void ResetCacheForTest()
+    {
+        lock (_jobLock)
+        {
+            _jobList = null;
+            _claudeRevision = 0;
+            _labelSeenAt = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            _labelSeenRevision = 0;
+        }
+    }
+
+    private static int CountExecutableJobsLocked()
+    {
+        int count = 0;
+        if (_jobList == null) return 0;
+        foreach (var job in _jobList)
+        {
+            if (job != null && (job.status == "approved" || job.status == "processing"))
+            {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    public static int CountExecutableJobs()
+    {
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            return CountExecutableJobsLocked();
+        }
+    }
+
+    // サーバー起動時に実行可能ジョブ (approved / processing) が残っていれば
+    // ジョブ状態を変えずに claudeRevision を 1 つ進め、次のポーリングで確実に再起床させる (P2)。
+    public static bool WakeOnStartupIfExecutable()
+    {
+        lock (_jobLock)
+        {
+            LoadJobsLocked();
+            if (CountExecutableJobsLocked() <= 0) return false;
+            if (_claudeRevision <= 0) _claudeRevision = 1;
+            _claudeRevision++;
+            SaveJobsLocked();
+            return true;
+        }
+    }
+
     // サーバー起動時に呼ぶ。古い終端ジョブの掃除だけを行う。
     public static void CleanupOnStartup()
     {

@@ -208,6 +208,12 @@
                     <button type='button' onclick='openClaudeJobsModal()' class='w-full bg-violet-600 hover:bg-violet-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-list-check text-xs'></i> ジョブ一覧を開く
                     </button>
+                    <div class='pt-1 space-y-1'>
+                        <button type='button' id='claude-wake-btn' onclick='wakeClaudePatrol()' class='w-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 border border-slate-200 transition'>
+                            <i class='fa-solid fa-bell text-violet-600 text-xs'></i> 巡回を起こし直す
+                        </button>
+                        <p class='text-[10px] text-slate-400 text-center'>巡回の合図を出し直します</p>
+                    </div>
                 </div>
 
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
@@ -3142,6 +3148,27 @@
             setText('claude-col-waiting', jobs.filter(j => j.status === 'queued' && j.queue === 'waiting').length);
             setText('claude-col-error', jobs.filter(isClaudeErrorJob).length);
             if (typeof refreshClaudeReferencesCount === 'function') refreshClaudeReferencesCount();
+        }
+
+        async function wakeClaudePatrol() {
+            const btn = document.getElementById('claude-wake-btn');
+            if (btn) btn.disabled = true;
+            try {
+                const res = await fetch('/api/claude/wake', { method: 'POST', headers: getHeaders() });
+                const data = await res.json().catch(() => null);
+                if (res.ok && data && data.status === 'ok') {
+                    if (typeof data.claudeRevision === 'number') {
+                        lastKnownClaudeRevision = data.claudeRevision;
+                    }
+                    showToast('巡回の合図を出し直しました（次回ポーリングで確認されます）');
+                } else {
+                    showToast((data && data.message) || '巡回の合図送信に失敗しました');
+                }
+            } catch (e) {
+                showToast('巡回の合図送信に失敗しました');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
 
 

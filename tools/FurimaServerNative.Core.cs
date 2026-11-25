@@ -281,6 +281,10 @@ internal partial class FurimaServerNative
             LoadItemsDbFromDisk();
 
             ClaudeJobStore.CleanupOnStartup();
+            if (ClaudeJobStore.WakeOnStartupIfExecutable())
+            {
+                Console.WriteLine("[INFO] 実行可能な Muse ジョブが残っているため起動時ウェイクを発行しました (claudeRevision=" + GetClaudeRevision() + ")");
+            }
             SweepReferenceOrphans();
 
             StartFolderAutoImportWatcher();
@@ -947,6 +951,10 @@ internal partial class FurimaServerNative
             else if (rawPath == "/api/claude/jobs" && req.HttpMethod == "GET")
             {
                 HandleGetClaudeJobs(req, res);
+            }
+            else if (rawPath == "/api/claude/wake" && req.HttpMethod == "POST")
+            {
+                HandleWakeClaudePatrol(req, res);
             }
             else if (rawPath == "/api/claude/labels/seen" && req.HttpMethod == "POST")
             {

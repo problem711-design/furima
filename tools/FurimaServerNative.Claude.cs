@@ -1142,4 +1142,64 @@ internal partial class FurimaServerNative
             { "claudeRevision", GetClaudeRevision() }
         });
     }
+
+    // P2: ダッシュボードから巡回の合図 (claudeRevision) だけを出し直す。
+    // PC ローカル経路かつ Bearer 必須。ジョブ状態は一切変更しない。
+    private static void HandleWakeClaudePatrol(HttpListenerRequest req, HttpListenerResponse res)
+    {
+        try
+        {
+            IPAddress remoteIp = req != null && req.RemoteEndPoint != null ? req.RemoteEndPoint.Address : null;
+            if (req == null || HasForwardedHeaders(req) || remoteIp == null || !IPAddress.IsLoopback(remoteIp))
+            {
+                res.StatusCode = 403;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "この操作は PC ローカルからのみ実行できます" } });
+                return;
+            }
+            string authHeader = (req.Headers["Authorization"] ?? "").Trim();
+            string expectedAuth = "Bearer " + authToken;
+            if (!string.Equals(authHeader, expectedAuth, StringComparison.Ordinal))
+            {
+                res.StatusCode = 401;
+                SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "401 Unauthorized: Invalid or missing Bearer token" } });
+                return;
+            }
+            long rev = BumpClaudeRevision();
+            var jobs = ClaudeJobStore.GetJobs(null);
+            int processing = 0;
+            int approved = 0;
+            int approvalPending = 0;
+            int waiting = 0;
+            int errors = 0;
+            foreach (var j in jobs)
+            {
+                if (j == null) continue;
+                if (j.status == "processing") processing++;
+                else if (j.status == "approved") approved++;
+                else if (j.status == "approval_pending") approvalPending++;
+                else if (j.status == "queued" && j.queue == "waiting") waiting++;
+                if (j.status == "done_with_errors" && !j.errorDismissed) errors++;
+            }
+            SendJson(res, new Dictionary<string, object>
+            {
+                { "status", "ok" },
+                { "claudeRevision", rev },
+                { "counts", new Dictionary<string, object>
+                    {
+                        { "processing", processing },
+                        { "approved", approved },
+                        { "approvalPending", approvalPending },
+                        { "waiting", waiting },
+                        { "error", errors }
+                    }
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("HandleWakeClaudePatrol エラー: " + ex.Message);
+            res.StatusCode = 500;
+            SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", ex.Message } });
+        }
+    }
 }
