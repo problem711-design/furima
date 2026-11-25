@@ -99,6 +99,7 @@
 - **最終決定（2026-11-25・着工）**: ユーザー判断により、**P3 は「案B（自動待機落ちの完全廃止）＋ `processing` 完全延長なし＆ `done_with_errors` 停止」** に確定。P4 サーバー補助・P5 待ち受け可視化＆8080リトライ・信頼済み IP 未設定警告をすべて同梱し、各フェーズ完了ごとにコミット＆プッシュのうえ、本バッチ完了をもって **`v1.6 (Build 1)`**（`versionCode = 1601`）へ全箇所更新する。
 - **Phase P1 完了**: `FurimaServerNative.Auth.cs`（`IsTrustedClaudeIp` 共通化）・`SyncStore.cs`（`lastClaudePatrolContactAt` 永続化）・`FurimaServerNative.Core.cs`（監視コンタクト `lastClaudeWatchContactAt` / 実巡回 `lastClaudePatrolContactAt` / `trustedMuseIpConfigured` の status 応答）・`dashboard.html`（最終監視・最終巡回の相対表示と許可アドレス未設定警告）・`FurimaServerTests.cs`（IP 判定・永続化テスト）を実装。
 - **Phase P2 完了**: `ClaudeJobStore.cs`（`WakeOnStartupIfExecutable`）・`FurimaServerNative.Core.cs`（起動時自動ウェイク実行＋ `POST /api/claude/wake` ルート）・`FurimaServerNative.Claude.cs`（`HandleWakeClaudePatrol`: PC ローカル＋Bearer 必須）・`dashboard.html`（「巡回を起こし直す」ボタン）・`FurimaServerTests.cs`（起動時ウェイク単体テスト）を実装。
+- **Phase P3 完了**: `FurimaServerNative.Claude.cs`（`ApplyApprovalPendingExpiry` のタイムアウト待機落ち廃止、`ApplyTokenExpiry` で `approved` 失効を廃止し `processing` は延長なし＆0件中断時も `waiting` 戻し禁止で `done_with_errors` 終端停止へ統一、承認時は `jobTokenExpiresAt = 0` で開始時に 30 分計測開始）・`FurimaServerTests.cs`（案B 失効・終端テスト 3 ケース）を実装。
 
 ### [2026-11-20] 写真同期整合性バグ修正 ＆ 画面オフ耐性強化 (バージョン 1.4 Build 17)
 - `PLAN_PHOTO_SYNC_INTEGRITY_FIX.md` の 5 本柱を最優先バッチとして実装完了した（詳細報告は `REVIEW_CLAUDE_SEND_PHASE6.md` §82）。

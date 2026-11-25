@@ -188,6 +188,73 @@ public static class FurimaServerTests
                 AssertEquals("approved", reloaded.status, "Startup wake must not mutate job status");
                 AssertEquals("tok-keep", reloaded.jobToken, "Startup wake must not mutate jobToken");
             });
+
+            RunTest("P3 Plan B: approval_pending and approved never auto-drop to waiting; expired processing stops as done_with_errors", () =>
+            {
+                string syncDir = Path.Combine(tempRoot, "p3_plan_b_test");
+                Directory.CreateDirectory(syncDir);
+                SyncStore.SetSyncDirForTest(syncDir);
+                ClaudeJobStore.ResetCacheForTest();
+
+                long oldTs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - (120L * 60L * 1000L);
+
+                var pendingJob = ClaudeJobStore.CreateJob(new ClaudeJob
+                {
+                    itemId = 10,
+                    itemUuid = "uuid-p",
+                    itemTitle = "pending item",
+                    queue = "patrol",
+                    templateId = "t1",
+                    templateName = "tmpl",
+                    photos = new List<ClaudeJobPhoto> { new ClaudeJobPhoto { md5 = "11111111111111111111111111111111", fileName = "p.jpg" } }
+                });
+                ClaudeJobStore.MutateJob(pendingJob.jobId, j => { j.approvalRequestedAt = oldTs; return true; });
+                AssertTrue(!FurimaServerNative.ApplyApprovalPendingExpiry(ClaudeJobStore.GetJob(pendingJob.jobId)), "approval_pending should not auto-expire");
+                AssertEquals("approval_pending", ClaudeJobStore.GetJob(pendingJob.jobId).status, "approval_pending should remain approval_pending");
+
+                var approvedJob = ClaudeJobStore.CreateJob(new ClaudeJob
+                {
+                    itemId = 11,
+                    itemUuid = "uuid-a",
+                    itemTitle = "approved item",
+                    queue = "patrol",
+                    templateId = "t1",
+                    templateName = "tmpl",
+                    photos = new List<ClaudeJobPhoto> { new ClaudeJobPhoto { md5 = "22222222222222222222222222222222", fileName = "a.jpg" } }
+                });
+                ClaudeJobStore.MutateJob(approvedJob.jobId, j =>
+                {
+                    j.status = "approved";
+                    j.jobToken = "tok-app";
+                    j.jobTokenExpiresAt = oldTs;
+                    return true;
+                });
+                AssertTrue(!FurimaServerNative.ApplyTokenExpiry(ClaudeJobStore.GetJob(approvedJob.jobId)), "approved should not expire or drop to waiting");
+                AssertEquals("approved", ClaudeJobStore.GetJob(approvedJob.jobId).status, "approved must remain approved");
+
+                var procJob = ClaudeJobStore.CreateJob(new ClaudeJob
+                {
+                    itemId = 12,
+                    itemUuid = "uuid-proc",
+                    itemTitle = "processing item",
+                    queue = "patrol",
+                    templateId = "t1",
+                    templateName = "tmpl",
+                    photos = new List<ClaudeJobPhoto> { new ClaudeJobPhoto { md5 = "33333333333333333333333333333333", fileName = "proc.jpg" } }
+                });
+                ClaudeJobStore.MutateJob(procJob.jobId, j =>
+                {
+                    j.status = "processing";
+                    j.jobToken = "tok-proc";
+                    j.jobTokenExpiresAt = oldTs;
+                    return true;
+                });
+                AssertTrue(FurimaServerNative.ApplyTokenExpiry(ClaudeJobStore.GetJob(procJob.jobId)), "expired processing should terminate");
+                var afterProc = ClaudeJobStore.GetJob(procJob.jobId);
+                AssertEquals("done_with_errors", afterProc.status, "expired processing with 0 results must become done_with_errors, never waiting");
+                AssertTrue(afterProc.errors != null && afterProc.errors.Count == 1, "expired processing should record timeout error");
+                AssertTrue(string.IsNullOrEmpty(afterProc.jobToken), "jobToken must be cleared on expiry termination");
+            });
         }
         finally
         {

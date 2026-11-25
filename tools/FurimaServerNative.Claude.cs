@@ -408,8 +408,11 @@ internal partial class FurimaServerNative
             // 一覧・作成・取消の応答には絶対に含めない。
             if ((job.status == "approved" || job.status == "processing") && !string.IsNullOrEmpty(job.jobToken))
             {
+                long pubExpiry = job.jobTokenExpiresAt > 0
+                    ? job.jobTokenExpiresAt
+                    : (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L);
                 pub["jobToken"] = job.jobToken;
-                pub["jobTokenExpiresAt"] = job.jobTokenExpiresAt;
+                pub["jobTokenExpiresAt"] = pubExpiry;
             }
             SendJson(res, new Dictionary<string, object>
             {
@@ -426,42 +429,21 @@ internal partial class FurimaServerNative
         }
     }
 
-    // 承認待ち (approval_pending) の10分失効を遅延評価する (Q7)。遷移したら true。
-    private static bool ApplyApprovalPendingExpiry(ClaudeJob job)
+    // v1.6 (Build 1) P3 案B: approval_pending の 10 分タイムアウトによる自動待機落ちを廃止。
+    // 承認・拒否・取消・手動での待機移動まで承認待ちを維持する。
+    internal static bool ApplyApprovalPendingExpiry(ClaudeJob job)
     {
-        if (job == null) return false;
-        if (job.status != "approval_pending" || job.approvalRequestedAt <= 0) return false;
-        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        if (now - job.approvalRequestedAt <= 10L * 60L * 1000L) return false;
-        bool changed = false;
-        ClaudeJobStore.MutateJob(job.jobId, j =>
-        {
-            // フェーズ 6 是正 (Build 13 / 49-2): ロック内でも期限超過を再検証する。
-            // 直前に再リクエスト等で approvalRequestedAt が更新されたジョブを誤って失効させない。
-            long nowInLock = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (j.status == "approval_pending" && j.approvalRequestedAt > 0
-                && nowInLock - j.approvalRequestedAt > 10L * 60L * 1000L)
-            {
-                j.status = "queued";
-                j.queue = "waiting";
-                j.approvalRequestedAt = 0;
-                changed = true;
-                return true;
-            }
-            return false;
-        });
-        if (changed) BumpClaudeRevision();
-        return changed;
+        return false;
     }
 
-    // ジョブトークンの期限切れを遅延評価する (Q7)。全トークン対象APIと一覧・詳細の読み取りから呼ぶ。
-    // フェーズ 6-1a: 遷移先は記録の有無で分ける (計画書 §10 の 7-3)。
-    // 未着手 (results / errors がともに空) なら待機へ戻し、1件でも記録がある場合は
-    // 未処理の写真へ失効エラーを記録して終端させる (同一ジョブの再実行は行わない)。
-    private static bool ApplyTokenExpiry(ClaudeJob job)
+    // v1.6 (Build 1) P3 案B + processing 完全延長なしガード:
+    // - approved (未着手・トークン消費前) はタイムアウトによる自動待機落ちを廃止し、失効させない。
+    // - processing (写真取得済み・トークン消費開始済み) のみを対象に期限切れを評価し、
+    //   起動時延長は行わず、結果/エラー 0 件であっても絶対に waiting へ戻さず done / done_with_errors で終端停止する。
+    internal static bool ApplyTokenExpiry(ClaudeJob job)
     {
         if (job == null) return false;
-        if (job.status != "approved" && job.status != "processing") return false;
+        if (job.status != "processing") return false;
         if (string.IsNullOrEmpty(job.jobToken) || job.jobTokenExpiresAt <= 0) return false;
         if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() <= job.jobTokenExpiresAt) return false;
         bool changed = false;
@@ -470,50 +452,41 @@ internal partial class FurimaServerNative
         ClaudeJobStore.MutateJobWithErrorSupersede(job.jobId, j =>
         {
             // ロック内でも有効期限を再検証する (結果投稿による延長と競合しても誤失効させない)
-            if ((j.status == "approved" || j.status == "processing")
+            if (j.status == "processing"
                 && !string.IsNullOrEmpty(j.jobToken) && j.jobTokenExpiresAt > 0
                 && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() > j.jobTokenExpiresAt)
             {
-                bool untouched = (j.results == null || j.results.Count == 0) && (j.errors == null || j.errors.Count == 0);
-                if (untouched)
+                if (j.results == null) j.results = new List<ClaudeJobResult>();
+                if (j.errors == null) j.errors = new List<ClaudeJobError>();
+                var settled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var r in j.results) { if (r != null && !string.IsNullOrEmpty(r.sourceMd5)) settled.Add(r.sourceMd5); }
+                foreach (var e in j.errors) { if (e != null && !string.IsNullOrEmpty(e.sourceMd5)) settled.Add(e.sourceMd5); }
+                if (j.photos != null)
                 {
-                    j.status = "queued";
-                    j.queue = "waiting";
-                }
-                else
-                {
-                    if (j.results == null) j.results = new List<ClaudeJobResult>();
-                    if (j.errors == null) j.errors = new List<ClaudeJobError>();
-                    var settled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var r in j.results) { if (r != null && !string.IsNullOrEmpty(r.sourceMd5)) settled.Add(r.sourceMd5); }
-                    foreach (var e in j.errors) { if (e != null && !string.IsNullOrEmpty(e.sourceMd5)) settled.Add(e.sourceMd5); }
-                    if (j.photos != null)
+                    foreach (var p in j.photos)
                     {
-                        foreach (var p in j.photos)
+                        if (p == null || string.IsNullOrEmpty(p.md5)) continue;
+                        if (!settled.Contains(p.md5))
                         {
-                            if (p == null || string.IsNullOrEmpty(p.md5)) continue;
-                            if (!settled.Contains(p.md5))
-                            {
-                                j.errors.Add(new ClaudeJobError { sourceMd5 = p.md5, message = "トークンの有効期限が切れたため、未処理のまま終了しました" });
-                            }
+                            j.errors.Add(new ClaudeJobError { sourceMd5 = p.md5, message = "トークンの有効期限が切れたため、未処理のまま終了しました" });
                         }
                     }
-                    bool allResults = j.photos != null && j.photos.Count > 0;
-                    if (allResults)
-                    {
-                        foreach (var p in j.photos)
-                        {
-                            bool hasResult = false;
-                            foreach (var r in j.results)
-                            {
-                                if (r != null && string.Equals(r.sourceMd5, p.md5, StringComparison.OrdinalIgnoreCase)) { hasResult = true; break; }
-                            }
-                            if (!hasResult) { allResults = false; break; }
-                        }
-                    }
-                    j.status = allResults ? "done" : "done_with_errors";
-                    j.completedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 }
+                bool allResults = j.photos != null && j.photos.Count > 0;
+                if (allResults)
+                {
+                    foreach (var p in j.photos)
+                    {
+                        bool hasResult = false;
+                        foreach (var r in j.results)
+                        {
+                            if (r != null && string.Equals(r.sourceMd5, p.md5, StringComparison.OrdinalIgnoreCase)) { hasResult = true; break; }
+                        }
+                        if (!hasResult) { allResults = false; break; }
+                    }
+                }
+                j.status = allResults ? "done" : "done_with_errors";
+                j.completedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 j.jobToken = null;
                 j.jobTokenExpiresAt = 0;
                 changed = true;
@@ -630,17 +603,17 @@ internal partial class FurimaServerNative
             if (approved)
             {
                 // jobToken は権限分離ではなく「スマホ承認が完了しない限り実行APIが通らない」
-                // セーフティロックとして発行する (レビュー指摘8-2)。有効期限30分・当該ジョブ専用。
+                // セーフティロックとして発行する (レビュー指摘8-2)。v1.6 (Build 1) 案B により
+                // 未着手 (approved) の間は失効させず (jobTokenExpiresAt=0)、処理開始 (processing) 時に 30 分期限を設定する。
                 string newToken = Guid.NewGuid().ToString();
-                long expiresAt = now + 30L * 60L * 1000L;
                 ClaudeJobStore.MutateJob(jobId, j =>
                 {
                     // フェーズ 6 是正 (Build 13 / 49-2): ロック内でも承認待ちであることを再検証する。
-                    // 取消・待機戻し・失効と交錯した場合に、終端済みジョブへトークンを発行して復活させない。
+                    // 取消・待機戻しと交錯した場合に、終端済みジョブへトークンを発行して復活させない。
                     if (j.status != "approval_pending") return false;
                     j.status = "approved";
                     j.jobToken = newToken;
-                    j.jobTokenExpiresAt = expiresAt;
+                    j.jobTokenExpiresAt = 0;
                     applied = true;
                     return true;
                 });
@@ -703,7 +676,11 @@ internal partial class FurimaServerNative
             }
             j.errors.Add(new ClaudeJobError { sourceMd5 = md5, message = message });
             // Build 13 (13-3): 実行が始まったジョブは取り消せないよう、初回エラー記録でも processing へ進める
-            if (j.status == "approved") j.status = "processing";
+            if (j.status == "approved")
+            {
+                j.status = "processing";
+                j.jobTokenExpiresAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 30L * 60L * 1000L;
+            }
             added = true;
             return true;
         });
