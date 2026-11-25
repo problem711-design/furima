@@ -230,7 +230,7 @@
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.5 (Build 20)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.6 (Build 1)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -1224,6 +1224,10 @@
                         <input type='text' id='settings-trusted-claude-ip' placeholder='例: 100.x.x.x（空欄で無効）' class='flex-1 border border-slate-300 rounded-md px-2.5 py-1.5 text-xs font-mono' />
                         <button type='button' onclick='saveTrustedClaudeIp()' class='px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md font-bold text-[11px] transition'>保存</button>
                     </div>
+                    <div class='bg-slate-50 border border-slate-200 rounded-md p-2.5 text-[11px] flex items-center justify-between gap-2'>
+                        <span class='text-slate-600 font-medium'>サーバー待ち受け状態</span>
+                        <span id='settings-listener-info' class='font-mono font-bold text-slate-700'>確認中...</span>
+                    </div>
                 </div>
             </div>
             <div class='bg-slate-100 px-5 py-3 border-t border-slate-200 flex items-center justify-end'>
@@ -2162,6 +2166,20 @@
             }
             if (typeof statusData.trustedMuseIpConfigured === 'boolean') {
                 trustedMuseIpConfigured = statusData.trustedMuseIpConfigured;
+            }
+            const listenerInfoEl = document.getElementById('settings-listener-info');
+            if (listenerInfoEl && statusData.listenerMode) {
+                const portTxt = statusData.actualPort ? String(statusData.actualPort) : '8080';
+                if (statusData.listenerMode === 'all') {
+                    listenerInfoEl.className = 'font-mono font-bold text-emerald-700';
+                    listenerInfoEl.innerText = '全アドレス許可 / :' + portTxt + ' (Tailscale・LAN可)';
+                } else if (statusData.listenerMode === 'localhost') {
+                    listenerInfoEl.className = 'font-mono font-bold text-amber-700';
+                    listenerInfoEl.innerText = 'localhost のみ / :' + portTxt + ' (外部IP不可)';
+                } else {
+                    listenerInfoEl.className = 'font-mono font-bold text-slate-700';
+                    listenerInfoEl.innerText = statusData.listenerMode + ' / :' + portTxt;
+                }
             }
             renderClaudeContactStatus();
         }

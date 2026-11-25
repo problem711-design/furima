@@ -84,7 +84,7 @@ test('DashboardHtml.cs 内の inline script 構文が有効で buildViewerTrashT
     }
 });
 
-test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.5 (Build 20) に統一されている', () => {
+test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.6 (Build 1) に統一されている', () => {
     const cs = readFileSync(path.join(repoRoot, 'tools', 'web', 'dashboard.html'), 'utf8');
     const kt = readFileSync(
         path.join(repoRoot, 'app', 'src', 'main', 'java', 'com', 'example', 'myapplication', 'data', 'server', 'WebDashboardHtml.kt'),
@@ -92,7 +92,7 @@ test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.5 
     );
     const gradle = readFileSync(path.join(repoRoot, 'app', 'build.gradle.kts'), 'utf8');
 
-    assert.ok(cs.includes('v1.5 (Build 20)'), 'DashboardHtml.cs のバージョン表記が未更新');
-    assert.ok(kt.includes('v1.5 (Build 20)'), 'WebDashboardHtml.kt のバージョン表記が未更新');
-    assert.ok(gradle.includes('versionCode = 1520'), 'app/build.gradle.kts の versionCode が未更新');
+    assert.ok(cs.includes('v1.6 (Build 1)'), 'DashboardHtml.cs のバージョン表記が未更新');
+    assert.ok(kt.includes('v1.6 (Build 1)'), 'WebDashboardHtml.kt のバージョン表記が未更新');
+    assert.ok(gradle.includes('versionCode = 1601'), 'app/build.gradle.kts の versionCode が未更新');
 });

@@ -255,6 +255,21 @@ public static class FurimaServerTests
                 AssertTrue(afterProc.errors != null && afterProc.errors.Count == 1, "expired processing should record timeout error");
                 AssertTrue(string.IsNullOrEmpty(afterProc.jobToken), "jobToken must be cleared on expiry termination");
             });
+
+            RunTest("ClaudeJobStore.CountExecutableJobs counts approved and processing only", () =>
+            {
+                string syncDir = Path.Combine(tempRoot, "exec_count_test");
+                Directory.CreateDirectory(syncDir);
+                SyncStore.SetSyncDirForTest(syncDir);
+                ClaudeJobStore.ResetCacheForTest();
+
+                var j1 = ClaudeJobStore.CreateJob(new ClaudeJob { itemId = 1, itemUuid = "u1", itemTitle = "w", queue = "waiting", templateId = "t1", templateName = "t" });
+                var j2 = ClaudeJobStore.CreateJob(new ClaudeJob { itemId = 2, itemUuid = "u2", itemTitle = "p", queue = "patrol", templateId = "t1", templateName = "t" });
+                var j3 = ClaudeJobStore.CreateJob(new ClaudeJob { itemId = 3, itemUuid = "u3", itemTitle = "a", queue = "patrol", templateId = "t1", templateName = "t" });
+                ClaudeJobStore.MutateJob(j2.jobId, j => { j.status = "processing"; return true; });
+                ClaudeJobStore.MutateJob(j3.jobId, j => { j.status = "approved"; return true; });
+                AssertTrue(ClaudeJobStore.CountExecutableJobs() == 2, "Expected 2 executable jobs, got " + ClaudeJobStore.CountExecutableJobs());
+            });
         }
         finally
         {

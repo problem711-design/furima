@@ -35,6 +35,9 @@ internal partial class FurimaServerNative
     private static long dataRevision = 1;
     private static long settingsRevision = 1;
     private static long lastClaudeWatchContactAt = 0;
+    private static readonly string serverBootId = Guid.NewGuid().ToString("N").Substring(0, 8);
+    private static string activeListenerMode = "unknown";
+    private static int activeActualPort = 0;
     private static long lastFullPhotoScanTicks = 0;
     private static long lastExpirySweepTicks = 0;
     private static long lastMissingCountTicks = 0;
@@ -292,10 +295,18 @@ internal partial class FurimaServerNative
             HttpListener listener = null;
             int actualPort = desiredPort;
             string boundUrl = "";
+            string listenerMode = "none";
 
             for (int pNum = desiredPort; pNum < desiredPort + 50; pNum++)
             {
-                listener = TryStartHttpListener(pNum, out boundUrl);
+                // P5: 既定ポート (8080等) でのクイック再起動時に直前プロセスのソケット解放を短時間待つ (300ms x 5回)
+                int maxAttempts = (pNum == desiredPort) ? 5 : 1;
+                for (int attempt = 0; attempt < maxAttempts; attempt++)
+                {
+                    listener = TryStartHttpListener(pNum, out boundUrl, out listenerMode);
+                    if (listener != null) break;
+                    if (attempt + 1 < maxAttempts) Thread.Sleep(300);
+                }
                 if (listener != null)
                 {
                     actualPort = pNum;
@@ -316,8 +327,19 @@ internal partial class FurimaServerNative
                 Console.WriteLine("\n[お知らせ] ポート " + desiredPort + " は他アプリやOS予約で使用中のため、空きポート " + actualPort + " で自動起動しました。");
             }
 
+            activeListenerMode = listenerMode;
+            activeActualPort = actualPort;
+
             Console.WriteLine("-------------------------------------------------");
             Console.WriteLine(" サーバーが正常起動しました: " + boundUrl);
+            if (listenerMode == "all")
+            {
+                Console.WriteLine(" 待ち受けモード: 全アドレス許可 (http://+:" + actualPort + "/ / Tailscale・LAN 可)");
+            }
+            else
+            {
+                Console.WriteLine(" 待ち受けモード: localhost のみ (http://localhost:" + actualPort + "/ / 外部IP・Tailscale 不可)");
+            }
             Console.WriteLine("-------------------------------------------------");
 
             activeListener = listener;
@@ -523,9 +545,10 @@ internal partial class FurimaServerNative
         });
     }
 
-    private static HttpListener TryStartHttpListener(int port, out string boundUrl)
+    private static HttpListener TryStartHttpListener(int port, out string boundUrl, out string listenerMode)
     {
         boundUrl = "";
+        listenerMode = "none";
         HttpListener listener = null;
 
         try
@@ -534,6 +557,7 @@ internal partial class FurimaServerNative
             listener.Prefixes.Add("http://+:" + port + "/");
             listener.Start();
             boundUrl = "http://localhost:" + port + "/";
+            listenerMode = "all";
             return listener;
         }
         catch
@@ -549,6 +573,7 @@ internal partial class FurimaServerNative
             listener.Prefixes.Add("http://127.0.0.1:" + port + "/");
             listener.Start();
             boundUrl = "http://localhost:" + port + "/";
+            listenerMode = "localhost";
             return listener;
         }
         catch
@@ -695,7 +720,9 @@ internal partial class FurimaServerNative
                 }
                 SendJson(res, new Dictionary<string, object>
                 {
-                    { "claudeRevision", GetClaudeRevision() }
+                    { "claudeRevision", GetClaudeRevision() },
+                    { "executableCount", ClaudeJobStore.CountExecutableJobs() },
+                    { "serverBootId", serverBootId }
                 });
             }
             else if (rawPath == "/api/server/trusted-muse-ip" && req.HttpMethod == "GET")
@@ -800,6 +827,8 @@ internal partial class FurimaServerNative
                     { "lastClaudeWatchContactAt", GetLastClaudeWatchContactAt() },
                     { "lastClaudePatrolContactAt", SyncStore.GetLastClaudePatrolContactAt() },
                     { "trustedMuseIpConfigured", !string.IsNullOrEmpty(SyncStore.GetTrustedMuseIp()) },
+                    { "listenerMode", activeListenerMode },
+                    { "actualPort", activeActualPort },
                     { "permanentlyDeletedUuids", SyncStore.GetPermanentlyDeletedUuids() }
                 };
                 SendJson(res, dict);
