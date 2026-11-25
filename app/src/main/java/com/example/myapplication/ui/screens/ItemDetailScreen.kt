@@ -104,7 +104,11 @@ fun ItemDetailScreen(
     val defaultSettings by viewModel.defaultSettings.collectAsState()
     val isPcServerConnected by viewModel.isPcServerConnected.collectAsState()
 
-    var itemWithPhotos by remember { mutableStateOf<ItemWithPhotos?>(null) }
+    val allItemsForDetail by viewModel.itemsWithPhotos.collectAsState()
+    var fallbackItemWithPhotos by remember(itemId) { mutableStateOf<ItemWithPhotos?>(null) }
+    val itemWithPhotos = remember(allItemsForDetail, fallbackItemWithPhotos, itemId) {
+        allItemsForDetail.firstOrNull { it.item.id == itemId } ?: fallbackItemWithPhotos
+    }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showGallerySelectDialog by remember { mutableStateOf(false) }
     var showPcOriginalConfirmDialog by remember { mutableStateOf(false) }
@@ -117,11 +121,11 @@ fun ItemDetailScreen(
 
     LaunchedEffect(itemId, isPcServerConnected) {
         val loaded = viewModel.getItemById(itemId)
-        itemWithPhotos = loaded
+        fallbackItemWithPhotos = loaded
         if (loaded != null && isPcServerConnected) {
             val repaired = viewModel.repairItemPhotosIfNeeded(itemId)
             if (repaired) {
-                itemWithPhotos = viewModel.getItemById(itemId)
+                fallbackItemWithPhotos = viewModel.getItemById(itemId)
             }
         }
     }
@@ -149,7 +153,6 @@ fun ItemDetailScreen(
     }
 
     // フェーズ 6-4: まとめ子商品の表示名は親のステータスから決める
-    val allItemsForDetail by viewModel.itemsWithPhotos.collectAsState()
     val parentStatusForDetail = currentItem.mergedParentId?.let { pid ->
         allItemsForDetail.firstOrNull { it.item.id == pid }?.item?.status
     }
@@ -179,7 +182,7 @@ fun ItemDetailScreen(
                     if (removed) {
                         scope.launch {
                             val refreshed = viewModel.getItemById(currentItem.id)
-                            itemWithPhotos = refreshed
+                            fallbackItemWithPhotos = refreshed
                             if (refreshed == null || refreshed.photos.isEmpty()) {
                                 previewStartIndex = null
                             }
@@ -369,16 +372,18 @@ fun ItemDetailScreen(
                     onClick = {
                         showGallerySelectDialog = false
                         val selectedList = photos.filter { it.id in selectedPhotoIdsForGallery }
-                        val needsServerFetch = selectedList.any {
-                            it.isOriginalDeleted || !File(it.filePath).exists() ||
-                                it.filePath.equals(it.thumbnailPath, ignoreCase = true)
-                        }
-                        if (isPcServerConnected && needsServerFetch) {
-                            showPcOriginalConfirmDialog = true
-                        } else if (isPcServerConnected) {
-                            showPcOriginalConfirmDialog = true
-                        } else {
-                            runGalleryExport(false)
+                        scope.launch {
+                            val needsServerFetch = withContext(Dispatchers.IO) {
+                                selectedList.any {
+                                    it.isOriginalDeleted || !File(it.filePath).exists() ||
+                                        it.filePath.equals(it.thumbnailPath, ignoreCase = true)
+                                }
+                            }
+                            if (isPcServerConnected && needsServerFetch) {
+                                showPcOriginalConfirmDialog = true
+                            } else {
+                                runGalleryExport(false)
+                            }
                         }
                     },
                     modifier = Modifier.testTag("gallery_select_confirm_button")

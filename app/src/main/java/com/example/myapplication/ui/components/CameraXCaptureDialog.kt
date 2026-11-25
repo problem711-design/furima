@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -110,7 +111,9 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import coil.size.Precision
 import com.example.myapplication.data.PhotoStorageManager
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -167,6 +170,7 @@ fun CameraXCaptureDialog(
 
     var capturedPaths by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var pendingDiscardPaths by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var pendingTempFiles by rememberSaveable { mutableStateOf(emptyList<String>()) }
     var previewCapturedIndex by rememberSaveable { mutableStateOf<Int?>(null) }
     var lastDeletedShot by remember { mutableStateOf<Pair<Int, String>?>(null) }
     var flashMode by rememberSaveable { mutableIntStateOf(savedSettings.flashMode) }
@@ -223,18 +227,26 @@ fun CameraXCaptureDialog(
     }
 
     val purgePendingDiscards = {
-        pendingDiscardPaths.forEach { path ->
-            try {
-                File(path).delete()
-            } catch (_: Exception) {
+        val toDelete = (pendingDiscardPaths + pendingTempFiles).distinct()
+        pendingDiscardPaths = emptyList()
+        pendingTempFiles = emptyList()
+        lastDeletedShot = null
+        if (toDelete.isNotEmpty()) {
+            CoroutineScope(Dispatchers.IO + NonCancellable).launch {
+                toDelete.forEach { path ->
+                    try {
+                        File(path).delete()
+                    } catch (_: Exception) {
+                    }
+                }
             }
         }
-        pendingDiscardPaths = emptyList()
-        lastDeletedShot = null
     }
 
     val handleCloseRequest: () -> Unit = {
-        if (capturedPaths.isNotEmpty()) {
+        if (isCapturing) {
+            Toast.makeText(context, "写真の保存処理中です。完了後にもう一度閉じてください", Toast.LENGTH_SHORT).show()
+        } else if (capturedPaths.isNotEmpty()) {
             showCloseConfirm = true
         } else {
             purgePendingDiscards()
@@ -468,7 +480,9 @@ fun CameraXCaptureDialog(
         isHighResMode
     ) {
         if (!isCameraSettingsReady) return@LaunchedEffect
-        CameraXCapturePreferences.save(
+        delay(300)
+        withContext(Dispatchers.IO) {
+            CameraXCapturePreferences.save(
             context = context,
             settings = SavedCameraSettings(
                 selectedCameraId = selectedCameraId,
@@ -483,6 +497,7 @@ fun CameraXCaptureDialog(
                 isHighResMode = isHighResMode
             )
         )
+        }
     }
 
     Box(
@@ -845,22 +860,27 @@ fun CameraXCaptureDialog(
                     }
                     zoomPresets.forEach { preset ->
                         val active = kotlin.math.abs(currentZoom - preset) < 0.12f
-                        Surface(
-                            color = if (active) Color(0xFFFACC15) else Color.White.copy(alpha = 0.16f),
-                            shape = RoundedCornerShape(14.dp),
+                        Box(
                             modifier = Modifier
-                                .padding(horizontal = 4.dp)
+                                .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                                 .clickable {
                                     activeCamera?.cameraControl?.setZoomRatio(preset.coerceIn(minZoom, maxZoom))
                                 }
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = String.format(Locale.US, "%.1fx", preset),
-                                color = if (active) Color.Black else Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                            )
+                            Surface(
+                                color = if (active) Color(0xFFFACC15) else Color.White.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text(
+                                    text = String.format(Locale.US, "%.1fx", preset),
+                                    color = if (active) Color.Black else Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                     Spacer(modifier = Modifier.width(8.dp))
@@ -1029,6 +1049,7 @@ fun CameraXCaptureDialog(
                                     return@clickable
                                 }
                                 isCapturing = true
+                                pendingTempFiles = pendingTempFiles + outFile.absolutePath
                                 showShutterFlash = true
                                 captureUseCase.targetRotation = previewViewRef?.display?.rotation ?: Surface.ROTATION_0
                                 val outputOptions = ImageCapture.OutputFileOptions.Builder(outFile).build()
@@ -1038,24 +1059,35 @@ fun CameraXCaptureDialog(
                                     object : ImageCapture.OnImageSavedCallback {
                                         override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
                                             if (isHighResMode) {
-                                                isCapturing = false
+                                                pendingTempFiles = pendingTempFiles - outFile.absolutePath
                                                 capturedPaths = capturedPaths + outFile.absolutePath
+                                                isCapturing = false
                                             } else {
                                                 coroutineScope.launch {
-                                                    withContext(Dispatchers.IO) {
-                                                        storageManager.downscaleCapturedPhotoIfNeeded(
-                                                            file = outFile,
-                                                            maxDim = 2048,
-                                                            quality = 90
-                                                        )
+                                                    try {
+                                                        withContext(Dispatchers.IO) {
+                                                            storageManager.downscaleCapturedPhotoIfNeeded(
+                                                                file = outFile,
+                                                                maxDim = 2048,
+                                                                quality = 90
+                                                            )
+                                                        }
+                                                        pendingTempFiles = pendingTempFiles - outFile.absolutePath
+                                                        capturedPaths = capturedPaths + outFile.absolutePath
+                                                    } catch (e: Exception) {
+                                                        pendingTempFiles = pendingTempFiles - outFile.absolutePath
+                                                        withContext(Dispatchers.IO + NonCancellable) {
+                                                            try { outFile.delete() } catch (_: Exception) {}
+                                                        }
+                                                    } finally {
+                                                        isCapturing = false
                                                     }
-                                                    isCapturing = false
-                                                    capturedPaths = capturedPaths + outFile.absolutePath
                                                 }
                                             }
                                         }
 
                                         override fun onError(exception: ImageCaptureException) {
+                                            pendingTempFiles = pendingTempFiles - outFile.absolutePath
                                             isCapturing = false
                                             try {
                                                 outFile.delete()

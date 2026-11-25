@@ -77,6 +77,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
@@ -151,12 +152,17 @@ fun ItemListScreen(
     var showSyncStatusDialog by remember { mutableStateOf(false) }
     var quickActionItem by remember { mutableStateOf<ItemWithPhotos?>(null) }
 
-    // 表示件数リミット（デフォルト20件、10件ずつ追加可能）
-    var displayLimit by remember { mutableIntStateOf(20) }
+    // 表示件数リミット（デフォルト20件、10件ずつ追加可能。詳細/編集から戻った再コンポーズでは維持する）
+    var displayLimit by rememberSaveable { mutableIntStateOf(20) }
+    var lastFilterKey by rememberSaveable { mutableStateOf("$searchQuery|$statusFilter|${sortOption.name}") }
 
-    // 検索語やフィルターが変わったら表示件数をリセット
+    // 検索語やフィルターが前回値から実際に変化した時のみ表示件数をリセット
     LaunchedEffect(searchQuery, statusFilter, sortOption) {
-        displayLimit = 20
+        val currentKey = "$searchQuery|$statusFilter|${sortOption.name}"
+        if (currentKey != lastFilterKey) {
+            lastFilterKey = currentKey
+            displayLimit = 20
+        }
     }
 
     // フェーズ 6-9 (Build 14): 一覧への復帰時に Muse ラベル集約を現在時刻で再導出する (3 日窓の自然消滅への追随)
@@ -647,13 +653,17 @@ fun ItemListScreen(
                                 isSelectionMode = isSelectionMode,
                                 isSelected = isSelected,
                                 onSelectToggle = {
-                                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    viewModel.toggleItemSelection(itemWithPhotos.item.id)
+                                    if (itemWithPhotos.item.status != "MERGED" && itemWithPhotos.item.deletedAt == null) {
+                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                        viewModel.toggleItemSelection(itemWithPhotos.item.id)
+                                    }
                                 },
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                                     if (isSelectionMode) {
-                                        viewModel.toggleItemSelection(itemWithPhotos.item.id)
+                                        if (itemWithPhotos.item.status != "MERGED" && itemWithPhotos.item.deletedAt == null) {
+                                            viewModel.toggleItemSelection(itemWithPhotos.item.id)
+                                        }
                                     } else {
                                         onNavigateToDetail(itemWithPhotos.item.id)
                                     }

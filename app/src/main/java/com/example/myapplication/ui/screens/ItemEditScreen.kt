@@ -82,8 +82,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -140,43 +146,71 @@ fun ItemEditScreen(
     // フェーズ 6-2 (6-2-7): 編集画面の承認待ちの帯表示用
     val pendingClaudeApprovals by viewModel.pendingClaudeApprovals.collectAsState()
 
-    var titleFieldValue by remember { mutableStateOf(TextFieldValue("")) }
-    var descriptionFieldValue by remember { mutableStateOf(TextFieldValue("")) }
+    var titleFieldValue by rememberSaveable(itemId, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(""))
+    }
+    var descriptionFieldValue by rememberSaveable(itemId, stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(""))
+    }
     val title = titleFieldValue.text
     val description = descriptionFieldValue.text
-    var priceText by remember { mutableStateOf("") }
-    var soldPriceText by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("DRAFT") }
+    var priceText by rememberSaveable(itemId) { mutableStateOf("") }
+    var soldPriceText by rememberSaveable(itemId) { mutableStateOf("") }
+    var status by rememberSaveable(itemId) { mutableStateOf("DRAFT") }
 
     // 費用設定
-    var useCustomSettings by remember { mutableStateOf(false) }
-    var feeRatePercentText by remember { mutableStateOf("") }
-    var shippingCostText by remember { mutableStateOf("") }
-    var expenseCostText by remember { mutableStateOf("") }
+    var useCustomSettings by rememberSaveable(itemId) { mutableStateOf(false) }
+    var feeRatePercentText by rememberSaveable(itemId) { mutableStateOf("") }
+    var shippingCostText by rememberSaveable(itemId) { mutableStateOf("") }
+    var expenseCostText by rememberSaveable(itemId) { mutableStateOf("") }
 
-    val newImageUris = remember { mutableStateListOf<Uri>() }
-    val existingFilePaths = remember { mutableStateListOf<String>() }
-    val createdTempCameraPaths = remember { mutableStateListOf<String>() }
+    val newImageUris = rememberSaveable(
+        itemId,
+        saver = listSaver<SnapshotStateList<Uri>, String>(
+            save = { list -> list.map { it.toString() } },
+            restore = { list -> list.map { Uri.parse(it) }.toMutableStateList() }
+        )
+    ) { mutableStateListOf() }
+    val existingFilePaths = rememberSaveable(
+        itemId,
+        saver = listSaver<SnapshotStateList<String>, String>(
+            save = { it.toList() },
+            restore = { it.toMutableStateList() }
+        )
+    ) { mutableStateListOf() }
+    val createdTempCameraPaths = rememberSaveable(
+        itemId,
+        saver = listSaver<SnapshotStateList<String>, String>(
+            save = { it.toList() },
+            restore = { it.toMutableStateList() }
+        )
+    ) { mutableStateListOf() }
 
-    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
-    var tempCameraPath by rememberSaveable { mutableStateOf<String?>(null) }
-    var showCameraXDialog by rememberSaveable { mutableStateOf(false) }
-    var showCameraPermissionDeniedDialog by rememberSaveable { mutableStateOf(false) }
+    var cameraPhotoUri by rememberSaveable(itemId) { mutableStateOf<Uri?>(null) }
+    var tempCameraPath by rememberSaveable(itemId) { mutableStateOf<String?>(null) }
+    var showCameraXDialog by rememberSaveable(itemId) { mutableStateOf(false) }
+    var showCameraPermissionDeniedDialog by rememberSaveable(itemId) { mutableStateOf(false) }
 
-    var initialTitle by remember(itemId) { mutableStateOf("") }
-    var initialDescription by remember(itemId) { mutableStateOf("") }
-    var initialPriceText by remember(itemId) { mutableStateOf("") }
-    var initialSoldPriceText by remember(itemId) { mutableStateOf("") }
-    var initialStatus by remember(itemId) { mutableStateOf("DRAFT") }
-    var initialUseCustomSettings by remember(itemId) { mutableStateOf(false) }
-    var initialFeeRatePercentText by remember(itemId) { mutableStateOf("") }
-    var initialShippingCostText by remember(itemId) { mutableStateOf("") }
-    var initialExpenseCostText by remember(itemId) { mutableStateOf("") }
-    var initialExistingFilePaths by remember(itemId) { mutableStateOf<List<String>>(emptyList()) }
+    var initialTitle by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialDescription by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialPriceText by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialSoldPriceText by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialStatus by rememberSaveable(itemId) { mutableStateOf("DRAFT") }
+    var initialUseCustomSettings by rememberSaveable(itemId) { mutableStateOf(false) }
+    var initialFeeRatePercentText by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialShippingCostText by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialExpenseCostText by rememberSaveable(itemId) { mutableStateOf("") }
+    var initialExistingFilePaths by rememberSaveable(
+        itemId,
+        stateSaver = listSaver<List<String>, String>(
+            save = { it },
+            restore = { it }
+        )
+    ) { mutableStateOf(emptyList()) }
     val loadedPhotosByPath = remember(itemId) { mutableStateMapOf<String, PhotoEntity>() }
     var previewStartIndex by remember(itemId) { mutableStateOf<Int?>(null) }
     var lastDeletedPreviewPhoto by remember(itemId) { mutableStateOf<DeletedEditPhoto?>(null) }
-    var isInitialized by remember(itemId) { mutableStateOf(false) }
+    var isInitialized by rememberSaveable(itemId) { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var isSaving by remember { mutableStateOf(false) }
 
@@ -191,7 +225,11 @@ fun ItemEditScreen(
     val pickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris ->
-        newImageUris.addAll(uris)
+        uris.forEach { uri ->
+            if (!newImageUris.contains(uri)) {
+                newImageUris.add(uri)
+            }
+        }
     }
 
     val cameraLauncher = rememberLauncherForActivityResult(
@@ -199,8 +237,12 @@ fun ItemEditScreen(
     ) { success ->
         val path = tempCameraPath
         if (success && path != null) {
-            existingFilePaths.add(path)
-            createdTempCameraPaths.add(path)
+            if (!existingFilePaths.contains(path)) {
+                existingFilePaths.add(path)
+            }
+            if (!createdTempCameraPaths.contains(path)) {
+                createdTempCameraPaths.add(path)
+            }
         } else if (path != null) {
             try {
                 File(path).delete()
@@ -231,21 +273,12 @@ fun ItemEditScreen(
     }
 
     LaunchedEffect(itemId) {
+        val alreadyInitialized = isInitialized
         if (itemId != 0) {
             val itemWithPhotos = viewModel.getItemById(itemId)
             if (itemWithPhotos != null) {
                 val item = itemWithPhotos.item
                 loadedItem = item
-                titleFieldValue = TextFieldValue(item.title, TextRange(item.title.length))
-                descriptionFieldValue = TextFieldValue(item.description, TextRange(item.description.length))
-                priceText = if (item.price > 0) item.price.toString() else ""
-                soldPriceText = if (item.soldPrice > 0) item.soldPrice.toString() else ""
-                status = item.status
-                useCustomSettings = item.useCustomSettings
-                feeRatePercentText = item.feeRatePercent.toString()
-                shippingCostText = item.shippingCost.toString()
-                expenseCostText = item.expenseCost.toString()
-                existingFilePaths.clear()
                 loadedPhotosByPath.clear()
                 val resolvedPairs = withContext(Dispatchers.IO) {
                     itemWithPhotos.photos.mapNotNull { photo ->
@@ -255,26 +288,44 @@ fun ItemEditScreen(
                     }
                 }
                 resolvedPairs.forEach { (targetPath, photo) ->
-                    existingFilePaths.add(targetPath)
                     loadedPhotosByPath[targetPath] = photo
                 }
+                if (!alreadyInitialized) {
+                    titleFieldValue = TextFieldValue(item.title, TextRange(item.title.length))
+                    descriptionFieldValue = TextFieldValue(item.description, TextRange(item.description.length))
+                    priceText = if (item.price > 0) item.price.toString() else ""
+                    soldPriceText = if (item.soldPrice > 0) item.soldPrice.toString() else ""
+                    status = item.status
+                    useCustomSettings = item.useCustomSettings
+                    feeRatePercentText = item.feeRatePercent.toString()
+                    shippingCostText = item.shippingCost.toString()
+                    expenseCostText = item.expenseCost.toString()
+                    existingFilePaths.clear()
+                    resolvedPairs.forEach { (targetPath, _) ->
+                        if (!existingFilePaths.contains(targetPath)) {
+                            existingFilePaths.add(targetPath)
+                        }
+                    }
+                }
             }
-        } else {
+        } else if (!alreadyInitialized) {
             feeRatePercentText = defaultSettings.defaultFeeRatePercent.toString()
             shippingCostText = defaultSettings.defaultShippingCost.toString()
             expenseCostText = defaultSettings.defaultExpenseCost.toString()
         }
-        initialTitle = titleFieldValue.text
-        initialDescription = descriptionFieldValue.text
-        initialPriceText = priceText
-        initialSoldPriceText = soldPriceText
-        initialStatus = status
-        initialUseCustomSettings = useCustomSettings
-        initialFeeRatePercentText = feeRatePercentText
-        initialShippingCostText = shippingCostText
-        initialExpenseCostText = expenseCostText
-        initialExistingFilePaths = existingFilePaths.toList()
-        isInitialized = true
+        if (!alreadyInitialized) {
+            initialTitle = titleFieldValue.text
+            initialDescription = descriptionFieldValue.text
+            initialPriceText = priceText
+            initialSoldPriceText = soldPriceText
+            initialStatus = status
+            initialUseCustomSettings = useCustomSettings
+            initialFeeRatePercentText = feeRatePercentText
+            initialShippingCostText = shippingCostText
+            initialExpenseCostText = expenseCostText
+            initialExistingFilePaths = existingFilePaths.toList()
+            isInitialized = true
+        }
     }
 
     DisposableEffect(itemId) {
@@ -469,20 +520,34 @@ fun ItemEditScreen(
         }
     }
 
+    fun cleanupUnsavedTempCameraFiles(keepPaths: Set<String> = emptySet()) {
+        val toDelete = createdTempCameraPaths.filter { it !in keepPaths }
+        createdTempCameraPaths.clear()
+        if (toDelete.isNotEmpty()) {
+            CoroutineScope(Dispatchers.IO + NonCancellable).launch {
+                toDelete.forEach { path ->
+                    try {
+                        val f = File(path)
+                        if (f.exists()) f.delete()
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
+
     val handleBackRequest: () -> Unit = {
         if (!isSaving) {
             if (hasUnsavedChanges) {
                 showDiscardDialog = true
             } else {
+                cleanupUnsavedTempCameraFiles()
                 onNavigateBack()
             }
         }
     }
 
-    BackHandler(enabled = hasUnsavedChanges || isSaving) {
-        if (!isSaving) {
-            showDiscardDialog = true
-        }
+    BackHandler(enabled = hasUnsavedChanges || isSaving || createdTempCameraPaths.isNotEmpty()) {
+        handleBackRequest()
     }
 
     if (showBulkDeleteConfirmDialog) {
@@ -589,13 +654,7 @@ fun ItemEditScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        createdTempCameraPaths.forEach { path ->
-                            try {
-                                val f = File(path)
-                                if (f.exists()) f.delete()
-                            } catch (_: Exception) {}
-                        }
-                        createdTempCameraPaths.clear()
+                        cleanupUnsavedTempCameraFiles()
                         showDiscardDialog = false
                         onNavigateBack()
                     },
@@ -996,7 +1055,7 @@ fun ItemEditScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    itemsIndexed(existingFilePaths) { index, path ->
+                    itemsIndexed(existingFilePaths, key = { _, path -> "existing:$path" }) { index, path ->
                         val photoEntity = loadedPhotosByPath[path]
                         val displayModel = photoEntity?.displayFile ?: File(path)
                         val photoKey = "path:$path"
@@ -1118,39 +1177,52 @@ fun ItemEditScreen(
                             if (photoSelectionMode) {
                                 Box(
                                     modifier = Modifier
-                                        .size(26.dp)
-                                        .background(Color.Black.copy(alpha = 0.65f))
-                                        .align(Alignment.TopEnd)
+                                        .size(48.dp)
+                                        .clickable { togglePhotoSelection(photoKey) }
+                                        .align(Alignment.TopEnd),
+                                    contentAlignment = Alignment.TopEnd
                                 ) {
-                                    Checkbox(
-                                        checked = isPhotoSelected,
-                                        onCheckedChange = { togglePhotoSelection(photoKey) },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(26.dp)
+                                            .background(Color.Black.copy(alpha = 0.65f))
+                                    ) {
+                                        Checkbox(
+                                            checked = isPhotoSelected,
+                                            onCheckedChange = { togglePhotoSelection(photoKey) },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 }
                             } else {
                                 Box(
                                     modifier = Modifier
-                                        .size(26.dp)
-                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .size(48.dp)
                                         .clickable { existingFilePaths.remove(path) }
                                         .align(Alignment.TopEnd)
-                                        .testTag("remove_existing_photo_$index")
+                                        .testTag("remove_existing_photo_$index"),
+                                    contentAlignment = Alignment.TopEnd
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "写真を削除",
-                                        tint = Color.White,
+                                    Box(
                                         modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(2.dp)
-                                    )
+                                            .size(26.dp)
+                                            .background(Color.Black.copy(alpha = 0.65f))
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "写真を削除",
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(2.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
 
-                    itemsIndexed(newImageUris) { index, uri ->
+                    itemsIndexed(newImageUris, key = { _, uri -> "new:$uri" }) { index, uri ->
                         val photoKey = "uri:$uri"
                         val isPhotoSelected = selectedPhotoKeys.contains(photoKey)
                         Box(
@@ -1201,33 +1273,46 @@ fun ItemEditScreen(
                             if (photoSelectionMode) {
                                 Box(
                                     modifier = Modifier
-                                        .size(26.dp)
-                                        .background(Color.Black.copy(alpha = 0.65f))
-                                        .align(Alignment.TopEnd)
+                                        .size(48.dp)
+                                        .clickable { togglePhotoSelection(photoKey) }
+                                        .align(Alignment.TopEnd),
+                                    contentAlignment = Alignment.TopEnd
                                 ) {
-                                    Checkbox(
-                                        checked = isPhotoSelected,
-                                        onCheckedChange = { togglePhotoSelection(photoKey) },
-                                        modifier = Modifier.fillMaxSize()
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(26.dp)
+                                            .background(Color.Black.copy(alpha = 0.65f))
+                                    ) {
+                                        Checkbox(
+                                            checked = isPhotoSelected,
+                                            onCheckedChange = { togglePhotoSelection(photoKey) },
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    }
                                 }
                             } else {
                                 Box(
                                     modifier = Modifier
-                                        .size(26.dp)
-                                        .background(Color.Black.copy(alpha = 0.65f))
+                                        .size(48.dp)
                                         .clickable { newImageUris.remove(uri) }
                                         .align(Alignment.TopEnd)
-                                        .testTag("remove_new_photo_$index")
+                                        .testTag("remove_new_photo_$index"),
+                                    contentAlignment = Alignment.TopEnd
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Close,
-                                        contentDescription = "写真を削除",
-                                        tint = Color.White,
+                                    Box(
                                         modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(2.dp)
-                                    )
+                                            .size(26.dp)
+                                            .background(Color.Black.copy(alpha = 0.65f))
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "写真を削除",
+                                            tint = Color.White,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(2.dp)
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1580,6 +1665,7 @@ fun ItemEditScreen(
                             },
                             onSuccess = {
                                 isSaving = false
+                                cleanupUnsavedTempCameraFiles(keepPaths = existingFilePaths.toSet())
                                 onNavigateBack()
                             }
                         )
@@ -1610,9 +1696,13 @@ fun ItemEditScreen(
         CameraXCaptureDialog(
             itemTitle = title.ifBlank { "Unassigned" },
             onPhotosCaptured = { paths ->
-                if (paths.isNotEmpty()) {
-                    existingFilePaths.addAll(paths)
-                    createdTempCameraPaths.addAll(paths)
+                paths.forEach { path ->
+                    if (!existingFilePaths.contains(path)) {
+                        existingFilePaths.add(path)
+                    }
+                    if (!createdTempCameraPaths.contains(path)) {
+                        createdTempCameraPaths.add(path)
+                    }
                 }
                 showCameraXDialog = false
             },

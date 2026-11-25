@@ -4943,7 +4943,7 @@ public static class DashboardHtml
                 const url = p.md5Hash ? '/api/photos/' + p.md5Hash : (p.photoUrl || '');
                 const hash = p.md5Hash || '';
                 return `<div class='relative w-20 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shrink-0 group'>
-                    <img src='${url}' onclick='window.open(""${url}"", ""_blank"")' class='w-full h-full object-cover cursor-pointer' title='クリックで原寸表示'>
+                    <img src='${escapeHtml(url)}' data-photo-url='${escapeHtml(url)}' onclick='window.open(this.dataset.photoUrl, ""_blank"")' class='w-full h-full object-cover cursor-pointer' title='クリックで原寸表示'>
                     <span class='absolute top-1 left-1 bg-black/60 text-white text-[9px] font-mono px-1 rounded'>#${idx + 1}</span>
                     <button type='button' onclick='deleteEditPhotoByIdx(${item.id}, ${idx})' class='absolute top-1 right-1 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white text-[10px] flex items-center justify-center shadow transition' title='写真を削除'><i class='fa-solid fa-xmark'></i></button>
                 </div>`;

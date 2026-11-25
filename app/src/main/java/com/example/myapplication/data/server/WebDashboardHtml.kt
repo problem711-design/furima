@@ -35,6 +35,7 @@ object WebDashboardHtml {
             <div class="flex items-center gap-2.5 flex-1 justify-end overflow-x-auto custom-scroll py-1">
                 <div class="flex items-center gap-1 bg-indigo-700/60 p-1 rounded-lg shrink-0">
                     <button onclick="setFilter('ALL')" id="filter-all" class="filter-btn px-2.5 py-1 text-xs font-bold rounded-md bg-white text-indigo-700 shadow-sm transition">すべて (<span id="count-all">0</span>)</button>
+                    <button onclick="setFilter('DRAFT')" id="filter-draft" class="filter-btn px-2.5 py-1 text-xs font-medium rounded-md hover:bg-indigo-500/50 text-indigo-100 transition">下書き (<span id="count-draft">0</span>)</button>
                     <button onclick="setFilter('LISTED')" id="filter-listed" class="filter-btn px-2.5 py-1 text-xs font-medium rounded-md hover:bg-indigo-500/50 text-indigo-100 transition">出品中 (<span id="count-listed">0</span>)</button>
                     <button onclick="setFilter('UNSHARED')" id="filter-unshared" class="filter-btn px-2.5 py-1 text-xs font-medium rounded-md hover:bg-indigo-500/50 text-indigo-100 transition">未送信 (<span id="count-unshared">0</span>)</button>
                     <button onclick="setFilter('SOLD')" id="filter-sold" class="filter-btn px-2.5 py-1 text-xs font-medium rounded-md hover:bg-indigo-500/50 text-indigo-100 transition">売却済 (<span id="count-sold">0</span>)</button>
@@ -545,6 +546,7 @@ object WebDashboardHtml {
 
         function updateStats() {
             const active = allItems.filter(i => !i.isDeleted && i.status !== 'MERGED' && !(i.mergedParentId && i.mergedParentId > 0));
+            const draft = active.filter(i => i.status === 'DRAFT' || i.status === 'DRAFT_DONE');
             const listed = active.filter(i => i.status === 'LISTED');
             const unshared = active.filter(i => !i.isShared);
             const sold = active.filter(i => i.status === 'SOLD' || i.status === 'SHIPPING');
@@ -557,6 +559,7 @@ object WebDashboardHtml {
             document.getElementById('stat-total-profit').innerText = '¥' + totalProfit.toLocaleString();
 
             document.getElementById('count-all').innerText = active.length;
+            document.getElementById('count-draft').innerText = draft.length;
             document.getElementById('count-listed').innerText = listed.length;
             document.getElementById('count-unshared').innerText = unshared.length;
             document.getElementById('count-sold').innerText = sold.length;
@@ -568,6 +571,7 @@ object WebDashboardHtml {
                 btn.className = 'filter-btn px-2.5 py-1 text-xs font-medium rounded-md hover:bg-indigo-500/50 text-indigo-100 transition';
             });
             if (filter === 'ALL') document.getElementById('filter-all').className = 'filter-btn px-2.5 py-1 text-xs font-bold rounded-md bg-white text-indigo-700 shadow-sm transition';
+            if (filter === 'DRAFT') document.getElementById('filter-draft').className = 'filter-btn px-2.5 py-1 text-xs font-bold rounded-md bg-white text-slate-700 shadow-sm transition';
             if (filter === 'LISTED') document.getElementById('filter-listed').className = 'filter-btn px-2.5 py-1 text-xs font-bold rounded-md bg-white text-indigo-700 shadow-sm transition';
             if (filter === 'UNSHARED') document.getElementById('filter-unshared').className = 'filter-btn px-2.5 py-1 text-xs font-bold rounded-md bg-white text-amber-700 shadow-sm transition';
             if (filter === 'SOLD') document.getElementById('filter-sold').className = 'filter-btn px-2.5 py-1 text-xs font-bold rounded-md bg-white text-emerald-700 shadow-sm transition';
@@ -594,9 +598,10 @@ object WebDashboardHtml {
                     if (item.isDeleted) return false;
                     if (item.status === 'MERGED' || (item.mergedParentId && item.mergedParentId > 0)) return false;
                     let matchFilter = true;
+                    if (currentFilter === 'DRAFT') matchFilter = (item.status === 'DRAFT' || item.status === 'DRAFT_DONE');
                     if (currentFilter === 'LISTED') matchFilter = (item.status === 'LISTED');
                     if (currentFilter === 'UNSHARED') matchFilter = (!item.isShared);
-                    if (currentFilter === 'SOLD') matchFilter = (item.status === 'SOLD');
+                    if (currentFilter === 'SOLD') matchFilter = (item.status === 'SOLD' || item.status === 'SHIPPING');
 
                     const matchSearch = !search || (item.title && item.title.toLowerCase().includes(search)) || (item.description && item.description.toLowerCase().includes(search));
                     return matchFilter && matchSearch;

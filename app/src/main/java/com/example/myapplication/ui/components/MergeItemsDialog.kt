@@ -32,6 +32,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -76,6 +77,14 @@ fun MergeItemsDialog(
         appendLine("よろしくお願いいたします。")
     }
 
+    val defaultExpenseStr = (defaultSettings.defaultExpenseCost * itemsList.size).coerceAtLeast(100).toString()
+    val initialCandidateIds = remember(selectedItems) { selectedItems.map { it.item.id } }
+
+    var isTitleManuallyEdited by remember { mutableStateOf(false) }
+    var isDescriptionManuallyEdited by remember { mutableStateOf(false) }
+    var isPriceManuallyEdited by remember { mutableStateOf(false) }
+    var isExpenseManuallyEdited by remember { mutableStateOf(false) }
+
     var titleFieldValue by remember { mutableStateOf(TextFieldValue(defaultTitle, TextRange(defaultTitle.length))) }
     var descriptionFieldValue by remember { mutableStateOf(TextFieldValue(defaultDesc, TextRange(defaultDesc.length))) }
     val title = titleFieldValue.text
@@ -83,7 +92,26 @@ fun MergeItemsDialog(
     var priceText by remember { mutableStateOf(totalOriginalPrice.toString()) }
     var shippingText by remember { mutableStateOf("750") } // まとめて箱で送る想定
     var feeRateText by remember { mutableStateOf(defaultSettings.defaultFeeRatePercent.toString()) }
-    var expenseText by remember { mutableStateOf((defaultSettings.defaultExpenseCost * itemsList.size).coerceAtLeast(100).toString()) }
+    var expenseText by remember { mutableStateOf(defaultExpenseStr) }
+
+    val currentCandidateIds = itemsList.map { it.item.id }
+    LaunchedEffect(currentCandidateIds) {
+        if (!isTitleManuallyEdited) {
+            titleFieldValue = TextFieldValue(defaultTitle, TextRange(defaultTitle.length))
+        }
+        if (!isDescriptionManuallyEdited) {
+            descriptionFieldValue = TextFieldValue(defaultDesc, TextRange(defaultDesc.length))
+        }
+        if (!isPriceManuallyEdited) {
+            priceText = totalOriginalPrice.toString()
+        }
+        if (!isExpenseManuallyEdited) {
+            expenseText = defaultExpenseStr
+        }
+    }
+
+    val candidateChanged = currentCandidateIds != initialCandidateIds
+    val anyManualEdited = isTitleManuallyEdited || isDescriptionManuallyEdited || isPriceManuallyEdited || isExpenseManuallyEdited
 
     val formatter = NumberFormat.getCurrencyInstance(Locale.JAPAN)
     val inputPrice = priceText.toIntOrNull() ?: totalOriginalPrice
@@ -150,11 +178,29 @@ fun MergeItemsDialog(
                                 if (itemsList.size > 2) {
                                     IconButton(
                                         onClick = { itemsList.remove(itemWithPhotos) },
-                                        modifier = Modifier.size(24.dp)
+                                        modifier = Modifier.size(48.dp)
                                     ) {
                                         Icon(Icons.Default.Close, contentDescription = "削除", modifier = Modifier.size(16.dp), tint = Color.Gray)
                                     }
                                 }
+                            }
+                        }
+                        if (candidateChanged && anyManualEdited) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            TextButton(
+                                onClick = {
+                                    isTitleManuallyEdited = false
+                                    isDescriptionManuallyEdited = false
+                                    isPriceManuallyEdited = false
+                                    isExpenseManuallyEdited = false
+                                    titleFieldValue = TextFieldValue(defaultTitle, TextRange(defaultTitle.length))
+                                    descriptionFieldValue = TextFieldValue(defaultDesc, TextRange(defaultDesc.length))
+                                    priceText = totalOriginalPrice.toString()
+                                    expenseText = defaultExpenseStr
+                                },
+                                modifier = Modifier.testTag("merge_regenerate_button")
+                            ) {
+                                Text("候補が変わったためテキスト・金額を再生成", fontSize = 12.sp)
                             }
                         }
                     }
@@ -165,7 +211,10 @@ fun MergeItemsDialog(
                 // まとめ商品名
                 OutlinedTextField(
                     value = titleFieldValue,
-                    onValueChange = { titleFieldValue = it },
+                    onValueChange = {
+                        isTitleManuallyEdited = true
+                        titleFieldValue = it
+                    },
                     label = { Text("まとめ出品タイトル (必須)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("merge_title_input")
@@ -176,7 +225,10 @@ fun MergeItemsDialog(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         defaultSettings.titleTemplates.forEach { tpl ->
                             AssistChip(
-                                onClick = { titleFieldValue = insertMergeTemplateAtCursor(titleFieldValue, tpl.content) },
+                                onClick = {
+                                    isTitleManuallyEdited = true
+                                    titleFieldValue = insertMergeTemplateAtCursor(titleFieldValue, tpl.content)
+                                },
                                 label = { Text(tpl.name, fontSize = 11.sp) },
                                 modifier = Modifier.testTag("merge_insert_title_template_${tpl.id}")
                             )
@@ -189,7 +241,10 @@ fun MergeItemsDialog(
                 // まとめ商品説明文（自動生成テンプレート・編集可能）
                 OutlinedTextField(
                     value = descriptionFieldValue,
-                    onValueChange = { descriptionFieldValue = it },
+                    onValueChange = {
+                        isDescriptionManuallyEdited = true
+                        descriptionFieldValue = it
+                    },
                     label = { Text("まとめ商品説明文 (任意・自動生成テンプレート)") },
                     minLines = 4,
                     maxLines = 8,
@@ -201,7 +256,10 @@ fun MergeItemsDialog(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         defaultSettings.descriptionTemplates.forEach { tpl ->
                             AssistChip(
-                                onClick = { descriptionFieldValue = insertMergeTemplateAtCursor(descriptionFieldValue, tpl.content) },
+                                onClick = {
+                                    isDescriptionManuallyEdited = true
+                                    descriptionFieldValue = insertMergeTemplateAtCursor(descriptionFieldValue, tpl.content)
+                                },
                                 label = { Text(tpl.name, fontSize = 11.sp) },
                                 modifier = Modifier.testTag("merge_insert_desc_template_${tpl.id}")
                             )
@@ -215,7 +273,10 @@ fun MergeItemsDialog(
                 // まとめ出品価格（手動自由入力）
                 OutlinedTextField(
                     value = priceText,
-                    onValueChange = { priceText = it },
+                    onValueChange = {
+                        isPriceManuallyEdited = true
+                        priceText = it
+                    },
                     label = { Text("まとめ出品価格 (円)") },
                     supportingText = {
                         Text(
@@ -253,7 +314,10 @@ fun MergeItemsDialog(
                 // 経費・梱包資材費の手動入力 ＆ ショートカットチップ
                 OutlinedTextField(
                     value = expenseText,
-                    onValueChange = { expenseText = it },
+                    onValueChange = {
+                        isExpenseManuallyEdited = true
+                        expenseText = it
+                    },
                     label = { Text("梱包資材費・経費 (円 - 手動入力可)") },
                     supportingText = { Text("ダンボール代や緩衝材等の経費を直接入力できます") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -262,10 +326,10 @@ fun MergeItemsDialog(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(selected = (expenseText == "0"), onClick = { expenseText = "0" }, label = { Text("0円", fontSize = 11.sp) })
-                    FilterChip(selected = (expenseText == "55"), onClick = { expenseText = "55" }, label = { Text("55円", fontSize = 11.sp) })
-                    FilterChip(selected = (expenseText == "100"), onClick = { expenseText = "100" }, label = { Text("100円 (箱代)", fontSize = 11.sp) })
-                    FilterChip(selected = (expenseText == "150"), onClick = { expenseText = "150" }, label = { Text("150円 (箱+緩衝材)", fontSize = 11.sp) })
+                    FilterChip(selected = (expenseText == "0"), onClick = { isExpenseManuallyEdited = true; expenseText = "0" }, label = { Text("0円", fontSize = 11.sp) })
+                    FilterChip(selected = (expenseText == "55"), onClick = { isExpenseManuallyEdited = true; expenseText = "55" }, label = { Text("55円", fontSize = 11.sp) })
+                    FilterChip(selected = (expenseText == "100"), onClick = { isExpenseManuallyEdited = true; expenseText = "100" }, label = { Text("100円 (箱代)", fontSize = 11.sp) })
+                    FilterChip(selected = (expenseText == "150"), onClick = { isExpenseManuallyEdited = true; expenseText = "150" }, label = { Text("150円 (箱+緩衝材)", fontSize = 11.sp) })
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
