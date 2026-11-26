@@ -138,6 +138,13 @@ public static class FurimaServerTests
                 SyncStore.Initialize(baseDir, ref token2);
                 AssertEquals("100.64.1.50", SyncStore.GetTrustedMuseIp(), "trustedMuseIp lost on reload");
                 AssertTrue(SyncStore.GetLastClaudePatrolContactAt() == ts, "lastClaudePatrolContactAt lost on reload");
+
+                // Initialize 直後は間引きタイマーがリセットされ、forcePersist=false でも即座に store.json へ永続化される
+                long ts2 = ts + 1000L;
+                SyncStore.SetLastClaudePatrolContactAt(ts2, false);
+                string token3 = "";
+                SyncStore.Initialize(baseDir, ref token3);
+                AssertTrue(SyncStore.GetLastClaudePatrolContactAt() == ts2, "lastClaudePatrolContactAt with forcePersist=false should persist right after Initialize");
             });
 
             RunTest("ClaudeJobStore.WakeOnStartupIfExecutable bumps revision only when approved/processing jobs exist", () =>

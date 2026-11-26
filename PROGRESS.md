@@ -96,7 +96,7 @@
   - **P2**: 手動「巡回を起こし直す」ボタンに加え、**サーバー起動時に実行可能ジョブ（`approved` / `processing`）があれば自動で `BumpClaudeRevision()` を行う起動時ウェイク**を組み込み。
   - **P3**: `ClaudeJob` に `approvedAt` を追加して未接触時の失効を抑止するだけでなく、**サーバー起動時に `approved` / `processing` のトークン期限（`+30分`）および `approval_pending` の経過基準を起動時刻へ補正**し、サーバー停止を挟む再起動直後の即失効を防止。
   - **P4 / P5**: `GET /api/claude/revision` への `executableCount` / `serverBootId` 同梱案を §6 選択肢に追加。権限変更を伴う待ち受け方式変更は行わず、現行 `HttpListener` のまま待ち受けモード可視化＋クイック再起動時の 8080 確保リトライを定義。
-- **最終決定（2026-11-25・着工）**: ユーザー判断により、**P3 は「案B（自動待機落ちの完全廃止）＋ `processing` 完全延長なし＆ `done_with_errors` 停止」** に確定。P4 サーバー補助・P5 待ち受け可視化＆8080リトライ・信頼済み IP 未設定警告をすべて同梱し、各フェーズ完了ごとにコミット＆プッシュのうえ、本バッチ完了をもって **`v1.6 (Build 1)`**（`versionCode = 1601`）へ全箇所更新する。
+- **最終決定（2026-11-25・着工）**: ユーザー判断により、**P3 は「案B（自動待機落ちの完全廃止）＋ `processing` 起動時延長なし（通常処理中の 1 枚ごとの +30 分スライディング延長は維持）＆ `done_with_errors` 停止」** に確定。P4 サーバー補助・P5 待ち受け可視化＆8080リトライ・信頼済み IP 未設定警告をすべて同梱し、各フェーズ完了ごとにコミット＆プッシュのうえ、本バッチ完了をもって **`v1.6 (Build 1)`**（`versionCode = 1601`）へ全箇所更新する。
 - **Phase P1 完了**: `FurimaServerNative.Auth.cs`（`IsTrustedClaudeIp` 共通化）・`SyncStore.cs`（`lastClaudePatrolContactAt` 永続化）・`FurimaServerNative.Core.cs`（監視コンタクト `lastClaudeWatchContactAt` / 実巡回 `lastClaudePatrolContactAt` / `trustedMuseIpConfigured` の status 応答）・`dashboard.html`（最終監視・最終巡回の相対表示と許可アドレス未設定警告）・`FurimaServerTests.cs`（IP 判定・永続化テスト）を実装。
 - **Phase P2 完了**: `ClaudeJobStore.cs`（`WakeOnStartupIfExecutable`）・`FurimaServerNative.Core.cs`（起動時自動ウェイク実行＋ `POST /api/claude/wake` ルート）・`FurimaServerNative.Claude.cs`（`HandleWakeClaudePatrol`: PC ローカル＋Bearer 必須）・`dashboard.html`（「巡回を起こし直す」ボタン）・`FurimaServerTests.cs`（起動時ウェイク単体テスト）を実装。
 - **Phase P3 完了**: `FurimaServerNative.Claude.cs`（`ApplyApprovalPendingExpiry` のタイムアウト待機落ち廃止、`ApplyTokenExpiry` で `approved` 失効を廃止し `processing` は延長なし＆0件中断時も `waiting` 戻し禁止で `done_with_errors` 終端停止へ統一、承認時は `jobTokenExpiresAt = 0` で開始時に 30 分計測開始）・`FurimaServerTests.cs`（案B 失効・終端テスト 3 ケース）を実装。
@@ -104,6 +104,10 @@
   - `FurimaServerNative.Core.cs`: `GET /api/claude/revision` へ `executableCount` と `serverBootId` を追加（P4 サーバー補助）。`TryStartHttpListener` の `listenerMode`（`all` / `localhost`）判別とコンソール・`/api/server/status`（`listenerMode`, `actualPort`）出力、既定ポート（8080）確保時の短時間リトライ（300ms×5回）を実装（P5）。
   - `dashboard.html`: 設定モーダルへサーバー待ち受け状態を表示。
   - バージョン表記全箇所を **`v1.6 (Build 1)`**（`app/build.gradle.kts` `versionName = "1.6"` / `versionCode = 1601`、`tools/web/dashboard.html`、`WebDashboardHtml.kt`、`photo-sync-integrity-build17.test.mjs`）へ統一更新。
+- **レビュー指摘修正（2026-11-26）**:
+  - 方針確認（案1）に基づき、`PLAN_PATROL_RELIABILITY_FIX.md`・`PROGRESS.md` の表現を「サーバー再起動時の期限延長なし（`ClaudeDelivery.cs` の通常処理中 +30 分スライディング延長は維持）」へ整理。
+  - `tools/web/dashboard.html`: `wakeClaudePatrol()` の `lastKnownClaudeRevision` 先行上書きを除去し、並行更新の取りこぼしを防止。
+  - `tools/SyncStore.cs`: `Initialize()` および `SetSyncDirForTest()` で `_lastClaudePatrolPersistMs` を `0` 初期化するよう修正（テスト間状態分離、単体テスト追加）。
 
 ### [2026-11-20] 写真同期整合性バグ修正 ＆ 画面オフ耐性強化 (バージョン 1.4 Build 17)
 - `PLAN_PHOTO_SYNC_INTEGRITY_FIX.md` の 5 本柱を最優先バッチとして実装完了した（詳細報告は `REVIEW_CLAUDE_SEND_PHASE6.md` §82）。

@@ -96,3 +96,9 @@ test('DashboardHtml.cs と WebDashboardHtml.kt のバージョン表記が v1.6 
     assert.ok(kt.includes('v1.6 (Build 1)'), 'WebDashboardHtml.kt のバージョン表記が未更新');
     assert.ok(gradle.includes('versionCode = 1601'), 'app/build.gradle.kts の versionCode が未更新');
 });
+
+test('wakeClaudePatrol は lastKnownClaudeRevision を先行更新しない', () => {
+    const html = readFileSync(path.join(repoRoot, 'tools', 'web', 'dashboard.html'), 'utf8');
+    const wakeFn = extractBlock(html, 'async function wakeClaudePatrol');
+    assert.ok(!wakeFn.includes('lastKnownClaudeRevision ='), 'wakeClaudePatrol 内で lastKnownClaudeRevision を先行更新してはならない');
+});

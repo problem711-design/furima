@@ -3175,9 +3175,7 @@
                 const res = await fetch('/api/claude/wake', { method: 'POST', headers: getHeaders() });
                 const data = await res.json().catch(() => null);
                 if (res.ok && data && data.status === 'ok') {
-                    if (typeof data.claudeRevision === 'number') {
-                        lastKnownClaudeRevision = data.claudeRevision;
-                    }
+                    // lastKnownClaudeRevision は先行更新せず、次回ポーリングの fetchClaudeJobs 成功時に確定して並行変更の取りこぼしを防ぐ
                     showToast('巡回の合図を出し直しました（次回ポーリングで確認されます）');
                 } else {
                     showToast((data && data.message) || '巡回の合図送信に失敗しました');

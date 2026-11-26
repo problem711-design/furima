@@ -1,7 +1,7 @@
 # 巡回拾い漏れ・到達性修正計画 (Patrol Reliability Fix Plan)
 
 - 策定: 2026-11-25（ユーザー合意・実装着手）
-- 改訂: 2026-11-25（案B「自動待機落ち完全廃止＋`processing` 完全延長なし＆`done_with_errors` 終端」・`v1.6 (Build 1)` 採番を確定）
+- 改訂: 2026-11-25（案B「自動待機落ち完全廃止＋`processing` 起動時延長なし＆`done_with_errors` 終端」・`v1.6 (Build 1)` 採番を確定）
 - 前提となる現在地: 全体コードレビュー＆安定化・軽量化・構造見直し（監査 Phase A〜D、`REVIEW_FULL_CODEBASE_AUDIT.md` §6 で完了記録）適用済み。現行バージョンは **v1.5 (Build 20) / versionCode 1520** → 本改修をもって **v1.6 (Build 1) / versionCode 1601** へ統一更新する。
 - 対象の問題: 「Museに送る」の自動巡回（Muse 側フック `claude-revision-watch`、180 秒間隔ポーリング）が、ジョブを長期間拾えないことがある。
 
@@ -21,7 +21,7 @@
 - **「どちら側が落ちていても、サーバー起動・復帰したときに自動で合図を出し直し、未着手ジョブが勝手に待機落ちしない」構造にする**。
 - **トークン消費の異常防止（最優先）**:
   - トークン消費が始まっていない **`approval_pending`（承認待ち）** と **`approved`（開始待ち）** の時間切れ自動待機落ちは仕様上 **完全廃止（案B）** とする。
-  - 1 枚でも写真取得が始まった **`processing`（処理中）** のみを厳格に保護し、**`waiting` 戻しを完全禁止＋サーバー起動時の期限延長なし（完全延長なし）＋期限切れ時は `done_with_errors`（エラー終端）で停止** させる。
+  - 1 枚でも写真取得が始まった **`processing`（処理中）** のみを厳格に保護し、**`waiting` 戻しを完全禁止＋サーバー再起動時の期限自動延長なし（`ClaudeDelivery.cs` による通常処理中の 1 枚ごとの +30 分スライディング延長のみ維持）＋期限切れ時は `done_with_errors`（エラー終端）で停止** させる。
 
 ---
 
@@ -57,7 +57,7 @@
 - `tools/web/dashboard.html`: ミューズカラムに「巡回を起こし直す」ボタン＋短い説明（「巡回の合図を出し直します」）を追加。
 - `tools/tests/FurimaServerTests.cs`: `WakeOnStartupIfExecutable` の単体テスト追加。
 
-### Phase P3. 自動待機落ち完全廃止（案B）＋ `processing` 完全延長なし＆`done_with_errors` 停止
+### Phase P3. 自動待機落ち完全廃止（案B）＋ `processing` 起動時延長なし＆`done_with_errors` 停止
 - `FurimaServerNative.Claude.cs`:
   - `ApplyApprovalPendingExpiry`: 10 分タイムアウトによる自動 `waiting` 落ちを **廃止**（常に `false`）。
   - `ApplyTokenExpiry`:
@@ -86,7 +86,7 @@
 ---
 
 ## 4. 決定事項サマリ（2026-11-25 確定）
-1. **P3 方式**: 案B（自動待機落ち完全廃止）＋ `processing` は**完全延長なし**で期限切れ時に必ず `done_with_errors` へ停止。
+1. **P3 方式**: 案B（自動待機落ち完全廃止）＋ `processing` は**サーバー再起動時の延長なし**（通常処理中の 1 枚ごとの +30 分スライディング延長は維持）で期限切れ時に必ず `done_with_errors` へ停止。
 2. **P4 サーバー補助**: 同梱（`executableCount` / `serverBootId`）。
 3. **P5 待ち受け可視化＋8080 リトライ**: 同梱（権限不要の範囲）。
 4. **信頼済み IP 未設定警告**: 同梱。

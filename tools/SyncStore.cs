@@ -305,6 +305,7 @@ public static class SyncStore
         lock (_configLock)
         {
             _syncDir = dir ?? "";
+            _lastClaudePatrolPersistMs = 0;
         }
     }
 
@@ -740,6 +741,10 @@ public static class SyncStore
 
     public static void Initialize(string baseDir, ref string serverAuthToken)
     {
+        lock (_configLock)
+        {
+            _lastClaudePatrolPersistMs = 0;
+        }
         string storeJsonPath = Path.Combine(baseDir, "store.json");
         _storeJsonPath = storeJsonPath;
 
