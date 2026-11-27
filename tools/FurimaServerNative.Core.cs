@@ -800,11 +800,11 @@ internal partial class FurimaServerNative
             }
             else if (rawPath == "/api/server/restart" && req.HttpMethod == "POST")
             {
-                bool isLoopback = req.RemoteEndPoint != null && IPAddress.IsLoopback(req.RemoteEndPoint.Address);
-                if (!isLoopback && !IsTrustedClaudeIp(req))
+                IPAddress remoteIp = req.RemoteEndPoint != null ? req.RemoteEndPoint.Address : null;
+                if (HasForwardedHeaders(req) || remoteIp == null || !IPAddress.IsLoopback(remoteIp))
                 {
                     res.StatusCode = 403;
-                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Forbidden" } });
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "この操作は PC ローカルからのみ実行できます" } });
                     return;
                 }
                 res.StatusCode = 200;
