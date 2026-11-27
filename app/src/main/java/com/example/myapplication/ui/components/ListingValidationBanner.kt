@@ -46,13 +46,11 @@ fun evaluateListingWarnings(
     val trimmedTitle = title.trim()
     if (trimmedTitle.isEmpty()) {
         warnings.add(ListingWarning("商品名が未入力です", isCritical = true))
-    } else if (trimmedTitle.length > 40) {
-        warnings.add(ListingWarning("商品名が ${trimmedTitle.length}文字です（Yahoo!フリマ上限 40文字超過）", isCritical = true))
+    } else if (trimmedTitle.length > 65) {
+        warnings.add(ListingWarning("商品名が ${trimmedTitle.length}文字です（Yahoo!フリマ上限 65文字超過）", isCritical = true))
     }
     if (photoCount == 0) {
         warnings.add(ListingWarning("商品が未撮影です（写真 0枚）", isCritical = true))
-    } else if (photoCount > 10) {
-        warnings.add(ListingWarning("写真が ${photoCount}枚あります（Yahoo!フリマ上限 10枚超過）", isCritical = true))
     }
     if (price <= 0) {
         warnings.add(ListingWarning("販売価格が未設定（¥0）です", isCritical = true))

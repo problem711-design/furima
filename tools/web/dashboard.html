@@ -233,7 +233,7 @@
                     </div>
                     <div class='bg-slate-50 p-2 rounded border border-slate-100 flex items-center justify-between text-[11px]'>
                         <span class='text-slate-600 font-medium'>バージョン</span>
-                        <span class='font-mono font-bold text-slate-700'>v1.6 (Build 2)</span>
+                        <span class='font-mono font-bold text-slate-700'>v1.6 (Build 3)</span>
                     </div>
                     <button onclick='openCleanupModal()' class='w-full bg-amber-600 hover:bg-amber-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-broom text-xs'></i> 売却30日経過写真の整理
@@ -354,12 +354,12 @@
 
                 <div>
                     <div class='flex justify-between items-center mb-1 gap-2'>
-                        <label class='font-bold text-slate-700'>まとめ商品タイトル (Yahoo!フリマ40文字以内)</label>
+                        <label class='font-bold text-slate-700'>まとめ商品タイトル (Yahoo!フリマ65文字以内)</label>
                         <div class='flex items-center gap-2'>
                             <select id='merge-title-tpl-select' onchange='applyTemplateSelect("merge-title", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
                                 <option value=''>定型文を挿入...</option>
                             </select>
-                            <span id='merge-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                            <span id='merge-title-count' class='text-[10px] font-mono text-slate-400'>0/65文字</span>
                         </div>
                     </div>
                     <input type='text' id='merge-title' oninput='checkTitleLength("merge")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-purple-500'>
@@ -872,12 +872,12 @@
                 <!-- ② 商品基本情報 -->
                 <div>
                     <div class='flex justify-between items-center mb-1 gap-2'>
-                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
+                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ65文字以内) <span class='text-rose-500'>*</span></label>
                         <div class='flex items-center gap-2'>
                             <select id='add-title-tpl-select' onchange='applyTemplateSelect("add-title", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
                                 <option value=''>定型文を挿入...</option>
                             </select>
-                            <span id='add-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                            <span id='add-title-count' class='text-[10px] font-mono text-slate-400'>0/65文字</span>
                         </div>
                     </div>
                     <input type='text' id='add-title' oninput='checkTitleLength("add")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-emerald-500' placeholder='例: ヴィンテージ デニムジャケット Mサイズ'>
@@ -1014,7 +1014,7 @@
                 <!-- ② 商品基本情報 -->
                 <div>
                     <div class='flex justify-between items-center mb-1 gap-2'>
-                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ40文字以内) <span class='text-rose-500'>*</span></label>
+                        <label class='font-bold text-slate-700'>商品タイトル (Yahoo!フリマ65文字以内) <span class='text-rose-500'>*</span></label>
                         <div class='flex items-center gap-2'>
                             <button type='button' onclick='copyText(document.getElementById("edit-title").value, "タイトル", this)' class='px-2 py-0.5 rounded border border-slate-300 bg-white hover:bg-slate-100 text-[10px] font-bold text-slate-700 flex items-center gap-1 transition'>
                                 <i class='fa-regular fa-copy text-indigo-600'></i> コピー
@@ -1022,7 +1022,7 @@
                             <select id='edit-title-tpl-select' onchange='applyTemplateSelect("edit-title", this, true)' class='text-[10px] border border-slate-300 rounded px-1.5 py-0.5 bg-white text-slate-700 max-w-[160px]'>
                                 <option value=''>定型文を挿入...</option>
                             </select>
-                            <span id='edit-title-count' class='text-[10px] font-mono text-slate-400'>0/40文字</span>
+                            <span id='edit-title-count' class='text-[10px] font-mono text-slate-400'>0/65文字</span>
                         </div>
                     </div>
                     <input type='text' id='edit-title' oninput='checkTitleLength("edit")' class='w-full p-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500'>
@@ -1455,8 +1455,8 @@
             const input = document.getElementById(prefix + '-title');
             const counter = document.getElementById(prefix + '-title-count');
             const len = (input.value || '').length;
-            counter.innerText = len + '/40文字';
-            if (len > 40) {
+            counter.innerText = len + '/65文字';
+            if (len > 65) {
                 counter.className = 'text-[10px] font-mono text-rose-600 font-bold';
             } else {
                 counter.className = 'text-[10px] font-mono text-slate-400';
@@ -2829,7 +2829,7 @@
                         <div>
                             <div class='flex items-center justify-between gap-1'>
                                 <h3 class='font-bold text-xs text-slate-800 line-clamp-1 flex-1' title='${escapeHtml(item.title || '無題')}'>${escapeHtml(item.title || '無題')}</h3>
-                                <span class='text-[9px] font-mono shrink-0 ${titleLen > 40 ? 'text-rose-600 font-bold' : 'text-slate-400'}'>${titleLen}/40字</span>
+                                <span class='text-[9px] font-mono shrink-0 ${titleLen > 65 ? 'text-rose-600 font-bold' : 'text-slate-400'}'>${titleLen}/65字</span>
                             </div>
                             <p class='text-[11px] text-slate-500 line-clamp-2 mt-0.5 leading-tight'>${escapeHtml(item.description || '')}</p>
                         </div>
@@ -5020,9 +5020,8 @@
             const warnings = [];
             const t = (title || '').trim();
             if (!t) warnings.push({ critical: true, text: '商品名が未入力です' });
-            else if (t.length > 40) warnings.push({ critical: true, text: '商品名が ' + t.length + '文字です（Yahoo!フリマ目安 40文字超過）' });
+            else if (t.length > 65) warnings.push({ critical: true, text: '商品名が ' + t.length + '文字です（Yahoo!フリマ上限 65文字超過）' });
             if (photoCount === 0) warnings.push({ critical: true, text: '商品が未撮影です（写真 0枚）' });
-            else if (photoCount > 10) warnings.push({ critical: true, text: '写真が ' + photoCount + '枚あります（上限 10枚超過）' });
             if (price <= 0) warnings.push({ critical: true, text: '販売価格が未設定（¥0）です' });
             else if (price < 300) warnings.push({ critical: false, text: '販売価格 ¥' + price + ' は最低出品額（¥300）未満です' });
             if (price > 0 && profit <= 0) warnings.push({ critical: true, text: '見込純利益が ¥' + profit + '（利益なし／赤字）です' });
