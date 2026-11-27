@@ -237,6 +237,26 @@ internal partial class FurimaServerNative
     [STAThread]
     static void Main(string[] args)
     {
+        foreach (string arg in args)
+        {
+            if (arg != null && arg.StartsWith("--wait-pid="))
+            {
+                int waitPid;
+                if (int.TryParse(arg.Substring("--wait-pid=".Length), out waitPid))
+                {
+                    try
+                    {
+                        Process p = Process.GetProcessById(waitPid);
+                        if (p != null && !p.HasExited)
+                        {
+                            p.WaitForExit(3000);
+                        }
+                    }
+                    catch { }
+                }
+            }
+        }
+
         // 二重起動防止 (名前付き Mutex)
         bool createdNew;
         mutex = new Mutex(true, "FurimaServerNative_SingleInstance_Mutex", out createdNew);
@@ -394,6 +414,46 @@ internal partial class FurimaServerNative
         {
             ShutdownServerResources();
         }
+        Environment.Exit(0);
+    }
+
+    private static int restartInitiated = 0;
+
+    public static void RestartServer()
+    {
+        if (Interlocked.Exchange(ref restartInitiated, 1) != 0) return;
+
+        try { Console.WriteLine("[INFO] サーバーの再起動が要求されました。リソースを解放して再起動します..."); } catch { }
+        isShuttingDown = true;
+
+        TunnelQrForm form = qrForm;
+        if (form != null)
+        {
+            try { form.PrepareForRestartExit(); } catch { }
+        }
+
+        ShutdownServerResources();
+
+        try
+        {
+            string targetExe = Application.ExecutablePath;
+            int currentPid = Process.GetCurrentProcess().Id;
+            string launchArgs = "--wait-pid=" + currentPid;
+
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = targetExe,
+                Arguments = launchArgs,
+                UseShellExecute = true,
+                WorkingDirectory = Path.GetDirectoryName(targetExe)
+            };
+            Process.Start(psi);
+        }
+        catch (Exception ex)
+        {
+            try { MessageBox.Show("サーバーの再起動に失敗しました:\n" + ex.Message, "エラー", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { }
+        }
+
         Environment.Exit(0);
     }
 
@@ -737,6 +797,23 @@ internal partial class FurimaServerNative
             else if (rawPath == "/api/server/trusted-muse-ip" && req.HttpMethod == "PUT")
             {
                 HandleUpdateTrustedMuseIp(req, res);
+            }
+            else if (rawPath == "/api/server/restart" && req.HttpMethod == "POST")
+            {
+                bool isLoopback = req.RemoteEndPoint != null && IPAddress.IsLoopback(req.RemoteEndPoint.Address);
+                if (!isLoopback && !IsTrustedClaudeIp(req))
+                {
+                    res.StatusCode = 403;
+                    SendJson(res, new Dictionary<string, object> { { "status", "error" }, { "message", "Forbidden" } });
+                    return;
+                }
+                res.StatusCode = 200;
+                SendJson(res, new Dictionary<string, object> { { "status", "ok" }, { "message", "Server restarting..." } });
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Thread.Sleep(500);
+                    RestartServer();
+                });
             }
             else if (rawPath == "/api/server/status")
             {

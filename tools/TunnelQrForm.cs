@@ -24,8 +24,11 @@ public class TunnelQrForm : Form
     private bool isExiting = false;
     private bool hasPromptedBrowser = false;
     private bool isPhoneConnected = false;
+    private bool isTunnelIssuing = true;
+    private DateTime lastPhoneActivityUtc = DateTime.MinValue;
     private int heartbeatCount = 0;
     private System.Windows.Forms.Timer browserPromptTimer;
+    private System.Windows.Forms.Timer connectionTimeoutTimer;
     private BrowserSelectDialog activeBrowserDialog = null;
 
     private string currentStoreId;
@@ -43,6 +46,7 @@ public class TunnelQrForm : Form
 
         InitializeComponent();
         InitializeTrayIcon();
+        InitializeConnectionTimeoutTimer();
         UpdateDisplay();
     }
 
@@ -120,25 +124,37 @@ public class TunnelQrForm : Form
         mainLayout.Controls.Add(lblInfo, 0, 7);
         mainLayout.SetColumnSpan(lblInfo, 2);
 
-        // 手動ブラウザ起動・トレイ格納ボタンエリア
+        // 手動ブラウザ起動・トレイ格納・サーバー再起動ボタンエリア
         FlowLayoutPanel btnPanel = new FlowLayoutPanel();
         btnPanel.Dock = DockStyle.Fill;
         btnPanel.FlowDirection = FlowDirection.LeftToRight;
+        btnPanel.WrapContents = false;
         btnPanel.Padding = new Padding(0, 5, 0, 0);
 
         Button btnOpenBrowser = new Button();
-        btnOpenBrowser.Text = "🌐 PC管理画面を開く";
+        btnOpenBrowser.Text = "🌐 PC管理画面";
         btnOpenBrowser.Font = new Font("Meiryo UI", 9F, FontStyle.Bold);
-        btnOpenBrowser.Size = new Size(160, 32);
+        btnOpenBrowser.Size = new Size(146, 32);
+        btnOpenBrowser.Margin = new Padding(0, 0, 6, 0);
         btnOpenBrowser.Click += (s, e) => { ShowBrowserSelectionDialog(); };
         btnPanel.Controls.Add(btnOpenBrowser);
 
         Button btnMinimizeTray = new Button();
-        btnMinimizeTray.Text = "📥 タスクトレイへ格納";
+        btnMinimizeTray.Text = "📥 トレイへ格納";
         btnMinimizeTray.Font = new Font("Meiryo UI", 9F);
-        btnMinimizeTray.Size = new Size(160, 32);
+        btnMinimizeTray.Size = new Size(146, 32);
+        btnMinimizeTray.Margin = new Padding(0, 0, 6, 0);
         btnMinimizeTray.Click += (s, e) => { MinimizeToTray(); };
         btnPanel.Controls.Add(btnMinimizeTray);
+
+        Button btnRestartServer = new Button();
+        btnRestartServer.Text = "🔄 サーバー再起動";
+        btnRestartServer.Font = new Font("Meiryo UI", 9F, FontStyle.Bold);
+        btnRestartServer.ForeColor = Color.FromArgb(185, 28, 28);
+        btnRestartServer.Size = new Size(146, 32);
+        btnRestartServer.Margin = new Padding(0);
+        btnRestartServer.Click += (s, e) => { RequestRestartServer(); };
+        btnPanel.Controls.Add(btnRestartServer);
 
         mainLayout.Controls.Add(btnPanel, 0, 8);
         mainLayout.SetColumnSpan(btnPanel, 2);
@@ -157,6 +173,7 @@ public class TunnelQrForm : Form
         trayMenu.Items.Add("PC管理画面を開く (デフォルト)", null, (s, e) => { LaunchBrowser("default"); });
         trayMenu.Items.Add(new ToolStripSeparator());
         trayMenu.Items.Add("サーバーログを開く(&L)", null, (s, e) => { OpenServerLog(); });
+        trayMenu.Items.Add("サーバーを再起動(&R)", null, (s, e) => { RequestRestartServer(); });
         trayMenu.Items.Add("母艦サーバーを終了(&X)", null, (s, e) => { ExitApp(); });
 
         notifyIcon = new NotifyIcon();
@@ -165,6 +182,23 @@ public class TunnelQrForm : Form
         notifyIcon.ContextMenuStrip = trayMenu;
         notifyIcon.Visible = true;
         notifyIcon.DoubleClick += (s, e) => { RestoreFromTray(); };
+    }
+
+    private void InitializeConnectionTimeoutTimer()
+    {
+        connectionTimeoutTimer = new System.Windows.Forms.Timer();
+        connectionTimeoutTimer.Interval = 2000;
+        connectionTimeoutTimer.Tick += (s, e) =>
+        {
+            if (isExiting || this.IsDisposed || this.Disposing) return;
+            if (isPhoneConnected && lastPhoneActivityUtc != DateTime.MinValue &&
+                (DateTime.UtcNow - lastPhoneActivityUtc).TotalSeconds >= 25)
+            {
+                isPhoneConnected = false;
+                RefreshIdleStatusLabel();
+            }
+        };
+        connectionTimeoutTimer.Start();
     }
 
     private void SafeBeginInvoke(Action action)
@@ -207,6 +241,12 @@ public class TunnelQrForm : Form
                 try { browserPromptTimer.Stop(); } catch { }
                 try { browserPromptTimer.Dispose(); } catch { }
                 browserPromptTimer = null;
+            }
+            if (connectionTimeoutTimer != null)
+            {
+                try { connectionTimeoutTimer.Stop(); } catch { }
+                try { connectionTimeoutTimer.Dispose(); } catch { }
+                connectionTimeoutTimer = null;
             }
             CleanupTrayAndImages();
         }
@@ -278,6 +318,62 @@ public class TunnelQrForm : Form
         }
     }
 
+    public void PrepareForRestartExit()
+    {
+        if (this.IsDisposed || this.Disposing) return;
+        if (this.InvokeRequired && this.IsHandleCreated)
+        {
+            try { this.Invoke(new Action(PrepareForRestartExit)); } catch { }
+            return;
+        }
+
+        isExiting = true;
+        if (browserPromptTimer != null)
+        {
+            try { browserPromptTimer.Stop(); } catch { }
+            try { browserPromptTimer.Dispose(); } catch { }
+            browserPromptTimer = null;
+        }
+        if (connectionTimeoutTimer != null)
+        {
+            try { connectionTimeoutTimer.Stop(); } catch { }
+            try { connectionTimeoutTimer.Dispose(); } catch { }
+            connectionTimeoutTimer = null;
+        }
+        if (activeBrowserDialog != null && !activeBrowserDialog.IsDisposed)
+        {
+            try
+            {
+                activeBrowserDialog.DialogResult = DialogResult.Cancel;
+                activeBrowserDialog.Close();
+            }
+            catch { }
+        }
+        CleanupTrayAndImages();
+        try { this.Hide(); } catch { }
+    }
+
+    public void RequestRestartServer()
+    {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
+        if (this.InvokeRequired)
+        {
+            SafeBeginInvoke(new Action(RequestRestartServer));
+            return;
+        }
+
+        DialogResult confirm = MessageBox.Show(
+            "母艦サーバーを再起動しますか？\n（再起動するとトンネルURLが新しく再発行されます）",
+            "サーバー再起動の確認",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question
+        );
+        if (confirm != DialogResult.Yes) return;
+
+        PrepareForRestartExit();
+        FurimaServerNative.RestartServer();
+    }
+
     public void ExitApp()
     {
         if (this.IsDisposed || this.Disposing) return;
@@ -293,6 +389,12 @@ public class TunnelQrForm : Form
             try { browserPromptTimer.Stop(); } catch { }
             try { browserPromptTimer.Dispose(); } catch { }
             browserPromptTimer = null;
+        }
+        if (connectionTimeoutTimer != null)
+        {
+            try { connectionTimeoutTimer.Stop(); } catch { }
+            try { connectionTimeoutTimer.Dispose(); } catch { }
+            connectionTimeoutTimer = null;
         }
         if (activeBrowserDialog != null && !activeBrowserDialog.IsDisposed)
         {
@@ -321,10 +423,15 @@ public class TunnelQrForm : Form
             return;
         }
 
+        lastPhoneActivityUtc = DateTime.UtcNow;
         isPhoneConnected = true;
         heartbeatCount++;
         lblStatus.Text = "● スマホアプリ接続中";
         lblStatus.ForeColor = Color.DarkGreen;
+        if (notifyIcon != null)
+        {
+            try { notifyIcon.Text = "フリマ母艦サーバー (スマホ接続中)"; } catch { }
+        }
 
         if (!hasPromptedBrowser && heartbeatCount >= 2)
         {
@@ -345,9 +452,14 @@ public class TunnelQrForm : Form
             return;
         }
 
+        lastPhoneActivityUtc = DateTime.UtcNow;
         isPhoneConnected = true;
         lblStatus.Text = "● スマホアプリ接続中";
         lblStatus.ForeColor = Color.DarkGreen;
+        if (notifyIcon != null)
+        {
+            try { notifyIcon.Text = "フリマ母艦サーバー (スマホ接続中)"; } catch { }
+        }
 
         if (!hasPromptedBrowser)
         {
@@ -440,6 +552,56 @@ public class TunnelQrForm : Form
         }
     }
 
+    private void RefreshIdleStatusLabel()
+    {
+        if (!string.IsNullOrEmpty(currentTunnelUrl) && currentTunnelUrl.StartsWith("https://") && currentTunnelUrl.Contains("trycloudflare.com"))
+        {
+            lblStatus.Text = "● 接続待機中 (QRコード準備完了)";
+            lblStatus.ForeColor = Color.Blue;
+            if (notifyIcon != null)
+            {
+                try { notifyIcon.Text = "フリマ母艦サーバー (接続待機中)"; } catch { }
+            }
+        }
+        else if (isTunnelIssuing)
+        {
+            lblStatus.Text = "● トンネルURL発行中 (待機中)";
+            lblStatus.ForeColor = Color.FromArgb(180, 83, 9);
+            if (notifyIcon != null)
+            {
+                try { notifyIcon.Text = "フリマ母艦サーバー (URL発行中)"; } catch { }
+            }
+        }
+        else
+        {
+            lblStatus.Text = "● ローカル接続のみ可 (未接続)";
+            lblStatus.ForeColor = Color.DarkOrange;
+            if (notifyIcon != null)
+            {
+                try { notifyIcon.Text = "フリマ母艦サーバー (ローカルのみ)"; } catch { }
+            }
+        }
+    }
+
+    public void SetTunnelIssuing()
+    {
+        if (isExiting || this.IsDisposed || this.Disposing) return;
+        if (this.InvokeRequired)
+        {
+            SafeBeginInvoke(new Action(SetTunnelIssuing));
+            return;
+        }
+
+        this.isTunnelIssuing = true;
+        this.currentTunnelUrl = "";
+        txtTunnelUrl.Text = "再発行中...";
+        if (!isPhoneConnected)
+        {
+            RefreshIdleStatusLabel();
+        }
+        UpdateDisplay();
+    }
+
     public void UpdateTunnelUrl(string tunnelUrl)
     {
         if (isExiting || this.IsDisposed || this.Disposing) return;
@@ -449,24 +611,20 @@ public class TunnelQrForm : Form
             return;
         }
 
-        this.currentTunnelUrl = tunnelUrl;
-        if (!string.IsNullOrEmpty(tunnelUrl) && tunnelUrl.StartsWith("https://") && tunnelUrl.Contains("trycloudflare.com"))
+        this.currentTunnelUrl = tunnelUrl ?? "";
+        this.isTunnelIssuing = false;
+        if (!string.IsNullOrEmpty(this.currentTunnelUrl) && this.currentTunnelUrl.StartsWith("https://") && this.currentTunnelUrl.Contains("trycloudflare.com"))
         {
-            txtTunnelUrl.Text = tunnelUrl;
-            if (!lblStatus.Text.Contains("接続中"))
-            {
-                lblStatus.Text = "● トンネル接続完了 (QRコード準備完了)";
-                lblStatus.ForeColor = Color.Blue;
-            }
+            txtTunnelUrl.Text = this.currentTunnelUrl;
         }
-        else if (string.IsNullOrEmpty(tunnelUrl))
+        else
         {
             txtTunnelUrl.Text = "(トンネル接続失敗 - ローカル接続のみ)";
-            if (!lblStatus.Text.Contains("接続中"))
-            {
-                lblStatus.Text = "● ローカル接続のみ可";
-                lblStatus.ForeColor = Color.DarkOrange;
-            }
+        }
+
+        if (!isPhoneConnected)
+        {
+            RefreshIdleStatusLabel();
         }
 
         UpdateDisplay();
@@ -499,18 +657,18 @@ public class TunnelQrForm : Form
                 {
                     g.DrawRectangle(p, 1, 1, 238, 238);
                 }
-                string msg = string.IsNullOrEmpty(currentTunnelUrl)
+                string msg = isTunnelIssuing
                     ? "トンネルURL発行中...\n\n準備完了まで\nお待ちください"
                     : "トンネル接続不可\n\nローカル接続を\nご利用ください";
                 using (Font font = new Font("Meiryo UI", 9.5F, FontStyle.Regular))
                 using (Brush brush = new SolidBrush(Color.FromArgb(100, 116, 139)))
-                using (StringFormat sf = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
                 {
+                    StringFormat sf = new StringFormat() { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
                     g.DrawString(msg, font, brush, new RectangleF(10, 10, 220, 220), sf);
                 }
             }
             picQrCode.Image = bmp;
-            lblInfo.Text = string.IsNullOrEmpty(currentTunnelUrl)
+            lblInfo.Text = isTunnelIssuing
                 ? "Cloudflare トンネルURLを発行中...\n準備ができるとQRコードが自動表示されます。"
                 : "トンネル接続が利用できません。スマホ側でローカルURLを入力してください。";
             return;

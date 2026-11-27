@@ -160,6 +160,9 @@
                     <button onclick='fetchItems()' class='w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
                         <i class='fa-solid fa-rotate-right text-xs'></i> データ手動更新
                     </button>
+                    <button id='restart-server-btn' onclick='restartPcServer()' class='w-full bg-rose-600 hover:bg-rose-700 text-white font-medium py-1.5 px-2.5 rounded-lg text-xs flex items-center justify-center gap-1.5 transition'>
+                        <i class='fa-solid fa-power-off text-xs'></i> 母艦サーバー再起動
+                    </button>
                 </div>
                 <div class='bg-white rounded-lg p-3 shadow-sm border border-slate-200 space-y-2'>
                     <h2 class='text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1'>
@@ -2315,6 +2318,25 @@
             fetchCleanupPreview();
             refreshPhotoTrashCount();
             refreshClaudeJobsCount();
+        }
+
+        async function restartPcServer() {
+            const btn = document.getElementById('restart-server-btn');
+            if (!confirm('母艦サーバーを再起動しますか？\n（再起動するとトンネルURLが新しく再発行されます）')) return;
+            try {
+                if (btn) btn.disabled = true;
+                showToast('サーバーを再起動しています...');
+                const res = await fetch('/api/server/restart', { method: 'POST', headers: getHeaders() });
+                if (res.ok) {
+                    alert('サーバーの再起動リクエストを送信しました。\n数秒後に画面を再読み込みしてください。');
+                } else {
+                    alert('再起動に失敗しました (Status: ' + res.status + ')');
+                }
+            } catch (e) {
+                alert('再起動エラー: ' + e.message);
+            } finally {
+                if (btn) btn.disabled = false;
+            }
         }
 
         function isItemTrashed(item) {
